@@ -24,23 +24,23 @@ import (
 )
 
 const (
-	robotCmdHelp        = "帮助"
-	robotCmdList        = "列表"
-	robotCmdListAlt     = "对话列表"
-	robotCmdSwitch      = "切换"
-	robotCmdContinue    = "继续"
-	robotCmdNew         = "新对话"
-	robotCmdClear       = "清空"
-	robotCmdCurrent     = "当前"
-	robotCmdStop        = "停止"
-	robotCmdRoles       = "角色"
-	robotCmdRolesList   = "角色列表"
-	robotCmdSwitchRole  = "切换角色"
-	robotCmdDelete      = "删除"
-	robotCmdVersion     = "版本"
+	robotCmdHelp        = "help"
+	robotCmdList        = "list"
+	robotCmdListAlt     = "conversations"
+	robotCmdSwitch      = "switch"
+	robotCmdContinue    = "continue"
+	robotCmdNew         = "new"
+	robotCmdClear       = "clear"
+	robotCmdCurrent     = "current"
+	robotCmdStop        = "stop"
+	robotCmdRoles       = "roles"
+	robotCmdRolesList   = "role-list"
+	robotCmdSwitchRole  = "role"
+	robotCmdDelete      = "delete"
+	robotCmdVersion     = "version"
 )
 
-// RobotHandler 企业微信/钉钉/飞书等机器人回调处理
+// RobotHandler handles bot callbacks for WeCom, DingTalk, Lark, etc.
 type RobotHandler struct {
 	config         *config.Config
 	db             *database.DB
@@ -48,12 +48,12 @@ type RobotHandler struct {
 	logger         *zap.Logger
 	mu             sync.RWMutex
 	sessions       map[string]string             // key: "platform_userID", value: conversationID
-	sessionRoles   map[string]string             // key: "platform_userID", value: roleName（默认"默认"）
-	cancelMu       sync.Mutex                    // 保护 runningCancels
-	runningCancels map[string]context.CancelFunc // key: "platform_userID", 用于停止命令中断任务
+	sessionRoles   map[string]string             // key: "platform_userID", value: roleName (defaults to "Default")
+	cancelMu       sync.Mutex                    // protects runningCancels
+	runningCancels map[string]context.CancelFunc // key: "platform_userID", used by the stop command to cancel running tasks
 }
 
-// NewRobotHandler 创建机器人处理器
+// NewRobotHandler creates a new bot handler.
 func NewRobotHandler(cfg *config.Config, db *database.DB, agentHandler *AgentHandler, logger *zap.Logger) *RobotHandler {
 	return &RobotHandler{
 		config:         cfg,
@@ -66,12 +66,12 @@ func NewRobotHandler(cfg *config.Config, db *database.DB, agentHandler *AgentHan
 	}
 }
 
-// sessionKey 生成会话 key
+// sessionKey generates a session key.
 func (h *RobotHandler) sessionKey(platform, userID string) string {
 	return platform + "_" + userID
 }
 
-// getOrCreateConversation 获取或创建当前会话，title 用于新对话的标题（取用户首条消息前50字）
+// getOrCreateConversation gets or creates the current session; title is used as the new conversation title (first 50 chars of the user message).
 func (h *RobotHandler) getOrCreateConversation(platform, userID, title string) (convID string, isNew bool) {
 	h.mu.RLock()
 	convID = h.sessions[h.sessionKey(platform, userID)]
@@ -81,13 +81,13 @@ func (h *RobotHandler) getOrCreateConversation(platform, userID, title string) (
 	}
 	t := strings.TrimSpace(title)
 	if t == "" {
-		t = "新对话 " + time.Now().Format("01-02 15:04")
+		t = "New Conversation " + time.Now().Format("01-02 15:04")
 	} else {
 		t = safeTruncateString(t, 50)
 	}
 	conv, err := h.db.CreateConversation(t)
 	if err != nil {
-		h.logger.Warn("创建机器人会话失败", zap.Error(err))
+		h.logger.Warn("failed to create bot session", zap.Error(err))
 		return "", false
 	}
 	convID = conv.ID
@@ -97,53 +97,53 @@ func (h *RobotHandler) getOrCreateConversation(platform, userID, title string) (
 	return convID, true
 }
 
-// setConversation 切换当前会话
+// setConversation switches the current session.
 func (h *RobotHandler) setConversation(platform, userID, convID string) {
 	h.mu.Lock()
 	h.sessions[h.sessionKey(platform, userID)] = convID
 	h.mu.Unlock()
 }
 
-// getRole 获取当前用户使用的角色，未设置时返回"默认"
+// getRole returns the role currently used by the user; returns "Default" if not set.
 func (h *RobotHandler) getRole(platform, userID string) string {
 	h.mu.RLock()
 	role := h.sessionRoles[h.sessionKey(platform, userID)]
 	h.mu.RUnlock()
 	if role == "" {
-		return "默认"
+		return "Default"
 	}
 	return role
 }
 
-// setRole 设置当前用户使用的角色
+// setRole sets the role for the current user.
 func (h *RobotHandler) setRole(platform, userID, roleName string) {
 	h.mu.Lock()
 	h.sessionRoles[h.sessionKey(platform, userID)] = roleName
 	h.mu.Unlock()
 }
 
-// clearConversation 清空当前会话（切换到新对话）
+// clearConversation clears the current session by switching to a new conversation.
 func (h *RobotHandler) clearConversation(platform, userID string) (newConvID string) {
-	title := "新对话 " + time.Now().Format("01-02 15:04")
+	title := "New Conversation " + time.Now().Format("01-02 15:04")
 	conv, err := h.db.CreateConversation(title)
 	if err != nil {
-		h.logger.Warn("创建新对话失败", zap.Error(err))
+		h.logger.Warn("failed to create new conversation", zap.Error(err))
 		return ""
 	}
 	h.setConversation(platform, userID, conv.ID)
 	return conv.ID
 }
 
-// HandleMessage 处理用户输入，返回回复文本（供各平台 webhook 调用）
+// HandleMessage processes user input and returns a reply string (called by each platform webhook).
 func (h *RobotHandler) HandleMessage(platform, userID, text string) (reply string) {
 	text = strings.TrimSpace(text)
 	if text == "" {
-		return "请输入内容或发送「帮助」/ help 查看命令。"
+		return "Please enter a message, or send \"help\" to view available commands."
 	}
 
-	// 命令分发（支持中英文）
+	// Command dispatch
 	switch {
-	case text == robotCmdHelp || text == "help" || text == "？" || text == "?":
+	case text == robotCmdHelp || text == "？" || text == "?":
 		return h.cmdHelp()
 	case text == robotCmdList || text == robotCmdListAlt || text == "list":
 		return h.cmdList()
@@ -193,13 +193,13 @@ func (h *RobotHandler) HandleMessage(platform, userID, text string) (reply strin
 		return h.cmdVersion()
 	}
 
-	// 普通消息：走 Agent
+	// Regular message: send to Agent
 	convID, _ := h.getOrCreateConversation(platform, userID, text)
 	if convID == "" {
-		return "无法创建或获取对话，请稍后再试。"
+		return "Unable to create or retrieve conversation. Please try again later."
 	}
-	// 若对话标题为「新对话 xx:xx」格式（由「新对话」命令创建），将标题更新为首条消息内容，与 Web 端体验一致
-	if conv, err := h.db.GetConversation(convID); err == nil && strings.HasPrefix(conv.Title, "新对话 ") {
+	// If the conversation title is in "New Conversation xx:xx" format (created by the "new" command), update the title to the first message content, consistent with the web UI experience.
+	if conv, err := h.db.GetConversation(convID); err == nil && strings.HasPrefix(conv.Title, "New Conversation ") {
 		newTitle := safeTruncateString(text, 50)
 		if newTitle != "" {
 			_ = h.db.UpdateConversationTitle(convID, newTitle)
@@ -219,11 +219,11 @@ func (h *RobotHandler) HandleMessage(platform, userID, text string) (reply strin
 	role := h.getRole(platform, userID)
 	resp, newConvID, err := h.agentHandler.ProcessMessageForRobot(ctx, convID, text, role)
 	if err != nil {
-		h.logger.Warn("机器人 Agent 执行失败", zap.String("platform", platform), zap.String("userID", userID), zap.Error(err))
+		h.logger.Warn("bot agent execution failed", zap.String("platform", platform), zap.String("userID", userID), zap.Error(err))
 		if errors.Is(err, context.Canceled) {
-			return "任务已取消。"
+			return "Task cancelled."
 		}
-		return "处理失败: " + err.Error()
+		return "Processing failed: " + err.Error()
 	}
 	if newConvID != convID {
 		h.setConversation(platform, userID, newConvID)
@@ -232,36 +232,35 @@ func (h *RobotHandler) HandleMessage(platform, userID, text string) (reply strin
 }
 
 func (h *RobotHandler) cmdHelp() string {
-	return "**【CyberStrikeAI 机器人命令】**\n\n" +
-		"- `帮助` `help` — 显示本帮助 | Show this help\n" +
-		"- `列表` `list` — 列出所有对话标题与 ID | List conversations\n" +
-		"- `切换 <ID>` `switch <ID>` — 指定对话继续 | Switch to conversation\n" +
-		"- `新对话` `new` — 开启新对话 | Start new conversation\n" +
-		"- `清空` `clear` — 清空当前上下文 | Clear context\n" +
-		"- `当前` `current` — 显示当前对话 ID 与标题 | Show current conversation\n" +
-		"- `停止` `stop` — 中断当前任务 | Stop running task\n" +
-		"- `角色` `roles` — 列出所有可用角色 | List roles\n" +
-		"- `角色 <名>` `role <name>` — 切换当前角色 | Switch role\n" +
-		"- `删除 <ID>` `delete <ID>` — 删除指定对话 | Delete conversation\n" +
-		"- `版本` `version` — 显示当前版本号 | Show version\n\n" +
+	return "**[CyberStrikeAI Bot Commands]**\n\n" +
+		"- `help` — Show this help\n" +
+		"- `list` / `conversations` — List all conversations\n" +
+		"- `switch <ID>` / `continue <ID>` — Switch to a conversation\n" +
+		"- `new` — Start a new conversation\n" +
+		"- `clear` — Clear the current context\n" +
+		"- `current` — Show the current conversation ID and title\n" +
+		"- `stop` — Stop the running task\n" +
+		"- `roles` — List all available roles\n" +
+		"- `role <name>` — Switch to the specified role\n" +
+		"- `delete <ID>` — Delete a conversation\n" +
+		"- `version` — Show the current version\n\n" +
 		"---\n" +
-		"除以上命令外，直接输入内容将发送给 AI 进行渗透测试/安全分析。\n" +
-		"Otherwise, send any text for AI penetration testing / security analysis."
+		"Any other input is sent directly to the AI for penetration testing / security analysis."
 }
 
 func (h *RobotHandler) cmdList() string {
 	convs, err := h.db.ListConversations(50, 0, "")
 	if err != nil {
-		return "获取对话列表失败: " + err.Error()
+		return "Failed to retrieve conversation list: " + err.Error()
 	}
 	if len(convs) == 0 {
-		return "暂无对话。发送任意内容将自动创建新对话。"
+		return "No conversations yet. Send any message to create one automatically."
 	}
 	var b strings.Builder
-	b.WriteString("【对话列表】\n")
+	b.WriteString("[Conversation List]\n")
 	for i, c := range convs {
 		if i >= 20 {
-			b.WriteString("… 仅显示前 20 条\n")
+			b.WriteString("… Showing first 20 only\n")
 			break
 		}
 		b.WriteString(fmt.Sprintf("· %s\n  ID: %s\n", c.Title, c.ID))
@@ -271,22 +270,22 @@ func (h *RobotHandler) cmdList() string {
 
 func (h *RobotHandler) cmdSwitch(platform, userID, convID string) string {
 	if convID == "" {
-		return "请指定对话 ID，例如：切换 xxx-xxx-xxx"
+		return "Please specify a conversation ID, e.g.: switch xxx-xxx-xxx"
 	}
 	conv, err := h.db.GetConversation(convID)
 	if err != nil {
-		return "对话不存在或 ID 错误。"
+		return "Conversation not found or invalid ID."
 	}
 	h.setConversation(platform, userID, conv.ID)
-	return fmt.Sprintf("已切换到对话：「%s」\nID: %s", conv.Title, conv.ID)
+	return fmt.Sprintf("Switched to conversation: \"%s\"\nID: %s", conv.Title, conv.ID)
 }
 
 func (h *RobotHandler) cmdNew(platform, userID string) string {
 	newID := h.clearConversation(platform, userID)
 	if newID == "" {
-		return "创建新对话失败，请重试。"
+		return "Failed to create new conversation. Please try again."
 	}
-	return "已开启新对话，可直接发送内容。"
+	return "New conversation started. You can now send messages."
 }
 
 func (h *RobotHandler) cmdClear(platform, userID string) string {
@@ -303,9 +302,9 @@ func (h *RobotHandler) cmdStop(platform, userID string) string {
 	}
 	h.cancelMu.Unlock()
 	if !ok {
-		return "当前没有正在执行的任务。"
+		return "No task is currently running."
 	}
-	return "已停止当前任务。"
+	return "Current task stopped."
 }
 
 func (h *RobotHandler) cmdCurrent(platform, userID string) string {
@@ -313,19 +312,19 @@ func (h *RobotHandler) cmdCurrent(platform, userID string) string {
 	convID := h.sessions[h.sessionKey(platform, userID)]
 	h.mu.RUnlock()
 	if convID == "" {
-		return "当前没有进行中的对话。发送任意内容将创建新对话。"
+		return "No active conversation. Send any message to create one."
 	}
 	conv, err := h.db.GetConversation(convID)
 	if err != nil {
-		return "当前对话 ID: " + convID + "（获取标题失败）"
+		return "Current conversation ID: " + convID + " (failed to retrieve title)"
 	}
 	role := h.getRole(platform, userID)
-	return fmt.Sprintf("当前对话：「%s」\nID: %s\n当前角色: %s", conv.Title, conv.ID, role)
+	return fmt.Sprintf("Current conversation: \"%s\"\nID: %s\nCurrent role: %s", conv.Title, conv.ID, role)
 }
 
 func (h *RobotHandler) cmdRoles() string {
 	if h.config.Roles == nil || len(h.config.Roles) == 0 {
-		return "暂无可用角色。"
+		return "No roles available."
 	}
 	names := make([]string, 0, len(h.config.Roles))
 	for name, role := range h.config.Roles {
@@ -334,24 +333,24 @@ func (h *RobotHandler) cmdRoles() string {
 		}
 	}
 	if len(names) == 0 {
-		return "暂无可用角色。"
+		return "No roles available."
 	}
 	sort.Slice(names, func(i, j int) bool {
-		if names[i] == "默认" {
+		if names[i] == "Default" {
 			return true
 		}
-		if names[j] == "默认" {
+		if names[j] == "Default" {
 			return false
 		}
 		return names[i] < names[j]
 	})
 	var b strings.Builder
-	b.WriteString("【角色列表】\n")
+	b.WriteString("[Role List]\n")
 	for _, name := range names {
 		role := h.config.Roles[name]
 		desc := role.Description
 		if desc == "" {
-			desc = "无描述"
+			desc = "No description"
 		}
 		b.WriteString(fmt.Sprintf("· %s — %s\n", name, desc))
 	}
@@ -360,53 +359,53 @@ func (h *RobotHandler) cmdRoles() string {
 
 func (h *RobotHandler) cmdSwitchRole(platform, userID, roleName string) string {
 	if roleName == "" {
-		return "请指定角色名称，例如：角色 渗透测试"
+		return "Please specify a role name, e.g.: role Penetration Testing"
 	}
 	if h.config.Roles == nil {
-		return "暂无可用角色。"
+		return "No roles available."
 	}
 	role, exists := h.config.Roles[roleName]
 	if !exists {
-		return fmt.Sprintf("角色「%s」不存在。发送「角色」查看可用角色。", roleName)
+		return fmt.Sprintf("Role \"%s\" does not exist. Send \"roles\" to see available roles.", roleName)
 	}
 	if !role.Enabled {
-		return fmt.Sprintf("角色「%s」已禁用。", roleName)
+		return fmt.Sprintf("Role \"%s\" is disabled.", roleName)
 	}
 	h.setRole(platform, userID, roleName)
-	return fmt.Sprintf("已切换到角色：「%s」\n%s", roleName, role.Description)
+	return fmt.Sprintf("Switched to role: \"%s\"\n%s", roleName, role.Description)
 }
 
 func (h *RobotHandler) cmdDelete(platform, userID, convID string) string {
 	if convID == "" {
-		return "请指定对话 ID，例如：删除 xxx-xxx-xxx"
+		return "Please specify a conversation ID, e.g.: delete xxx-xxx-xxx"
 	}
 	sk := h.sessionKey(platform, userID)
 	h.mu.RLock()
 	currentConvID := h.sessions[sk]
 	h.mu.RUnlock()
 	if convID == currentConvID {
-		// 删除当前对话时，先清空会话绑定
+		// When deleting the current conversation, first clear the session binding
 		h.mu.Lock()
 		delete(h.sessions, sk)
 		h.mu.Unlock()
 	}
 	if err := h.db.DeleteConversation(convID); err != nil {
-		return "删除失败: " + err.Error()
+		return "Delete failed: " + err.Error()
 	}
-	return fmt.Sprintf("已删除对话 ID: %s", convID)
+	return fmt.Sprintf("Deleted conversation ID: %s", convID)
 }
 
 func (h *RobotHandler) cmdVersion() string {
 	v := h.config.Version
 	if v == "" {
-		v = "未知"
+		v = "unknown"
 	}
 	return "CyberStrikeAI " + v
 }
 
-// —————— 企业微信 ——————
+// —————— WeCom (Enterprise WeChat) ——————
 
-// wecomXML 企业微信回调 XML（明文模式下的简化结构；加密模式需先解密再解析）
+// wecomXML is the WeCom callback XML structure (simplified for plaintext mode; encrypted mode requires decryption before parsing).
 type wecomXML struct {
 	ToUserName   string `xml:"ToUserName"`
 	FromUserName string `xml:"FromUserName"`
@@ -415,10 +414,10 @@ type wecomXML struct {
 	Content      string `xml:"Content"`
 	MsgID        string `xml:"MsgId"`
 	AgentID      int64  `xml:"AgentID"`
-	Encrypt      string `xml:"Encrypt"` // 加密模式下消息在此
+	Encrypt      string `xml:"Encrypt"` // in encrypted mode the message is here
 }
 
-// wecomReplyXML 被动回复 XML
+// wecomReplyXML is the passive reply XML structure.
 type wecomReplyXML struct {
 	XMLName      xml.Name `xml:"xml"`
 	ToUserName   string   `xml:"ToUserName"`
@@ -428,7 +427,7 @@ type wecomReplyXML struct {
 	Content      string  `xml:"Content"`
 }
 
-// HandleWecomGET 企业微信 URL 校验（GET）
+// HandleWecomGET handles WeCom URL verification (GET).
 func (h *RobotHandler) HandleWecomGET(c *gin.Context) {
 	if !h.config.Robots.Wecom.Enabled {
 		c.String(http.StatusNotFound, "")
@@ -439,18 +438,18 @@ func (h *RobotHandler) HandleWecomGET(c *gin.Context) {
 		c.String(http.StatusBadRequest, "missing echostr")
 		return
 	}
-	// 明文模式时企业微信可能直接传 echostr，先直接返回以通过校验
+	// In plaintext mode, WeCom may pass echostr directly; return it immediately to pass verification.
 	c.String(http.StatusOK, echostr)
 }
 
-// wecomDecrypt 企业微信消息解密（AES-256-CBC，PKCS7，明文格式：16字节随机+4字节长度+消息+corpID）
+// wecomDecrypt decrypts a WeCom message (AES-256-CBC, PKCS7; plaintext format: 16-byte random + 4-byte length + message + corpID).
 func wecomDecrypt(encodingAESKey, encryptedB64 string) ([]byte, error) {
 	key, err := base64.StdEncoding.DecodeString(encodingAESKey + "=")
 	if err != nil {
 		return nil, err
 	}
 	if len(key) != 32 {
-		return nil, fmt.Errorf("encoding_aes_key 解码后应为 32 字节")
+		return nil, fmt.Errorf("encoding_aes_key must decode to 32 bytes")
 	}
 	ciphertext, err := base64.StdEncoding.DecodeString(encryptedB64)
 	if err != nil {
@@ -463,28 +462,28 @@ func wecomDecrypt(encodingAESKey, encryptedB64 string) ([]byte, error) {
 	iv := key[:16]
 	mode := cipher.NewCBCDecrypter(block, iv)
 	if len(ciphertext)%aes.BlockSize != 0 {
-		return nil, fmt.Errorf("密文长度不是块大小的倍数")
+		return nil, fmt.Errorf("ciphertext length is not a multiple of the block size")
 	}
 	plain := make([]byte, len(ciphertext))
 	mode.CryptBlocks(plain, ciphertext)
-	// 去除 PKCS7 填充
+	// Remove PKCS7 padding
 	n := int(plain[len(plain)-1])
 	if n < 1 || n > 32 {
-		return nil, fmt.Errorf("无效的 PKCS7 填充")
+		return nil, fmt.Errorf("invalid PKCS7 padding")
 	}
 	plain = plain[:len(plain)-n]
-	// 企业微信格式：16 字节随机 + 4 字节长度(大端) + 消息 + corpID
+	// WeCom format: 16-byte random + 4-byte length (big-endian) + message + corpID
 	if len(plain) < 20 {
-		return nil, fmt.Errorf("明文过短")
+		return nil, fmt.Errorf("plaintext too short")
 	}
 	msgLen := binary.BigEndian.Uint32(plain[16:20])
 	if int(20+msgLen) > len(plain) {
-		return nil, fmt.Errorf("消息长度越界")
+		return nil, fmt.Errorf("message length out of bounds")
 	}
 	return plain[20 : 20+msgLen], nil
 }
 
-// HandleWecomPOST 企业微信消息回调（POST），支持明文与加密模式
+// HandleWecomPOST handles WeCom message callbacks (POST), supporting both plaintext and encrypted modes.
 func (h *RobotHandler) HandleWecomPOST(c *gin.Context) {
 	if !h.config.Robots.Wecom.Enabled {
 		c.String(http.StatusOK, "")
@@ -493,20 +492,20 @@ func (h *RobotHandler) HandleWecomPOST(c *gin.Context) {
 	bodyRaw, _ := io.ReadAll(c.Request.Body)
 	var body wecomXML
 	if err := xml.Unmarshal(bodyRaw, &body); err != nil {
-		h.logger.Debug("企业微信 POST 解析 XML 失败", zap.Error(err))
+		h.logger.Debug("WeCom POST: failed to parse XML", zap.Error(err))
 		c.String(http.StatusOK, "")
 		return
 	}
-	// 加密模式：先解密再解析内层 XML
+	// Encrypted mode: decrypt first, then parse the inner XML
 	if body.Encrypt != "" && h.config.Robots.Wecom.EncodingAESKey != "" {
 		decrypted, err := wecomDecrypt(h.config.Robots.Wecom.EncodingAESKey, body.Encrypt)
 		if err != nil {
-			h.logger.Warn("企业微信消息解密失败", zap.Error(err))
+			h.logger.Warn("WeCom message decryption failed", zap.Error(err))
 			c.String(http.StatusOK, "")
 			return
 		}
 		if err := xml.Unmarshal(decrypted, &body); err != nil {
-			h.logger.Warn("企业微信解密后 XML 解析失败", zap.Error(err))
+			h.logger.Warn("WeCom: failed to parse decrypted XML", zap.Error(err))
 			c.String(http.StatusOK, "")
 			return
 		}
@@ -517,14 +516,14 @@ func (h *RobotHandler) HandleWecomPOST(c *gin.Context) {
 			FromUserName: body.ToUserName,
 			CreateTime:  time.Now().Unix(),
 			MsgType:     "text",
-			Content:     "暂仅支持文本消息，请发送文字。",
+			Content:     "Only text messages are supported. Please send a text message.",
 		})
 		return
 	}
 	userID := body.FromUserName
 	text := strings.TrimSpace(body.Content)
 	reply := h.HandleMessage("wecom", userID, text)
-	// 加密模式需加密回复（此处简化为明文回复；若企业要求加密需再实现加密）
+	// Encrypted mode requires encrypting the reply (simplified to plaintext here; implement encryption if the enterprise requires it).
 	c.XML(http.StatusOK, wecomReplyXML{
 		ToUserName:   body.FromUserName,
 		FromUserName: body.ToUserName,
@@ -534,20 +533,20 @@ func (h *RobotHandler) HandleWecomPOST(c *gin.Context) {
 	})
 }
 
-// —————— 测试接口（需登录，用于验证机器人逻辑，无需钉钉/飞书客户端） ——————
+// —————— Test endpoint (requires login; used to verify bot logic without a DingTalk/Lark client) ——————
 
-// RobotTestRequest 模拟机器人消息请求
+// RobotTestRequest simulates a bot message request.
 type RobotTestRequest struct {
-	Platform string `json:"platform"` // 如 "dingtalk"、"lark"、"wecom"
+	Platform string `json:"platform"` // e.g. "dingtalk", "lark", "wecom"
 	UserID   string `json:"user_id"`
 	Text     string `json:"text"`
 }
 
-// HandleRobotTest 供本地验证：POST JSON { "platform", "user_id", "text" }，返回 { "reply": "..." }
+// HandleRobotTest is for local verification: POST JSON { "platform", "user_id", "text" } → returns { "reply": "..." }.
 func (h *RobotHandler) HandleRobotTest(c *gin.Context) {
 	var req RobotTestRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请求体需为 JSON，包含 platform、user_id、text"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "request body must be JSON with platform, user_id, and text fields"})
 		return
 	}
 	platform := strings.TrimSpace(req.Platform)
@@ -562,21 +561,21 @@ func (h *RobotHandler) HandleRobotTest(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"reply": reply})
 }
 
-// —————— 钉钉 ——————
+// —————— DingTalk ——————
 
-// HandleDingtalkPOST 钉钉事件回调（流式接入等）；当前为占位，返回 200
+// HandleDingtalkPOST handles DingTalk event callbacks (Stream mode, etc.); currently a placeholder that returns 200.
 func (h *RobotHandler) HandleDingtalkPOST(c *gin.Context) {
 	if !h.config.Robots.Dingtalk.Enabled {
 		c.JSON(http.StatusOK, gin.H{})
 		return
 	}
-	// 钉钉流式/事件回调格式需按官方文档解析并异步回复，此处仅返回 200
+	// DingTalk Stream/event callback format must be parsed per the official docs and replied to asynchronously; returns 200 here for now.
 	c.JSON(http.StatusOK, gin.H{"message": "ok"})
 }
 
-// —————— 飞书 ——————
+// —————— Lark (Feishu) ——————
 
-// HandleLarkPOST 飞书事件回调；当前为占位，返回 200；验证时需返回 challenge
+// HandleLarkPOST handles Lark event callbacks; currently a placeholder that returns 200; verification requires returning the challenge.
 func (h *RobotHandler) HandleLarkPOST(c *gin.Context) {
 	if !h.config.Robots.Lark.Enabled {
 		c.JSON(http.StatusOK, gin.H{})

@@ -1,22 +1,22 @@
 name: "cat"
 enabled: true
 command: "cat"
-short_description: "读取并输出文件内容"
+short_description: "Read and output file contents"
 description: |
-  读取文件内容并输出到标准输出。用于查看文件内容。
+  Read file contents and output to standard output. Used for viewing file contents.
 
-  **使用场景：**
-  - 查看文本文件内容
-  - 读取配置文件
-  - 查看日志文件
+  **Use Cases:**
+  - View text file contents
+  - Read configuration files
+  - View log files
 
-  **注意事项：**
-  - 如果文件很大，结果可能会被保存到存储中
-  - 只能读取文本文件，二进制文件可能显示乱码
+  **Notes:**
+  - If the file is large, results may be saved to storage
+  - Only text files can be read; binary files may display garbled output
 parameters:
   - name: "file"
     type: "string"
-    description: "要读取的文件路径"
+    description: "Path to the file to read"
     required: true
     format: "positional"
     position: 0

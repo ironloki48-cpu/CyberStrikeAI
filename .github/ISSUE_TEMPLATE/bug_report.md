@@ -1,78 +1,78 @@
 ---
-name: 🐛 Bug / 异常问题反馈
-about: 报告一个 Bug 或异常问题
+name: 🐛 Bug / Issue Report
+about: Report a bug or unexpected behavior
 title: '[BUG] '
-labels: ['bug', '待确认']
+labels: ['bug', 'needs-triage']
 assignees: ''
 ---
 
-## 📋 问题描述
-<!-- 请清晰、简洁地描述遇到的问题 -->
+## 📋 Problem Description
+<!-- Clearly and concisely describe the issue you encountered -->
 
 
-## 🔄 复现步骤
-<!-- 请详细描述如何复现这个问题 -->
-1. 
-2. 
-3. 
-4. 
+## 🔄 Steps to Reproduce
+<!-- Describe in detail how to reproduce the issue -->
+1.
+2.
+3.
+4.
 
-## ✅ 期望行为
-<!-- 描述你期望的正确行为是什么 -->
-
-
-## ❌ 实际行为
-<!-- 描述实际发生了什么 -->
+## ✅ Expected Behavior
+<!-- Describe what you expected to happen -->
 
 
-## 📸 截图/录屏
-<!-- 
-⚠️ 重要：请提供完整的截图或录屏，确保包含：
-- 完整的错误信息
-- 相关的界面元素
-- 浏览器控制台错误（如有）
-- 终端输出（如有）
+## ❌ Actual Behavior
+<!-- Describe what actually happened -->
 
-如果截图不完整，issue 可能会被关闭。
+
+## 📸 Screenshots / Screen Recording
+<!--
+⚠️ Important: Please provide complete screenshots or a screen recording that includes:
+- The full error message
+- Relevant UI elements
+- Browser console errors (if any)
+- Terminal output (if any)
+
+Issues with incomplete screenshots may be closed.
 -->
 
-<!-- 请在此处拖拽或粘贴截图 -->
+<!-- Drag and paste screenshots here -->
 
 
-## 📝 报错日志（脱敏后）
-<!-- 
-⚠️ 重要：请提供完整的、脱敏后的报错日志。
+## 📝 Error Logs (sanitized)
+<!--
+⚠️ Important: Please provide complete, sanitized error logs.
 
-脱敏要求：
-- 移除所有敏感信息（API Key、密码、Token、真实IP地址、域名等）
-- 使用占位符替换，如：`sk-xxx`、`password: ***`、`192.168.x.x`、`example.com`
-- 保留完整的错误堆栈信息
-- 保留时间戳和日志级别
+Sanitization requirements:
+- Remove all sensitive information (API keys, passwords, tokens, real IP addresses, domain names, etc.)
+- Replace with placeholders, e.g.: `sk-xxx`, `password: ***`, `192.168.x.x`, `example.com`
+- Preserve the complete error stack trace
+- Preserve timestamps and log levels
 
-请从以下位置收集日志：
-1. MCP状态监控 页面
-2. 服务器终端输出
-3. 日志文件（如果配置了文件输出）
-4. 浏览器控制台（F12 → Console）
+Collect logs from the following locations:
+1. MCP Status Monitor page
+2. Server terminal output
+3. Log files (if file output is configured)
+4. Browser console (F12 → Console)
 -->
 
 ```
-请在此处粘贴脱敏后的完整报错日志
+Paste the sanitized full error log here
 ```
 
 
-## ✅ 检查清单
-<!-- 提交前请确认以下项目 -->
+## ✅ Checklist
+<!-- Please confirm the following before submitting -->
 
-- [ ] 我已阅读并理解项目的 Issue 规范
-- [ ] 我已提供完整的、脱敏后的报错日志
-- [ ] 我已提供完整的截图（如适用）
-- [ ] 我已提供详细的复现步骤
-- [ ] 我已填写所有必要的环境信息
-- [ ] 我已脱敏所有敏感信息（API Key、密码、IP 等）
-- [ ] 我已确认这不是重复的 issue
+- [ ] I have read and understand the project's issue guidelines
+- [ ] I have provided complete, sanitized error logs
+- [ ] I have provided complete screenshots (if applicable)
+- [ ] I have provided detailed steps to reproduce
+- [ ] I have filled in all required environment information
+- [ ] I have sanitized all sensitive information (API keys, passwords, IPs, etc.)
+- [ ] I have confirmed this is not a duplicate issue
 
 ---
 
-**注意**：如果缺少必要的日志或截图，此 issue 可能会被标记为 `需要更多信息` 或直接关闭。请确保提供完整的信息以便我们能够快速定位和解决问题。
+**Note**: If required logs or screenshots are missing, this issue may be labeled `needs-more-info` or closed. Please provide complete information so we can quickly locate and resolve the problem.
 

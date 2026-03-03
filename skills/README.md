@@ -1,12 +1,12 @@
-# Skills 系统使用指南
+# Skills System Guide
 
-## 概述
+## Overview
 
-Skills系统允许你为角色配置专业知识和技能文档。当角色执行任务时，系统会将技能名称添加到系统提示词中作为推荐提示，AI智能体可以通过 `read_skill` 工具按需获取技能的详细内容。
+The Skills system lets you attach specialized knowledge and skill documents to roles. When a role executes a task, the system adds the skill names to the system prompt as hints. AI agents can then use the `read_skill` tool to retrieve the detailed content of a skill on demand.
 
-## Skills结构
+## Skills Structure
 
-每个skill是一个目录，包含一个`SKILL.md`文件：
+Each skill is a directory containing a `SKILL.md` file:
 
 ```
 skills/
@@ -17,37 +17,37 @@ skills/
 └── ...
 ```
 
-## SKILL.md格式
+## SKILL.md Format
 
-SKILL.md文件支持YAML front matter格式（可选）：
+`SKILL.md` files support optional YAML front matter:
 
 ```markdown
 ---
 name: skill-name
-description: Skill的简短描述
+description: Brief description of the skill
 version: 1.0.0
 ---
 
-# Skill标题
+# Skill Title
 
-这里是skill的详细内容，可以包含：
-- 测试方法
-- 工具使用
-- 最佳实践
-- 示例代码
-- 等等...
+Detailed skill content, which may include:
+- Testing methods
+- Tool usage
+- Best practices
+- Example code
+- etc.
 ```
 
-如果不使用front matter，整个文件内容都会被作为skill内容。
+If front matter is not used, the entire file content is treated as the skill content.
 
-## 在角色中配置Skills
+## Configuring Skills in a Role
 
-在角色配置文件中添加`skills`字段：
+Add a `skills` field to the role configuration file:
 
 ```yaml
-name: 渗透测试
-description: 专业渗透测试专家
-user_prompt: 你是一个专业的网络安全渗透测试专家...
+name: Penetration Testing
+description: Professional penetration testing expert
+user_prompt: You are a professional cybersecurity penetration testing expert...
 tools:
   - nmap
   - sqlmap
@@ -58,67 +58,67 @@ skills:
 enabled: true
 ```
 
-`skills`字段是一个字符串数组，每个字符串是skill目录的名称。
+The `skills` field is a string array where each string is the name of a skill directory.
 
-## 工作原理
+## How It Works
 
-1. **加载阶段**：系统启动时，会扫描`skills_dir`目录下的所有skill目录
-2. **执行阶段**：当使用某个角色执行任务时：
-   - 系统会将角色配置的skill名称添加到系统提示词中作为推荐提示
-   - **注意**：skill的详细内容不会自动注入到系统提示词中
-   - AI智能体需要根据任务需要，主动调用 `read_skill` 工具获取技能的详细内容
-3. **按需调用**：AI可以通过以下工具访问skills：
-   - `list_skills`: 获取所有可用的skills列表
-   - `read_skill`: 读取指定skill的详细内容
-   
-   这样AI可以在执行任务过程中，根据实际需要自主调用相关skills获取专业知识。即使角色没有配置skills，AI也可以通过这些工具按需访问任何可用的skill。
+1. **Loading phase**: At startup, the system scans all skill directories under `skills_dir`.
+2. **Execution phase**: When a task is executed with a role:
+   - The system adds the skill names configured for that role to the system prompt as recommendations.
+   - **Note**: Skill content is **not** automatically injected into the system prompt.
+   - AI agents must proactively call the `read_skill` tool to retrieve skill content when needed.
+3. **On-demand access**: AI can access skills via the following tools:
+   - `list_skills`: Get the list of all available skills.
+   - `read_skill`: Read the detailed content of a specified skill.
 
-## 示例Skills
+   This allows AI to autonomously retrieve relevant skills during task execution based on actual need. Even if a role has no skills configured, AI can still access any available skill through these tools on demand.
+
+## Example Skills
 
 ### sql-injection-testing
 
-包含SQL注入测试的专业方法、工具使用、绕过技术等。
+Contains professional methods for SQL injection testing, tool usage, bypass techniques, and more.
 
 ### xss-testing
 
-包含XSS测试的各种类型、payload、绕过技术等。
+Contains various XSS testing types, payloads, bypass techniques, and more.
 
-## 创建自定义Skill
+## Creating a Custom Skill
 
-1. 在`skills`目录下创建新目录，例如`my-skill`
-2. 在该目录下创建`SKILL.md`文件
-3. 编写skill内容
-4. 在角色配置中添加该skill名称
+1. Create a new directory under `skills/`, e.g., `my-skill`.
+2. Create a `SKILL.md` file in that directory.
+3. Write the skill content.
+4. Add the skill name to the role configuration.
 
 ```bash
 mkdir -p skills/my-skill
 cat > skills/my-skill/SKILL.md << 'EOF'
 ---
 name: my-skill
-description: 我的自定义技能
+description: My custom skill
 ---
 
-# 我的自定义技能
+# My Custom Skill
 
-这里是技能内容...
+Skill content goes here...
 EOF
 ```
 
-## 注意事项
+## Notes
 
-- **重要**：Skill的详细内容不会自动注入到系统提示词中，只有技能名称会作为提示添加
-- AI智能体需要通过 `read_skill` 工具主动获取技能内容，这样可以节省token并提高灵活性
-- Skill内容应该清晰、结构化，便于AI理解
-- 可以包含代码示例、命令示例等
-- 建议每个skill专注于一个特定领域或技能
-- 建议在skill的YAML front matter中提供清晰的 `description`，帮助AI判断是否需要读取该skill
+- **Important**: Skill content is NOT automatically injected into the system prompt — only the skill name is added as a hint.
+- AI agents must proactively use the `read_skill` tool to retrieve skill content. This saves tokens and improves flexibility.
+- Skill content should be clear and structured for AI to understand.
+- Code examples and command examples can be included.
+- Each skill should focus on a specific domain or technique.
+- It is recommended to provide a clear `description` in the YAML front matter to help AI decide whether to read the skill.
 
-## 配置
+## Configuration
 
-在`config.yaml`中配置skills目录：
+Configure the skills directory in `config.yaml`:
 
 ```yaml
-skills_dir: skills  # 相对于配置文件所在目录
+skills_dir: skills  # Relative to the config file location
 ```
 
-如果未配置，默认使用`skills`目录。
+If not configured, the `skills` directory is used by default.

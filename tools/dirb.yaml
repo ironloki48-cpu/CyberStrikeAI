@@ -1,99 +1,99 @@
 name: "dirb"
 command: "dirb"
 enabled: true
-# 简短描述（用于工具列表，减少token消耗）
-short_description: "Web目录和文件扫描工具，通过暴力破解方式发现Web服务器上的隐藏目录和文件"
-# 工具详细描述
+# Short description (for tool list, reduces token consumption)
+short_description: "Web directory and file scanning tool that discovers hidden directories and files on web servers via brute force"
+# Detailed tool description
 description: |
-  Web目录和文件扫描工具，通过暴力破解方式发现Web服务器上的隐藏目录和文件。
+  Web directory and file scanning tool that discovers hidden directories and files on web servers via brute force.
 
-  **主要功能：**
-  - 目录和文件发现
-  - 支持自定义字典文件
-  - 检测常见的Web目录结构
-  - 识别备份文件、配置文件等敏感文件
-  - 支持多种HTTP方法
+  **Key Features:**
+  - Directory and file discovery
+  - Custom wordlist support
+  - Detection of common web directory structures
+  - Identification of sensitive files such as backups and configuration files
+  - Support for multiple HTTP methods
 
-  **使用场景：**
-  - Web应用目录枚举
-  - 发现隐藏的管理界面
-  - 查找备份文件和敏感信息
-  - 渗透测试中的信息收集
+  **Use Cases:**
+  - Web application directory enumeration
+  - Discovering hidden admin interfaces
+  - Finding backup files and sensitive information
+  - Information gathering during penetration testing
 
-  **注意事项：**
-  - 扫描可能产生大量HTTP请求
-  - 某些请求可能被WAF拦截
-  - 建议使用合适的字典文件以提高效率
-  - 扫描结果需要人工验证
-# 参数定义
+  **Notes:**
+  - Scanning may generate a large number of HTTP requests
+  - Some requests may be blocked by WAF
+  - Recommended to use appropriate wordlists to improve efficiency
+  - Scan results require manual verification
+# Parameter definitions
 parameters:
   - name: "url"
     type: "string"
     description: |
-      目标URL，要扫描的Web服务器地址。
+      Target URL, the web server address to scan.
 
-      **格式要求：**
-      - 必须包含协议（http:// 或 https://）
-      - 可以包含基础路径
-      - 末尾不要带斜杠（除非要扫描特定目录）
+      **Format requirements:**
+      - Must include protocol (http:// or https://)
+      - Can include a base path
+      - Do not add trailing slash (unless scanning a specific directory)
 
-      **示例值：**
-      - 基础URL: "http://example.com"
+      **Example values:**
+      - Base URL: "http://example.com"
       - HTTPS: "https://example.com"
-      - 带端口: "http://example.com:8080"
-      - 特定目录: "http://example.com/admin"
-      - 带路径: "http://example.com/app"
+      - With port: "http://example.com:8080"
+      - Specific directory: "http://example.com/admin"
+      - With path: "http://example.com/app"
 
-      **注意事项：**
-      - URL必须可访问
-      - 确保URL格式正确，包含协议前缀
-      - 必需参数，不能为空
+      **Notes:**
+      - URL must be accessible
+      - Ensure URL format is correct and includes protocol prefix
+      - Required parameter, cannot be empty
     required: true
     position: 0
     format: "positional"
   - name: "wordlist"
     type: "string"
     description: |
-      字典文件路径，包含要尝试的目录和文件名列表。
+      Wordlist file path containing the list of directories and filenames to try.
 
-      **格式要求：**
-      - 文件路径，可以是绝对路径或相对路径
-      - 文件每行一个目录或文件名
-      - 支持常见的字典文件格式
+      **Format requirements:**
+      - File path, can be absolute or relative
+      - File has one directory or filename per line
+      - Supports common wordlist file formats
 
-      **示例值：**
-      - 默认字典: "/usr/share/dirb/wordlists/common.txt"
-      - 自定义字典: "/path/to/custom-wordlist.txt"
-      - 常用字典: "/usr/share/wordlists/dirb/common.txt"
+      **Example values:**
+      - Default wordlist: "/usr/share/dirb/wordlists/common.txt"
+      - Custom wordlist: "/path/to/custom-wordlist.txt"
+      - Common wordlist: "/usr/share/wordlists/dirb/common.txt"
 
-      **常用字典文件：**
-      - common.txt: 常见目录和文件
-      - big.txt: 大型字典
-      - small.txt: 小型快速字典
-      - extensions_common.txt: 常见文件扩展名
+      **Common wordlist files:**
+      - common.txt: Common directories and files
+      - big.txt: Large wordlist
+      - small.txt: Small quick wordlist
+      - extensions_common.txt: Common file extensions
 
-      **注意事项：**
-      - 如果不指定，将使用默认字典
-      - 确保字典文件存在且可读
-      - 大型字典会显著增加扫描时间
+      **Notes:**
+      - If not specified, the default wordlist will be used
+      - Ensure the wordlist file exists and is readable
+      - Large wordlists significantly increase scan time
     required: false
     position: 1
     format: "positional"
   - name: "additional_args"
     type: "string"
     description: |
-      额外的Dirb参数。用于传递未在参数列表中定义的Dirb选项。
+      Additional Dirb parameters. Used to pass Dirb options not defined in the parameter list.
 
-      **示例值：**
-      - "-a": 用户代理字符串
-      - "-H": 自定义HTTP头
-      - "-c": Cookie字符串
-      - "-X": 文件扩展名
-      - "-z": 毫秒延迟
+      **Example values:**
+      - "-a": User agent string
+      - "-H": Custom HTTP header
+      - "-c": Cookie string
+      - "-X": File extension
+      - "-z": Millisecond delay
 
-      **注意事项：**
-      - 多个参数用空格分隔
-      - 确保参数格式正确，避免命令注入
-      - 此参数会直接追加到命令末尾
+      **Notes:**
+      - Multiple parameters separated by spaces
+      - Ensure parameter format is correct to avoid command injection
+      - This parameter will be appended directly to the end of the command
     required: false
     format: "positional"

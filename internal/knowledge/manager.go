@@ -14,14 +14,14 @@ import (
 	"go.uber.org/zap"
 )
 
-// Manager 知识库管理器
+// Manager knowledge base manager
 type Manager struct {
 	db       *sql.DB
 	basePath string
 	logger   *zap.Logger
 }
 
-// NewManager 创建新的知识库管理器
+// NewManager creates a new knowledge base manager
 func NewManager(db *sql.DB, basePath string, logger *zap.Logger) *Manager {
 	return &Manager{
 		db:       db,
@@ -30,55 +30,55 @@ func NewManager(db *sql.DB, basePath string, logger *zap.Logger) *Manager {
 	}
 }
 
-// ScanKnowledgeBase 扫描知识库目录，更新数据库
-// 返回需要索引的知识项ID列表（新添加的或更新的）
+// ScanKnowledgeBase scans the knowledge base directory and updates the database.
+// Returns a list of knowledge item IDs that need to be indexed (newly added or updated).
 func (m *Manager) ScanKnowledgeBase() ([]string, error) {
 	if m.basePath == "" {
-		return nil, fmt.Errorf("知识库路径未配置")
+		return nil, fmt.Errorf("knowledge base path not configured")
 	}
 
-	// 确保目录存在
+	// ensure the directory exists
 	if err := os.MkdirAll(m.basePath, 0755); err != nil {
-		return nil, fmt.Errorf("创建知识库目录失败: %w", err)
+		return nil, fmt.Errorf("failed to create knowledge base directory: %w", err)
 	}
 
 	var itemsToIndex []string
 
-	// 遍历知识库目录
+	// walk the knowledge base directory
 	err := filepath.WalkDir(m.basePath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 
-		// 跳过目录和非markdown文件
+		// skip directories and non-markdown files
 		if d.IsDir() || !strings.HasSuffix(strings.ToLower(path), ".md") {
 			return nil
 		}
 
-		// 计算相对路径和分类
+		// calculate relative path and category
 		relPath, err := filepath.Rel(m.basePath, path)
 		if err != nil {
 			return err
 		}
 
-		// 第一个目录名作为分类（风险类型）
+		// first directory name is used as the category (risk type)
 		parts := strings.Split(relPath, string(filepath.Separator))
-		category := "未分类"
+		category := "Uncategorized"
 		if len(parts) > 1 {
 			category = parts[0]
 		}
 
-		// 文件名为标题
+		// file name is used as the title
 		title := strings.TrimSuffix(filepath.Base(path), ".md")
 
-		// 读取文件内容
+		// read file content
 		content, err := os.ReadFile(path)
 		if err != nil {
-			m.logger.Warn("读取知识库文件失败", zap.String("path", path), zap.Error(err))
-			return nil // 继续处理其他文件
+			m.logger.Warn("failed to read knowledge base file", zap.String("path", path), zap.Error(err))
+			return nil // continue processing other files
 		}
 
-		// 检查是否已存在
+		// check if it already exists
 		var existingID string
 		var existingContent string
 		var existingUpdatedAt time.Time
@@ -88,7 +88,7 @@ func (m *Manager) ScanKnowledgeBase() ([]string, error) {
 		).Scan(&existingID, &existingContent, &existingUpdatedAt)
 
 		if err == sql.ErrNoRows {
-			// 创建新项
+			// create new item
 			id := uuid.New().String()
 			now := time.Now()
 			_, err = m.db.Exec(
@@ -96,31 +96,31 @@ func (m *Manager) ScanKnowledgeBase() ([]string, error) {
 				id, category, title, path, string(content), now, now,
 			)
 			if err != nil {
-				return fmt.Errorf("插入知识项失败: %w", err)
+				return fmt.Errorf("failed to insert knowledge item: %w", err)
 			}
-			m.logger.Info("添加知识项", zap.String("id", id), zap.String("title", title), zap.String("category", category))
-			// 新添加的项需要索引
+			m.logger.Info("added knowledge item", zap.String("id", id), zap.String("title", title), zap.String("category", category))
+			// newly added items need to be indexed
 			itemsToIndex = append(itemsToIndex, id)
 		} else if err == nil {
-			// 检查内容是否有变化
+			// check if content has changed
 			contentChanged := existingContent != string(content)
 			if contentChanged {
-				// 更新现有项
+				// update existing item
 				_, err = m.db.Exec(
 					"UPDATE knowledge_base_items SET category = ?, title = ?, content = ?, updated_at = ? WHERE id = ?",
 					category, title, string(content), time.Now(), existingID,
 				)
 				if err != nil {
-					return fmt.Errorf("更新知识项失败: %w", err)
+					return fmt.Errorf("failed to update knowledge item: %w", err)
 				}
-				m.logger.Info("更新知识项", zap.String("id", existingID), zap.String("title", title))
-				// 内容已更新的项需要重新索引
+				m.logger.Info("updated knowledge item", zap.String("id", existingID), zap.String("title", title))
+				// updated items need to be re-indexed
 				itemsToIndex = append(itemsToIndex, existingID)
 			} else {
-				m.logger.Debug("知识项未变化，跳过", zap.String("id", existingID), zap.String("title", title))
+				m.logger.Debug("knowledge item unchanged, skipping", zap.String("id", existingID), zap.String("title", title))
 			}
 		} else {
-			return fmt.Errorf("查询知识项失败: %w", err)
+			return fmt.Errorf("failed to query knowledge item: %w", err)
 		}
 
 		return nil
@@ -133,11 +133,11 @@ func (m *Manager) ScanKnowledgeBase() ([]string, error) {
 	return itemsToIndex, nil
 }
 
-// GetCategories 获取所有分类（风险类型）
+// GetCategories returns all categories (risk types)
 func (m *Manager) GetCategories() ([]string, error) {
 	rows, err := m.db.Query("SELECT DISTINCT category FROM knowledge_base_items ORDER BY category")
 	if err != nil {
-		return nil, fmt.Errorf("查询分类失败: %w", err)
+		return nil, fmt.Errorf("failed to query categories: %w", err)
 	}
 	defer rows.Close()
 
@@ -145,7 +145,7 @@ func (m *Manager) GetCategories() ([]string, error) {
 	for rows.Next() {
 		var category string
 		if err := rows.Scan(&category); err != nil {
-			return nil, fmt.Errorf("扫描分类失败: %w", err)
+			return nil, fmt.Errorf("failed to scan category: %w", err)
 		}
 		categories = append(categories, category)
 	}
@@ -153,42 +153,42 @@ func (m *Manager) GetCategories() ([]string, error) {
 	return categories, nil
 }
 
-// GetStats 获取知识库统计信息
+// GetStats returns knowledge base statistics
 func (m *Manager) GetStats() (int, int, error) {
-	// 获取分类总数
+	// get total number of categories
 	categories, err := m.GetCategories()
 	if err != nil {
-		return 0, 0, fmt.Errorf("获取分类失败: %w", err)
+		return 0, 0, fmt.Errorf("failed to get categories: %w", err)
 	}
 	totalCategories := len(categories)
 
-	// 获取知识项总数
+	// get total number of knowledge items
 	var totalItems int
 	err = m.db.QueryRow("SELECT COUNT(*) FROM knowledge_base_items").Scan(&totalItems)
 	if err != nil {
-		return totalCategories, 0, fmt.Errorf("获取知识项总数失败: %w", err)
+		return totalCategories, 0, fmt.Errorf("failed to get total knowledge item count: %w", err)
 	}
 
 	return totalCategories, totalItems, nil
 }
 
-// GetCategoriesWithItems 按分类分页获取知识项（每个分类包含其下的所有知识项）
-// limit: 每页分类数量（0表示不限制）
-// offset: 偏移量（按分类偏移）
+// GetCategoriesWithItems returns knowledge items grouped by category with pagination (each category includes all its items).
+// limit: number of categories per page (0 means no limit).
+// offset: offset (by category).
 func (m *Manager) GetCategoriesWithItems(limit, offset int) ([]*CategoryWithItems, int, error) {
-	// 首先获取所有分类（带数量统计）
+	// first get all categories (with item counts)
 	rows, err := m.db.Query(`
-		SELECT category, COUNT(*) as item_count 
-		FROM knowledge_base_items 
-		GROUP BY category 
+		SELECT category, COUNT(*) as item_count
+		FROM knowledge_base_items
+		GROUP BY category
 		ORDER BY category
 	`)
 	if err != nil {
-		return nil, 0, fmt.Errorf("查询分类失败: %w", err)
+		return nil, 0, fmt.Errorf("failed to query categories: %w", err)
 	}
 	defer rows.Close()
 
-	// 收集所有分类信息
+	// collect all category information
 	type categoryInfo struct {
 		name      string
 		itemCount int
@@ -197,14 +197,14 @@ func (m *Manager) GetCategoriesWithItems(limit, offset int) ([]*CategoryWithItem
 	for rows.Next() {
 		var info categoryInfo
 		if err := rows.Scan(&info.name, &info.itemCount); err != nil {
-			return nil, 0, fmt.Errorf("扫描分类失败: %w", err)
+			return nil, 0, fmt.Errorf("failed to scan category: %w", err)
 		}
 		allCategories = append(allCategories, info)
 	}
 
 	totalCategories := len(allCategories)
 
-	// 应用分页（按分类分页）
+	// apply pagination (paginate by category)
 	var paginatedCategories []categoryInfo
 	if limit > 0 {
 		start := offset
@@ -221,13 +221,13 @@ func (m *Manager) GetCategoriesWithItems(limit, offset int) ([]*CategoryWithItem
 		paginatedCategories = allCategories
 	}
 
-	// 为每个分类获取其下的知识项（只返回摘要，不包含完整内容）
+	// get knowledge items for each category (return summary only, without full content)
 	result := make([]*CategoryWithItems, 0, len(paginatedCategories))
 	for _, catInfo := range paginatedCategories {
-		// 获取该分类下的所有知识项
+		// get all knowledge items in this category
 		items, _, err := m.GetItemsSummary(catInfo.name, 0, 0)
 		if err != nil {
-			return nil, 0, fmt.Errorf("获取分类 %s 的知识项失败: %w", catInfo.name, err)
+			return nil, 0, fmt.Errorf("failed to get knowledge items for category %s: %w", catInfo.name, err)
 		}
 
 		result = append(result, &CategoryWithItems{
@@ -240,21 +240,21 @@ func (m *Manager) GetCategoriesWithItems(limit, offset int) ([]*CategoryWithItem
 	return result, totalCategories, nil
 }
 
-// GetItems 获取知识项列表（完整内容，用于向后兼容）
+// GetItems returns a list of knowledge items (with full content, for backward compatibility)
 func (m *Manager) GetItems(category string) ([]*KnowledgeItem, error) {
 	return m.GetItemsWithOptions(category, 0, 0, true)
 }
 
-// GetItemsWithOptions 获取知识项列表（支持分页和可选内容）
-// category: 分类筛选（空字符串表示所有分类）
-// limit: 每页数量（0表示不限制）
-// offset: 偏移量
-// includeContent: 是否包含完整内容（false时只返回摘要）
+// GetItemsWithOptions returns a list of knowledge items (supports pagination and optional content).
+// category: category filter (empty string means all categories).
+// limit: items per page (0 means no limit).
+// offset: offset.
+// includeContent: whether to include full content (false returns summary only).
 func (m *Manager) GetItemsWithOptions(category string, limit, offset int, includeContent bool) ([]*KnowledgeItem, error) {
 	var rows *sql.Rows
 	var err error
 
-	// 构建SQL查询
+	// build SQL query
 	var query string
 	var args []interface{}
 
@@ -282,7 +282,7 @@ func (m *Manager) GetItemsWithOptions(category string, limit, offset int, includ
 
 	rows, err = m.db.Query(query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("查询知识项失败: %w", err)
+		return nil, fmt.Errorf("failed to query knowledge items: %w", err)
 	}
 	defer rows.Close()
 
@@ -293,17 +293,17 @@ func (m *Manager) GetItemsWithOptions(category string, limit, offset int, includ
 
 		if includeContent {
 			if err := rows.Scan(&item.ID, &item.Category, &item.Title, &item.FilePath, &item.Content, &createdAt, &updatedAt); err != nil {
-				return nil, fmt.Errorf("扫描知识项失败: %w", err)
+				return nil, fmt.Errorf("failed to scan knowledge item: %w", err)
 			}
 		} else {
 			if err := rows.Scan(&item.ID, &item.Category, &item.Title, &item.FilePath, &createdAt, &updatedAt); err != nil {
-				return nil, fmt.Errorf("扫描知识项失败: %w", err)
+				return nil, fmt.Errorf("failed to scan knowledge item: %w", err)
 			}
-			// 不包含内容时，Content为空字符串
+			// when content is not included, Content is an empty string
 			item.Content = ""
 		}
 
-		// 解析时间 - 支持多种格式
+		// parse time - supports multiple formats
 		timeFormats := []string{
 			"2006-01-02 15:04:05.999999999-07:00",
 			"2006-01-02 15:04:05.999999999",
@@ -314,7 +314,7 @@ func (m *Manager) GetItemsWithOptions(category string, limit, offset int, includ
 			time.RFC3339Nano,
 		}
 
-		// 解析创建时间
+		// parse created time
 		if createdAt != "" {
 			for _, format := range timeFormats {
 				parsed, err := time.Parse(format, createdAt)
@@ -325,7 +325,7 @@ func (m *Manager) GetItemsWithOptions(category string, limit, offset int, includ
 			}
 		}
 
-		// 解析更新时间
+		// parse updated time
 		if updatedAt != "" {
 			for _, format := range timeFormats {
 				parsed, err := time.Parse(format, updatedAt)
@@ -336,7 +336,7 @@ func (m *Manager) GetItemsWithOptions(category string, limit, offset int, includ
 			}
 		}
 
-		// 如果更新时间为空，使用创建时间
+		// if updated time is zero, use created time
 		if item.UpdatedAt.IsZero() && !item.CreatedAt.IsZero() {
 			item.UpdatedAt = item.CreatedAt
 		}
@@ -347,7 +347,7 @@ func (m *Manager) GetItemsWithOptions(category string, limit, offset int, includ
 	return items, nil
 }
 
-// GetItemsCount 获取知识项总数
+// GetItemsCount returns the total number of knowledge items
 func (m *Manager) GetItemsCount(category string) (int, error) {
 	var count int
 	var err error
@@ -359,34 +359,34 @@ func (m *Manager) GetItemsCount(category string) (int, error) {
 	}
 
 	if err != nil {
-		return 0, fmt.Errorf("查询知识项总数失败: %w", err)
+		return 0, fmt.Errorf("failed to query total knowledge item count: %w", err)
 	}
 
 	return count, nil
 }
 
-// SearchItemsByKeyword 按关键字搜索知识项（在所有数据中搜索，支持标题、分类、路径、内容匹配）
+// SearchItemsByKeyword searches knowledge items by keyword (searches all data, supports title, category, path, and content matching)
 func (m *Manager) SearchItemsByKeyword(keyword string, category string) ([]*KnowledgeItemSummary, error) {
 	if keyword == "" {
-		return nil, fmt.Errorf("搜索关键字不能为空")
+		return nil, fmt.Errorf("search keyword cannot be empty")
 	}
 
-	// 构建SQL查询，使用LIKE进行关键字匹配（不区分大小写）
+	// build SQL query using LIKE for keyword matching (case-insensitive)
 	var query string
 	var args []interface{}
 
-	// SQLite的LIKE不区分大小写，使用COLLATE NOCASE或LOWER()函数
-	// 使用%keyword%进行模糊匹配
+	// SQLite LIKE is case-insensitive; use COLLATE NOCASE or LOWER() function
+	// use %keyword% for fuzzy matching
 	searchPattern := "%" + keyword + "%"
 
 	query = `
-		SELECT id, category, title, file_path, created_at, updated_at 
-		FROM knowledge_base_items 
+		SELECT id, category, title, file_path, created_at, updated_at
+		FROM knowledge_base_items
 		WHERE (LOWER(title) LIKE LOWER(?) OR LOWER(category) LIKE LOWER(?) OR LOWER(file_path) LIKE LOWER(?) OR LOWER(content) LIKE LOWER(?))
 	`
 	args = append(args, searchPattern, searchPattern, searchPattern, searchPattern)
 
-	// 如果指定了分类，添加分类过滤
+	// if a category is specified, add category filter
 	if category != "" {
 		query += " AND category = ?"
 		args = append(args, category)
@@ -396,7 +396,7 @@ func (m *Manager) SearchItemsByKeyword(keyword string, category string) ([]*Know
 
 	rows, err := m.db.Query(query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("搜索知识项失败: %w", err)
+		return nil, fmt.Errorf("failed to search knowledge items: %w", err)
 	}
 	defer rows.Close()
 
@@ -406,10 +406,10 @@ func (m *Manager) SearchItemsByKeyword(keyword string, category string) ([]*Know
 		var createdAt, updatedAt string
 
 		if err := rows.Scan(&item.ID, &item.Category, &item.Title, &item.FilePath, &createdAt, &updatedAt); err != nil {
-			return nil, fmt.Errorf("扫描知识项失败: %w", err)
+			return nil, fmt.Errorf("failed to scan knowledge item: %w", err)
 		}
 
-		// 解析时间
+		// parse time
 		timeFormats := []string{
 			"2006-01-02 15:04:05.999999999-07:00",
 			"2006-01-02 15:04:05.999999999",
@@ -450,15 +450,15 @@ func (m *Manager) SearchItemsByKeyword(keyword string, category string) ([]*Know
 	return items, nil
 }
 
-// GetItemsSummary 获取知识项摘要列表（不包含完整内容，支持分页）
+// GetItemsSummary returns a summary list of knowledge items (without full content, supports pagination)
 func (m *Manager) GetItemsSummary(category string, limit, offset int) ([]*KnowledgeItemSummary, int, error) {
-	// 获取总数
+	// get total count
 	total, err := m.GetItemsCount(category)
 	if err != nil {
 		return nil, 0, err
 	}
 
-	// 获取列表数据（不包含内容）
+	// get list data (without content)
 	var rows *sql.Rows
 	var query string
 	var args []interface{}
@@ -483,7 +483,7 @@ func (m *Manager) GetItemsSummary(category string, limit, offset int) ([]*Knowle
 
 	rows, err = m.db.Query(query, args...)
 	if err != nil {
-		return nil, 0, fmt.Errorf("查询知识项失败: %w", err)
+		return nil, 0, fmt.Errorf("failed to query knowledge items: %w", err)
 	}
 	defer rows.Close()
 
@@ -493,10 +493,10 @@ func (m *Manager) GetItemsSummary(category string, limit, offset int) ([]*Knowle
 		var createdAt, updatedAt string
 
 		if err := rows.Scan(&item.ID, &item.Category, &item.Title, &item.FilePath, &createdAt, &updatedAt); err != nil {
-			return nil, 0, fmt.Errorf("扫描知识项失败: %w", err)
+			return nil, 0, fmt.Errorf("failed to scan knowledge item: %w", err)
 		}
 
-		// 解析时间
+		// parse time
 		timeFormats := []string{
 			"2006-01-02 15:04:05.999999999-07:00",
 			"2006-01-02 15:04:05.999999999",
@@ -537,7 +537,7 @@ func (m *Manager) GetItemsSummary(category string, limit, offset int) ([]*Knowle
 	return items, total, nil
 }
 
-// GetItem 获取单个知识项
+// GetItem returns a single knowledge item
 func (m *Manager) GetItem(id string) (*KnowledgeItem, error) {
 	item := &KnowledgeItem{}
 	var createdAt, updatedAt string
@@ -547,13 +547,13 @@ func (m *Manager) GetItem(id string) (*KnowledgeItem, error) {
 	).Scan(&item.ID, &item.Category, &item.Title, &item.FilePath, &item.Content, &createdAt, &updatedAt)
 
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("知识项不存在")
+		return nil, fmt.Errorf("knowledge item does not exist")
 	}
 	if err != nil {
-		return nil, fmt.Errorf("查询知识项失败: %w", err)
+		return nil, fmt.Errorf("failed to query knowledge item: %w", err)
 	}
 
-	// 解析时间 - 支持多种格式
+	// parse time - supports multiple formats
 	timeFormats := []string{
 		"2006-01-02 15:04:05.999999999-07:00",
 		"2006-01-02 15:04:05.999999999",
@@ -564,7 +564,7 @@ func (m *Manager) GetItem(id string) (*KnowledgeItem, error) {
 		time.RFC3339Nano,
 	}
 
-	// 解析创建时间
+	// parse created time
 	if createdAt != "" {
 		for _, format := range timeFormats {
 			parsed, err := time.Parse(format, createdAt)
@@ -575,7 +575,7 @@ func (m *Manager) GetItem(id string) (*KnowledgeItem, error) {
 		}
 	}
 
-	// 解析更新时间
+	// parse updated time
 	if updatedAt != "" {
 		for _, format := range timeFormats {
 			parsed, err := time.Parse(format, updatedAt)
@@ -586,7 +586,7 @@ func (m *Manager) GetItem(id string) (*KnowledgeItem, error) {
 		}
 	}
 
-	// 如果更新时间为空，使用创建时间
+	// if updated time is zero, use created time
 	if item.UpdatedAt.IsZero() && !item.CreatedAt.IsZero() {
 		item.UpdatedAt = item.CreatedAt
 	}
@@ -594,31 +594,31 @@ func (m *Manager) GetItem(id string) (*KnowledgeItem, error) {
 	return item, nil
 }
 
-// CreateItem 创建知识项
+// CreateItem creates a knowledge item
 func (m *Manager) CreateItem(category, title, content string) (*KnowledgeItem, error) {
 	id := uuid.New().String()
 	now := time.Now()
 
-	// 构建文件路径
+	// build file path
 	filePath := filepath.Join(m.basePath, category, title+".md")
 
-	// 确保目录存在
+	// ensure directory exists
 	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
-		return nil, fmt.Errorf("创建目录失败: %w", err)
+		return nil, fmt.Errorf("failed to create directory: %w", err)
 	}
 
-	// 写入文件
+	// write file
 	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
-		return nil, fmt.Errorf("写入文件失败: %w", err)
+		return nil, fmt.Errorf("failed to write file: %w", err)
 	}
 
-	// 插入数据库
+	// insert into database
 	_, err := m.db.Exec(
 		"INSERT INTO knowledge_base_items (id, category, title, file_path, content, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
 		id, category, title, filePath, content, now, now,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("插入知识项失败: %w", err)
+		return nil, fmt.Errorf("failed to insert knowledge item: %w", err)
 	}
 
 	return &KnowledgeItem{
@@ -632,91 +632,91 @@ func (m *Manager) CreateItem(category, title, content string) (*KnowledgeItem, e
 	}, nil
 }
 
-// UpdateItem 更新知识项
+// UpdateItem updates a knowledge item
 func (m *Manager) UpdateItem(id, category, title, content string) (*KnowledgeItem, error) {
-	// 获取现有项
+	// get existing item
 	item, err := m.GetItem(id)
 	if err != nil {
 		return nil, err
 	}
 
-	// 构建新文件路径
+	// build new file path
 	newFilePath := filepath.Join(m.basePath, category, title+".md")
 
-	// 如果路径改变，需要移动文件
+	// if path changed, move the file
 	if item.FilePath != newFilePath {
-		// 确保新目录存在
+		// ensure new directory exists
 		if err := os.MkdirAll(filepath.Dir(newFilePath), 0755); err != nil {
-			return nil, fmt.Errorf("创建目录失败: %w", err)
+			return nil, fmt.Errorf("failed to create directory: %w", err)
 		}
 
-		// 移动文件
+		// move file
 		if err := os.Rename(item.FilePath, newFilePath); err != nil {
-			return nil, fmt.Errorf("移动文件失败: %w", err)
+			return nil, fmt.Errorf("failed to move file: %w", err)
 		}
 
-		// 删除旧目录（如果为空）
+		// delete old directory if empty
 		oldDir := filepath.Dir(item.FilePath)
 		if entries, err := os.ReadDir(oldDir); err == nil && len(entries) == 0 {
-			// 只有当目录不是知识库根目录时才删除（避免删除根目录）
+			// only delete the directory if it's not the knowledge base root directory
 			if oldDir != m.basePath {
 				if err := os.Remove(oldDir); err != nil {
-					m.logger.Warn("删除空目录失败", zap.String("dir", oldDir), zap.Error(err))
+					m.logger.Warn("failed to delete empty directory", zap.String("dir", oldDir), zap.Error(err))
 				}
 			}
 		}
 	}
 
-	// 写入文件
+	// write file
 	if err := os.WriteFile(newFilePath, []byte(content), 0644); err != nil {
-		return nil, fmt.Errorf("写入文件失败: %w", err)
+		return nil, fmt.Errorf("failed to write file: %w", err)
 	}
 
-	// 更新数据库
+	// update database
 	_, err = m.db.Exec(
 		"UPDATE knowledge_base_items SET category = ?, title = ?, file_path = ?, content = ?, updated_at = ? WHERE id = ?",
 		category, title, newFilePath, content, time.Now(), id,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("更新知识项失败: %w", err)
+		return nil, fmt.Errorf("failed to update knowledge item: %w", err)
 	}
 
-	// 删除旧的向量嵌入（需要重新索引）
+	// delete old vector embeddings (need to re-index)
 	_, err = m.db.Exec("DELETE FROM knowledge_embeddings WHERE item_id = ?", id)
 	if err != nil {
-		m.logger.Warn("删除旧向量嵌入失败", zap.Error(err))
+		m.logger.Warn("failed to delete old vector embeddings", zap.Error(err))
 	}
 
 	return m.GetItem(id)
 }
 
-// DeleteItem 删除知识项
+// DeleteItem deletes a knowledge item
 func (m *Manager) DeleteItem(id string) error {
-	// 获取文件路径
+	// get file path
 	var filePath string
 	err := m.db.QueryRow("SELECT file_path FROM knowledge_base_items WHERE id = ?", id).Scan(&filePath)
 	if err != nil {
-		return fmt.Errorf("查询知识项失败: %w", err)
+		return fmt.Errorf("failed to query knowledge item: %w", err)
 	}
 
-	// 删除文件
+	// delete file
 	if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
-		m.logger.Warn("删除文件失败", zap.String("path", filePath), zap.Error(err))
+		m.logger.Warn("failed to delete file", zap.String("path", filePath), zap.Error(err))
 	}
 
-	// 删除数据库记录（级联删除向量）
+	// delete database record (cascades to delete vectors)
 	_, err = m.db.Exec("DELETE FROM knowledge_base_items WHERE id = ?", id)
 	if err != nil {
-		return fmt.Errorf("删除知识项失败: %w", err)
+		return fmt.Errorf("failed to delete knowledge item: %w", err)
 	}
 
-	// 删除空目录（如果为空）
+	// delete empty directory
 	dir := filepath.Dir(filePath)
 	if entries, err := os.ReadDir(dir); err == nil && len(entries) == 0 {
-		// 只有当目录不是知识库根目录时才删除（避免删除根目录）
+		// only delete the directory if it's not the knowledge base root directory
 		if dir != m.basePath {
 			if err := os.Remove(dir); err != nil {
-				m.logger.Warn("删除空目录失败", zap.String("dir", dir), zap.Error(err))
+				m.logger.Warn("failed to delete empty directory", zap.String("dir", dir), zap.Error(err))
 			}
 		}
 	}
@@ -724,7 +724,7 @@ func (m *Manager) DeleteItem(id string) error {
 	return nil
 }
 
-// LogRetrieval 记录检索日志
+// LogRetrieval records a retrieval log
 func (m *Manager) LogRetrieval(conversationID, messageID, query, riskType string, retrievedItems []string) error {
 	id := uuid.New().String()
 	itemsJSON, _ := json.Marshal(retrievedItems)
@@ -736,26 +736,26 @@ func (m *Manager) LogRetrieval(conversationID, messageID, query, riskType string
 	return err
 }
 
-// GetIndexStatus 获取索引状态
+// GetIndexStatus returns the index status
 func (m *Manager) GetIndexStatus() (map[string]interface{}, error) {
-	// 获取总知识项数
+	// get total knowledge item count
 	var totalItems int
 	err := m.db.QueryRow("SELECT COUNT(*) FROM knowledge_base_items").Scan(&totalItems)
 	if err != nil {
-		return nil, fmt.Errorf("查询总知识项数失败: %w", err)
+		return nil, fmt.Errorf("failed to query total knowledge item count: %w", err)
 	}
 
-	// 获取已索引的知识项数（有向量嵌入的）
+	// get count of indexed knowledge items (those with vector embeddings)
 	var indexedItems int
 	err = m.db.QueryRow(`
-		SELECT COUNT(DISTINCT item_id) 
+		SELECT COUNT(DISTINCT item_id)
 		FROM knowledge_embeddings
 	`).Scan(&indexedItems)
 	if err != nil {
-		return nil, fmt.Errorf("查询已索引项数失败: %w", err)
+		return nil, fmt.Errorf("failed to query indexed item count: %w", err)
 	}
 
-	// 计算进度百分比
+	// calculate progress percentage
 	var progressPercent float64
 	if totalItems > 0 {
 		progressPercent = float64(indexedItems) / float64(totalItems) * 100
@@ -763,7 +763,7 @@ func (m *Manager) GetIndexStatus() (map[string]interface{}, error) {
 		progressPercent = 100.0
 	}
 
-	// 判断是否完成
+	// determine if complete
 	isComplete := indexedItems >= totalItems && totalItems > 0
 
 	return map[string]interface{}{
@@ -774,7 +774,7 @@ func (m *Manager) GetIndexStatus() (map[string]interface{}, error) {
 	}, nil
 }
 
-// GetRetrievalLogs 获取检索日志
+// GetRetrievalLogs returns retrieval logs
 func (m *Manager) GetRetrievalLogs(conversationID, messageID string, limit int) ([]*RetrievalLog, error) {
 	var rows *sql.Rows
 	var err error
@@ -797,7 +797,7 @@ func (m *Manager) GetRetrievalLogs(conversationID, messageID string, limit int) 
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("查询检索日志失败: %w", err)
+		return nil, fmt.Errorf("failed to query retrieval logs: %w", err)
 	}
 	defer rows.Close()
 
@@ -807,10 +807,10 @@ func (m *Manager) GetRetrievalLogs(conversationID, messageID string, limit int) 
 		var createdAt string
 		var itemsJSON sql.NullString
 		if err := rows.Scan(&log.ID, &log.ConversationID, &log.MessageID, &log.Query, &log.RiskType, &itemsJSON, &createdAt); err != nil {
-			return nil, fmt.Errorf("扫描检索日志失败: %w", err)
+			return nil, fmt.Errorf("failed to scan retrieval log: %w", err)
 		}
 
-		// 解析时间 - 支持多种格式
+		// parse time - supports multiple formats
 		var err error
 		timeFormats := []string{
 			"2006-01-02 15:04:05.999999999-07:00",
@@ -829,17 +829,17 @@ func (m *Manager) GetRetrievalLogs(conversationID, messageID string, limit int) 
 			}
 		}
 
-		// 如果所有格式都失败，记录警告但继续处理
+		// if all formats fail, log a warning but continue processing
 		if log.CreatedAt.IsZero() {
-			m.logger.Warn("解析检索日志时间失败",
+			m.logger.Warn("failed to parse retrieval log time",
 				zap.String("timeStr", createdAt),
 				zap.Error(err),
 			)
-			// 使用当前时间作为fallback
+			// use current time as fallback
 			log.CreatedAt = time.Now()
 		}
 
-		// 解析检索项
+		// parse retrieved items
 		if itemsJSON.Valid {
 			json.Unmarshal([]byte(itemsJSON.String), &log.RetrievedItems)
 		}
@@ -850,20 +850,20 @@ func (m *Manager) GetRetrievalLogs(conversationID, messageID string, limit int) 
 	return logs, nil
 }
 
-// DeleteRetrievalLog 删除检索日志
+// DeleteRetrievalLog deletes a retrieval log
 func (m *Manager) DeleteRetrievalLog(id string) error {
 	result, err := m.db.Exec("DELETE FROM knowledge_retrieval_logs WHERE id = ?", id)
 	if err != nil {
-		return fmt.Errorf("删除检索日志失败: %w", err)
+		return fmt.Errorf("failed to delete retrieval log: %w", err)
 	}
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("获取删除行数失败: %w", err)
+		return fmt.Errorf("failed to get number of deleted rows: %w", err)
 	}
 
 	if rowsAffected == 0 {
-		return fmt.Errorf("检索日志不存在")
+		return fmt.Errorf("retrieval log does not exist")
 	}
 
 	return nil

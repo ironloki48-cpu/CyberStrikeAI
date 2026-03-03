@@ -13,7 +13,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// MonitorHandler 监控处理器
+// MonitorHandler handles monitoring operations
 type MonitorHandler struct {
 	mcpServer      *mcp.Server
 	externalMCPMgr *mcp.ExternalMCPManager
@@ -22,23 +22,23 @@ type MonitorHandler struct {
 	logger         *zap.Logger
 }
 
-// NewMonitorHandler 创建新的监控处理器
+// NewMonitorHandler creates a new monitor handler
 func NewMonitorHandler(mcpServer *mcp.Server, executor *security.Executor, db *database.DB, logger *zap.Logger) *MonitorHandler {
 	return &MonitorHandler{
 		mcpServer:      mcpServer,
-		externalMCPMgr: nil, // 将在创建后设置
+		externalMCPMgr: nil, // will be set after creation
 		executor:       executor,
 		db:             db,
 		logger:         logger,
 	}
 }
 
-// SetExternalMCPManager 设置外部MCP管理器
+// SetExternalMCPManager sets the external MCP manager
 func (h *MonitorHandler) SetExternalMCPManager(mgr *mcp.ExternalMCPManager) {
 	h.externalMCPMgr = mgr
 }
 
-// MonitorResponse 监控响应
+// MonitorResponse is the monitor response
 type MonitorResponse struct {
 	Executions []*mcp.ToolExecution      `json:"executions"`
 	Stats      map[string]*mcp.ToolStats `json:"stats"`
@@ -49,9 +49,9 @@ type MonitorResponse struct {
 	TotalPages int                        `json:"total_pages,omitempty"`
 }
 
-// Monitor 获取监控信息
+// Monitor retrieves monitoring information
 func (h *MonitorHandler) Monitor(c *gin.Context) {
-	// 解析分页参数
+	// parse pagination parameters
 	page := 1
 	pageSize := 20
 	if pageStr := c.Query("page"); pageStr != "" {
@@ -65,9 +65,9 @@ func (h *MonitorHandler) Monitor(c *gin.Context) {
 		}
 	}
 
-	// 解析状态筛选参数
+	// parse status filter parameter
 	status := c.Query("status")
-	// 解析工具筛选参数
+	// parse tool filter parameter
 	toolName := c.Query("tool")
 
 	executions, total := h.loadExecutionsWithPagination(page, pageSize, status, toolName)
@@ -97,12 +97,12 @@ func (h *MonitorHandler) loadExecutions() []*mcp.ToolExecution {
 func (h *MonitorHandler) loadExecutionsWithPagination(page, pageSize int, status, toolName string) ([]*mcp.ToolExecution, int) {
 	if h.db == nil {
 		allExecutions := h.mcpServer.GetAllExecutions()
-		// 如果指定了状态筛选或工具筛选，先进行筛选
+		// if status or tool filter is specified, filter first
 		if status != "" || toolName != "" {
 			filtered := make([]*mcp.ToolExecution, 0)
 			for _, exec := range allExecutions {
 				matchStatus := status == "" || exec.Status == status
-				// 支持部分匹配（模糊搜索）
+				// support partial match (fuzzy search)
 				matchTool := toolName == "" || strings.Contains(strings.ToLower(exec.ToolName), strings.ToLower(toolName))
 				if matchStatus && matchTool {
 					filtered = append(filtered, exec)
@@ -125,14 +125,14 @@ func (h *MonitorHandler) loadExecutionsWithPagination(page, pageSize int, status
 	offset := (page - 1) * pageSize
 	executions, err := h.db.LoadToolExecutionsWithPagination(offset, pageSize, status, toolName)
 	if err != nil {
-		h.logger.Warn("从数据库加载执行记录失败，回退到内存数据", zap.Error(err))
+		h.logger.Warn("failed to load execution records from database, falling back to memory data", zap.Error(err))
 		allExecutions := h.mcpServer.GetAllExecutions()
-		// 如果指定了状态筛选或工具筛选，先进行筛选
+		// if status or tool filter is specified, filter first
 		if status != "" || toolName != "" {
 			filtered := make([]*mcp.ToolExecution, 0)
 			for _, exec := range allExecutions {
 				matchStatus := status == "" || exec.Status == status
-				// 支持部分匹配（模糊搜索）
+				// support partial match (fuzzy search)
 				matchTool := toolName == "" || strings.Contains(strings.ToLower(exec.ToolName), strings.ToLower(toolName))
 				if matchStatus && matchTool {
 					filtered = append(filtered, exec)
@@ -152,11 +152,11 @@ func (h *MonitorHandler) loadExecutionsWithPagination(page, pageSize int, status
 		return allExecutions[offset:end], total
 	}
 
-	// 获取总数（考虑状态筛选和工具筛选）
+	// get total count (considering status and tool filters)
 	total, err := h.db.CountToolExecutions(status, toolName)
 	if err != nil {
-		h.logger.Warn("获取执行记录总数失败", zap.Error(err))
-		// 回退：使用已加载的记录数估算
+		h.logger.Warn("failed to get total execution record count", zap.Error(err))
+		// fallback: estimate from loaded records
 		total = offset + len(executions)
 		if len(executions) == pageSize {
 			total = offset + len(executions) + 1
@@ -167,10 +167,10 @@ func (h *MonitorHandler) loadExecutionsWithPagination(page, pageSize int, status
 }
 
 func (h *MonitorHandler) loadStats() map[string]*mcp.ToolStats {
-	// 合并内部MCP服务器和外部MCP管理器的统计信息
+	// merge statistics from internal MCP server and external MCP manager
 	stats := make(map[string]*mcp.ToolStats)
 
-	// 加载内部MCP服务器的统计信息
+	// load statistics from internal MCP server
 	if h.db == nil {
 		internalStats := h.mcpServer.GetStats()
 		for k, v := range internalStats {
@@ -179,7 +179,7 @@ func (h *MonitorHandler) loadStats() map[string]*mcp.ToolStats {
 	} else {
 		dbStats, err := h.db.LoadToolStats()
 		if err != nil {
-			h.logger.Warn("从数据库加载统计信息失败，回退到内存数据", zap.Error(err))
+			h.logger.Warn("failed to load statistics from database, falling back to memory data", zap.Error(err))
 			internalStats := h.mcpServer.GetStats()
 			for k, v := range internalStats {
 				stats[k] = v
@@ -191,16 +191,16 @@ func (h *MonitorHandler) loadStats() map[string]*mcp.ToolStats {
 		}
 	}
 
-	// 合并外部MCP管理器的统计信息
+	// merge statistics from external MCP manager
 	if h.externalMCPMgr != nil {
 		externalStats := h.externalMCPMgr.GetToolStats()
 		for k, v := range externalStats {
-			// 如果已存在，合并统计信息
+			// if already exists, merge statistics
 			if existing, exists := stats[k]; exists {
 				existing.TotalCalls += v.TotalCalls
 				existing.SuccessCalls += v.SuccessCalls
 				existing.FailedCalls += v.FailedCalls
-				// 使用最新的调用时间
+				// use the most recent call time
 				if v.LastCallTime != nil && (existing.LastCallTime == nil || v.LastCallTime.After(*existing.LastCallTime)) {
 					existing.LastCallTime = v.LastCallTime
 				}
@@ -214,18 +214,18 @@ func (h *MonitorHandler) loadStats() map[string]*mcp.ToolStats {
 }
 
 
-// GetExecution 获取特定执行记录
+// GetExecution retrieves a specific execution record
 func (h *MonitorHandler) GetExecution(c *gin.Context) {
 	id := c.Param("id")
 
-	// 先从内部MCP服务器查找
+	// check internal MCP server first
 	exec, exists := h.mcpServer.GetExecution(id)
 	if exists {
 		c.JSON(http.StatusOK, exec)
 		return
 	}
 
-	// 如果找不到，尝试从外部MCP管理器查找
+	// if not found, try the external MCP manager
 	if h.externalMCPMgr != nil {
 		exec, exists = h.externalMCPMgr.GetExecution(id)
 		if exists {
@@ -234,7 +234,7 @@ func (h *MonitorHandler) GetExecution(c *gin.Context) {
 		}
 	}
 
-	// 如果都找不到，尝试从数据库查找（如果使用数据库存储）
+	// if still not found, try the database (if using database storage)
 	if h.db != nil {
 		exec, err := h.db.GetToolExecution(id)
 		if err == nil && exec != nil {
@@ -243,43 +243,43 @@ func (h *MonitorHandler) GetExecution(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusNotFound, gin.H{"error": "执行记录未找到"})
+	c.JSON(http.StatusNotFound, gin.H{"error": "execution record not found"})
 }
 
-// GetStats 获取统计信息
+// GetStats retrieves statistics
 func (h *MonitorHandler) GetStats(c *gin.Context) {
 	stats := h.loadStats()
 	c.JSON(http.StatusOK, stats)
 }
 
-// DeleteExecution 删除执行记录
+// DeleteExecution deletes an execution record
 func (h *MonitorHandler) DeleteExecution(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "执行记录ID不能为空"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "execution record ID cannot be empty"})
 		return
 	}
 
-	// 如果使用数据库，先获取执行记录信息，然后删除并更新统计
+	// if using database, get the execution record first, then delete and update stats
 	if h.db != nil {
-		// 先获取执行记录信息（用于更新统计）
+		// get execution record info first (for updating stats)
 		exec, err := h.db.GetToolExecution(id)
 		if err != nil {
-			// 如果找不到记录，可能已经被删除，直接返回成功
-			h.logger.Warn("执行记录不存在，可能已被删除", zap.String("executionId", id), zap.Error(err))
-			c.JSON(http.StatusOK, gin.H{"message": "执行记录不存在或已被删除"})
+			// if record not found, it may have already been deleted; return success
+			h.logger.Warn("execution record not found, may have already been deleted", zap.String("executionId", id), zap.Error(err))
+			c.JSON(http.StatusOK, gin.H{"message": "execution record not found or already deleted"})
 			return
 		}
 
-		// 删除执行记录
+		// delete execution record
 		err = h.db.DeleteToolExecution(id)
 		if err != nil {
-			h.logger.Error("删除执行记录失败", zap.Error(err), zap.String("executionId", id))
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "删除执行记录失败: " + err.Error()})
+			h.logger.Error("failed to delete execution record", zap.Error(err), zap.String("executionId", id))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete execution record: " + err.Error()})
 			return
 		}
 
-		// 更新统计信息（减少相应的计数）
+		// update statistics (decrement corresponding counts)
 		totalCalls := 1
 		successCalls := 0
 		failedCalls := 0
@@ -291,49 +291,49 @@ func (h *MonitorHandler) DeleteExecution(c *gin.Context) {
 
 		if exec.ToolName != "" {
 			if err := h.db.DecreaseToolStats(exec.ToolName, totalCalls, successCalls, failedCalls); err != nil {
-				h.logger.Warn("更新统计信息失败", zap.Error(err), zap.String("toolName", exec.ToolName))
-				// 不返回错误，因为记录已经删除成功
+				h.logger.Warn("failed to update statistics", zap.Error(err), zap.String("toolName", exec.ToolName))
+				// do not return error since the record was already deleted successfully
 			}
 		}
 
-		h.logger.Info("执行记录已从数据库删除", zap.String("executionId", id), zap.String("toolName", exec.ToolName))
-		c.JSON(http.StatusOK, gin.H{"message": "执行记录已删除"})
+		h.logger.Info("execution record deleted from database", zap.String("executionId", id), zap.String("toolName", exec.ToolName))
+		c.JSON(http.StatusOK, gin.H{"message": "execution record deleted"})
 		return
 	}
 
-	// 如果不使用数据库，尝试从内存中删除（内部MCP服务器）
-	// 注意：内存中的记录可能已经被清理，所以这里只记录日志
-	h.logger.Info("尝试删除内存中的执行记录", zap.String("executionId", id))
-	c.JSON(http.StatusOK, gin.H{"message": "执行记录已删除（如果存在）"})
+	// if not using database, try deleting from memory (internal MCP server)
+	// note: in-memory records may have already been cleaned up, so we just log here
+	h.logger.Info("attempting to delete in-memory execution record", zap.String("executionId", id))
+	c.JSON(http.StatusOK, gin.H{"message": "execution record deleted (if it existed)"})
 }
 
-// DeleteExecutions 批量删除执行记录
+// DeleteExecutions bulk deletes execution records
 func (h *MonitorHandler) DeleteExecutions(c *gin.Context) {
 	var request struct {
 		IDs []string `json:"ids"`
 	}
 
 	if err := c.ShouldBindJSON(&request); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数无效: " + err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request parameters: " + err.Error()})
 		return
 	}
 
 	if len(request.IDs) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "执行记录ID列表不能为空"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "execution record ID list cannot be empty"})
 		return
 	}
 
-	// 如果使用数据库，先获取执行记录信息，然后删除并更新统计
+	// if using database, get the execution records first, then delete and update stats
 	if h.db != nil {
-		// 先获取执行记录信息（用于更新统计）
+		// get execution record info first (for updating stats)
 		executions, err := h.db.GetToolExecutionsByIds(request.IDs)
 		if err != nil {
-			h.logger.Error("获取执行记录失败", zap.Error(err))
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "获取执行记录失败: " + err.Error()})
+			h.logger.Error("failed to get execution records", zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get execution records: " + err.Error()})
 			return
 		}
 
-		// 按工具名称分组统计需要减少的数量
+		// group stats by tool name to determine counts to decrement
 		toolStats := make(map[string]struct {
 			totalCalls   int
 			successCalls int
@@ -355,31 +355,31 @@ func (h *MonitorHandler) DeleteExecutions(c *gin.Context) {
 			toolStats[exec.ToolName] = stats
 		}
 
-		// 批量删除执行记录
+		// bulk delete execution records
 		err = h.db.DeleteToolExecutions(request.IDs)
 		if err != nil {
-			h.logger.Error("批量删除执行记录失败", zap.Error(err), zap.Int("count", len(request.IDs)))
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "批量删除执行记录失败: " + err.Error()})
+			h.logger.Error("failed to bulk delete execution records", zap.Error(err), zap.Int("count", len(request.IDs)))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to bulk delete execution records: " + err.Error()})
 			return
 		}
 
-		// 更新统计信息（减少相应的计数）
+		// update statistics (decrement corresponding counts)
 		for toolName, stats := range toolStats {
 			if err := h.db.DecreaseToolStats(toolName, stats.totalCalls, stats.successCalls, stats.failedCalls); err != nil {
-				h.logger.Warn("更新统计信息失败", zap.Error(err), zap.String("toolName", toolName))
-				// 不返回错误，因为记录已经删除成功
+				h.logger.Warn("failed to update statistics", zap.Error(err), zap.String("toolName", toolName))
+				// do not return error since the records were already deleted successfully
 			}
 		}
 
-		h.logger.Info("批量删除执行记录成功", zap.Int("count", len(request.IDs)))
-		c.JSON(http.StatusOK, gin.H{"message": "成功删除执行记录", "deleted": len(executions)})
+		h.logger.Info("bulk deleted execution records successfully", zap.Int("count", len(request.IDs)))
+		c.JSON(http.StatusOK, gin.H{"message": "execution records deleted successfully", "deleted": len(executions)})
 		return
 	}
 
-	// 如果不使用数据库，尝试从内存中删除（内部MCP服务器）
-	// 注意：内存中的记录可能已经被清理，所以这里只记录日志
-	h.logger.Info("尝试批量删除内存中的执行记录", zap.Int("count", len(request.IDs)))
-	c.JSON(http.StatusOK, gin.H{"message": "执行记录已删除（如果存在）"})
+	// if not using database, try deleting from memory (internal MCP server)
+	// note: in-memory records may have already been cleaned up, so we just log here
+	h.logger.Info("attempting to bulk delete in-memory execution records", zap.Int("count", len(request.IDs)))
+	c.JSON(http.StatusOK, gin.H{"message": "execution records deleted (if they existed)"})
 }
 
 

@@ -11,11 +11,11 @@ import (
 	"go.uber.org/zap"
 )
 
-// SaveToolExecution 保存工具执行记录
+// SaveToolExecution saves a tool execution record
 func (db *DB) SaveToolExecution(exec *mcp.ToolExecution) error {
 	argsJSON, err := json.Marshal(exec.Arguments)
 	if err != nil {
-		db.logger.Warn("序列化执行参数失败", zap.Error(err))
+		db.logger.Warn("failed to serialize execution arguments", zap.Error(err))
 		argsJSON = []byte("{}")
 	}
 
@@ -23,7 +23,7 @@ func (db *DB) SaveToolExecution(exec *mcp.ToolExecution) error {
 	if exec.Result != nil {
 		resultBytes, err := json.Marshal(exec.Result)
 		if err != nil {
-			db.logger.Warn("序列化执行结果失败", zap.Error(err))
+			db.logger.Warn("failed to serialize execution result", zap.Error(err))
 		} else {
 			resultJSON = sql.NullString{String: string(resultBytes), Valid: true}
 		}
@@ -45,7 +45,7 @@ func (db *DB) SaveToolExecution(exec *mcp.ToolExecution) error {
 	}
 
 	query := `
-		INSERT OR REPLACE INTO tool_executions 
+		INSERT OR REPLACE INTO tool_executions
 		(id, tool_name, arguments, status, result, error, start_time, end_time, duration_ms, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
@@ -64,14 +64,14 @@ func (db *DB) SaveToolExecution(exec *mcp.ToolExecution) error {
 	)
 
 	if err != nil {
-		db.logger.Error("保存工具执行记录失败", zap.Error(err), zap.String("executionId", exec.ID))
+		db.logger.Error("failed to save tool execution record", zap.Error(err), zap.String("executionId", exec.ID))
 		return err
 	}
 
 	return nil
 }
 
-// CountToolExecutions 统计工具执行记录总数
+// CountToolExecutions counts the total number of tool execution records
 func (db *DB) CountToolExecutions(status, toolName string) (int, error) {
 	query := `SELECT COUNT(*) FROM tool_executions`
 	args := []interface{}{}
@@ -81,7 +81,7 @@ func (db *DB) CountToolExecutions(status, toolName string) (int, error) {
 		args = append(args, status)
 	}
 	if toolName != "" {
-		// 支持部分匹配（模糊搜索），不区分大小写
+		// support partial match (fuzzy search), case-insensitive
 		conditions = append(conditions, "LOWER(tool_name) LIKE ?")
 		args = append(args, "%"+strings.ToLower(toolName)+"%")
 	}
@@ -99,22 +99,22 @@ func (db *DB) CountToolExecutions(status, toolName string) (int, error) {
 	return count, nil
 }
 
-// LoadToolExecutions 加载所有工具执行记录（支持分页）
+// LoadToolExecutions loads all tool execution records (supports pagination)
 func (db *DB) LoadToolExecutions() ([]*mcp.ToolExecution, error) {
 	return db.LoadToolExecutionsWithPagination(0, 1000, "", "")
 }
 
-// LoadToolExecutionsWithPagination 分页加载工具执行记录
-// limit: 最大返回记录数，0 表示使用默认值 1000
-// offset: 跳过的记录数，用于分页
-// status: 状态筛选，空字符串表示不过滤
-// toolName: 工具名称筛选，空字符串表示不过滤
+// LoadToolExecutionsWithPagination loads tool execution records with pagination.
+// limit: maximum number of records to return, 0 uses default value of 1000.
+// offset: number of records to skip, used for pagination.
+// status: status filter, empty string means no filter.
+// toolName: tool name filter, empty string means no filter.
 func (db *DB) LoadToolExecutionsWithPagination(offset, limit int, status, toolName string) ([]*mcp.ToolExecution, error) {
 	if limit <= 0 {
-		limit = 1000 // 默认限制
+		limit = 1000 // default limit
 	}
 	if limit > 10000 {
-		limit = 10000 // 最大限制，防止一次性加载过多数据
+		limit = 10000 // maximum limit, to prevent loading too much data at once
 	}
 
 	query := `
@@ -128,7 +128,7 @@ func (db *DB) LoadToolExecutionsWithPagination(offset, limit int, status, toolNa
 		args = append(args, status)
 	}
 	if toolName != "" {
-		// 支持部分匹配（模糊搜索），不区分大小写
+		// support partial match (fuzzy search), case-insensitive
 		conditions = append(conditions, "LOWER(tool_name) LIKE ?")
 		args = append(args, "%"+strings.ToLower(toolName)+"%")
 	}
@@ -168,37 +168,37 @@ func (db *DB) LoadToolExecutionsWithPagination(offset, limit int, status, toolNa
 			&durationMs,
 		)
 		if err != nil {
-			db.logger.Warn("加载执行记录失败", zap.Error(err))
+			db.logger.Warn("failed to load execution record", zap.Error(err))
 			continue
 		}
 
-		// 解析参数
+		// parse arguments
 		if err := json.Unmarshal([]byte(argsJSON), &exec.Arguments); err != nil {
-			db.logger.Warn("解析执行参数失败", zap.Error(err))
+			db.logger.Warn("failed to parse execution arguments", zap.Error(err))
 			exec.Arguments = make(map[string]interface{})
 		}
 
-		// 解析结果
+		// parse result
 		if resultJSON.Valid && resultJSON.String != "" {
 			var result mcp.ToolResult
 			if err := json.Unmarshal([]byte(resultJSON.String), &result); err != nil {
-				db.logger.Warn("解析执行结果失败", zap.Error(err))
+				db.logger.Warn("failed to parse execution result", zap.Error(err))
 			} else {
 				exec.Result = &result
 			}
 		}
 
-		// 设置错误
+		// set error
 		if errorText.Valid {
 			exec.Error = errorText.String
 		}
 
-		// 设置结束时间
+		// set end time
 		if endTime.Valid {
 			exec.EndTime = &endTime.Time
 		}
 
-		// 设置持续时间
+		// set duration
 		if durationMs.Valid {
 			exec.Duration = time.Duration(durationMs.Int64) * time.Millisecond
 		}
@@ -209,7 +209,7 @@ func (db *DB) LoadToolExecutionsWithPagination(offset, limit int, status, toolNa
 	return executions, nil
 }
 
-// GetToolExecution 根据ID获取单条工具执行记录
+// GetToolExecution retrieves a single tool execution record by ID
 func (db *DB) GetToolExecution(id string) (*mcp.ToolExecution, error) {
 	query := `
 		SELECT id, tool_name, arguments, status, result, error, start_time, end_time, duration_ms
@@ -242,14 +242,14 @@ func (db *DB) GetToolExecution(id string) (*mcp.ToolExecution, error) {
 	}
 
 	if err := json.Unmarshal([]byte(argsJSON), &exec.Arguments); err != nil {
-		db.logger.Warn("解析执行参数失败", zap.Error(err))
+		db.logger.Warn("failed to parse execution arguments", zap.Error(err))
 		exec.Arguments = make(map[string]interface{})
 	}
 
 	if resultJSON.Valid && resultJSON.String != "" {
 		var result mcp.ToolResult
 		if err := json.Unmarshal([]byte(resultJSON.String), &result); err != nil {
-			db.logger.Warn("解析执行结果失败", zap.Error(err))
+			db.logger.Warn("failed to parse execution result", zap.Error(err))
 		} else {
 			exec.Result = &result
 		}
@@ -270,24 +270,24 @@ func (db *DB) GetToolExecution(id string) (*mcp.ToolExecution, error) {
 	return &exec, nil
 }
 
-// DeleteToolExecution 删除工具执行记录
+// DeleteToolExecution deletes a tool execution record
 func (db *DB) DeleteToolExecution(id string) error {
 	query := `DELETE FROM tool_executions WHERE id = ?`
 	_, err := db.Exec(query, id)
 	if err != nil {
-		db.logger.Error("删除工具执行记录失败", zap.Error(err), zap.String("executionId", id))
+		db.logger.Error("failed to delete tool execution record", zap.Error(err), zap.String("executionId", id))
 		return err
 	}
 	return nil
 }
 
-// DeleteToolExecutions 批量删除工具执行记录
+// DeleteToolExecutions bulk deletes tool execution records
 func (db *DB) DeleteToolExecutions(ids []string) error {
 	if len(ids) == 0 {
 		return nil
 	}
 
-	// 构建 IN 查询的占位符
+	// build placeholders for IN query
 	placeholders := make([]string, len(ids))
 	args := make([]interface{}, len(ids))
 	for i, id := range ids {
@@ -298,19 +298,19 @@ func (db *DB) DeleteToolExecutions(ids []string) error {
 	query := `DELETE FROM tool_executions WHERE id IN (` + strings.Join(placeholders, ",") + `)`
 	_, err := db.Exec(query, args...)
 	if err != nil {
-		db.logger.Error("批量删除工具执行记录失败", zap.Error(err), zap.Int("count", len(ids)))
+		db.logger.Error("failed to bulk delete tool execution records", zap.Error(err), zap.Int("count", len(ids)))
 		return err
 	}
 	return nil
 }
 
-// GetToolExecutionsByIds 根据ID列表获取工具执行记录（用于批量删除前获取统计信息）
+// GetToolExecutionsByIds retrieves tool execution records by ID list (used to get statistics before bulk deletion)
 func (db *DB) GetToolExecutionsByIds(ids []string) ([]*mcp.ToolExecution, error) {
 	if len(ids) == 0 {
 		return []*mcp.ToolExecution{}, nil
 	}
 
-	// 构建 IN 查询的占位符
+	// build placeholders for IN query
 	placeholders := make([]string, len(ids))
 	args := make([]interface{}, len(ids))
 	for i, id := range ids {
@@ -351,37 +351,37 @@ func (db *DB) GetToolExecutionsByIds(ids []string) ([]*mcp.ToolExecution, error)
 			&durationMs,
 		)
 		if err != nil {
-			db.logger.Warn("加载执行记录失败", zap.Error(err))
+			db.logger.Warn("failed to load execution record", zap.Error(err))
 			continue
 		}
 
-		// 解析参数
+		// parse arguments
 		if err := json.Unmarshal([]byte(argsJSON), &exec.Arguments); err != nil {
-			db.logger.Warn("解析执行参数失败", zap.Error(err))
+			db.logger.Warn("failed to parse execution arguments", zap.Error(err))
 			exec.Arguments = make(map[string]interface{})
 		}
 
-		// 解析结果
+		// parse result
 		if resultJSON.Valid && resultJSON.String != "" {
 			var result mcp.ToolResult
 			if err := json.Unmarshal([]byte(resultJSON.String), &result); err != nil {
-				db.logger.Warn("解析执行结果失败", zap.Error(err))
+				db.logger.Warn("failed to parse execution result", zap.Error(err))
 			} else {
 				exec.Result = &result
 			}
 		}
 
-		// 设置错误
+		// set error
 		if errorText.Valid {
 			exec.Error = errorText.String
 		}
 
-		// 设置结束时间
+		// set end time
 		if endTime.Valid {
 			exec.EndTime = &endTime.Time
 		}
 
-		// 设置持续时间
+		// set duration
 		if durationMs.Valid {
 			exec.Duration = time.Duration(durationMs.Int64) * time.Millisecond
 		}
@@ -392,7 +392,7 @@ func (db *DB) GetToolExecutionsByIds(ids []string) ([]*mcp.ToolExecution, error)
 	return executions, nil
 }
 
-// SaveToolStats 保存工具统计信息
+// SaveToolStats saves tool statistics
 func (db *DB) SaveToolStats(toolName string, stats *mcp.ToolStats) error {
 	var lastCallTime sql.NullTime
 	if stats.LastCallTime != nil {
@@ -400,7 +400,7 @@ func (db *DB) SaveToolStats(toolName string, stats *mcp.ToolStats) error {
 	}
 
 	query := `
-		INSERT OR REPLACE INTO tool_stats 
+		INSERT OR REPLACE INTO tool_stats
 		(tool_name, total_calls, success_calls, failed_calls, last_call_time, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?)
 	`
@@ -415,14 +415,14 @@ func (db *DB) SaveToolStats(toolName string, stats *mcp.ToolStats) error {
 	)
 
 	if err != nil {
-		db.logger.Error("保存工具统计信息失败", zap.Error(err), zap.String("toolName", toolName))
+		db.logger.Error("failed to save tool statistics", zap.Error(err), zap.String("toolName", toolName))
 		return err
 	}
 
 	return nil
 }
 
-// LoadToolStats 加载所有工具统计信息
+// LoadToolStats loads all tool statistics
 func (db *DB) LoadToolStats() (map[string]*mcp.ToolStats, error) {
 	query := `
 		SELECT tool_name, total_calls, success_calls, failed_calls, last_call_time
@@ -448,7 +448,7 @@ func (db *DB) LoadToolStats() (map[string]*mcp.ToolStats, error) {
 			&lastCallTime,
 		)
 		if err != nil {
-			db.logger.Warn("加载统计信息失败", zap.Error(err))
+			db.logger.Warn("failed to load statistics", zap.Error(err))
 			continue
 		}
 
@@ -462,7 +462,7 @@ func (db *DB) LoadToolStats() (map[string]*mcp.ToolStats, error) {
 	return stats, nil
 }
 
-// UpdateToolStats 更新工具统计信息（累加模式）
+// UpdateToolStats updates tool statistics (accumulation mode)
 func (db *DB) UpdateToolStats(toolName string, totalCalls, successCalls, failedCalls int, lastCallTime *time.Time) error {
 	var lastCallTimeSQL sql.NullTime
 	if lastCallTime != nil {
@@ -486,17 +486,17 @@ func (db *DB) UpdateToolStats(toolName string, totalCalls, successCalls, failedC
 	)
 
 	if err != nil {
-		db.logger.Error("更新工具统计信息失败", zap.Error(err), zap.String("toolName", toolName))
+		db.logger.Error("failed to update tool statistics", zap.Error(err), zap.String("toolName", toolName))
 		return err
 	}
 
 	return nil
 }
 
-// DecreaseToolStats 减少工具统计信息（用于删除执行记录时）
-// 如果统计信息变为0，则删除该统计记录
+// DecreaseToolStats decreases tool statistics (used when deleting execution records).
+// If statistics drop to 0, the statistics record is deleted.
 func (db *DB) DecreaseToolStats(toolName string, totalCalls, successCalls, failedCalls int) error {
-	// 先更新统计信息
+	// update statistics first
 	query := `
 		UPDATE tool_stats SET
 			total_calls = CASE WHEN total_calls - ? < 0 THEN 0 ELSE total_calls - ? END,
@@ -508,28 +508,28 @@ func (db *DB) DecreaseToolStats(toolName string, totalCalls, successCalls, faile
 
 	_, err := db.Exec(query, totalCalls, totalCalls, successCalls, successCalls, failedCalls, failedCalls, time.Now(), toolName)
 	if err != nil {
-		db.logger.Error("减少工具统计信息失败", zap.Error(err), zap.String("toolName", toolName))
+		db.logger.Error("failed to decrease tool statistics", zap.Error(err), zap.String("toolName", toolName))
 		return err
 	}
 
-	// 检查更新后的 total_calls 是否为 0，如果是则删除该统计记录
+	// check if total_calls is 0 after update; if so, delete the statistics record
 	checkQuery := `SELECT total_calls FROM tool_stats WHERE tool_name = ?`
 	var newTotalCalls int
 	err = db.QueryRow(checkQuery, toolName).Scan(&newTotalCalls)
 	if err != nil {
-		// 如果查询失败（记录不存在），直接返回
+		// if query fails (record does not exist), return directly
 		return nil
 	}
 
-	// 如果 total_calls 为 0，删除该统计记录
+	// if total_calls is 0, delete the statistics record
 	if newTotalCalls == 0 {
 		deleteQuery := `DELETE FROM tool_stats WHERE tool_name = ?`
 		_, err = db.Exec(deleteQuery, toolName)
 		if err != nil {
-			db.logger.Warn("删除零统计记录失败", zap.Error(err), zap.String("toolName", toolName))
-			// 不返回错误，因为主要操作（更新统计）已成功
+			db.logger.Warn("failed to delete zero-count statistics record", zap.Error(err), zap.String("toolName", toolName))
+			// do not return error since the main operation (updating statistics) already succeeded
 		} else {
-			db.logger.Info("已删除零统计记录", zap.String("toolName", toolName))
+			db.logger.Info("deleted zero-count statistics record", zap.String("toolName", toolName))
 		}
 	}
 

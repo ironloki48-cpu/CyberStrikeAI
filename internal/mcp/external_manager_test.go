@@ -14,7 +14,7 @@ func TestExternalMCPManager_AddOrUpdateConfig(t *testing.T) {
 	logger := zap.NewNop()
 	manager := NewExternalMCPManager(logger)
 
-	// 测试添加stdio配置
+	// test adding stdio configuration
 	stdioCfg := config.ExternalMCPServerConfig{
 		Command:     "python3",
 		Args:        []string{"/path/to/script.py"},
@@ -26,10 +26,10 @@ func TestExternalMCPManager_AddOrUpdateConfig(t *testing.T) {
 
 	err := manager.AddOrUpdateConfig("test-stdio", stdioCfg)
 	if err != nil {
-		t.Fatalf("添加stdio配置失败: %v", err)
+		t.Fatalf("failed to add stdio configuration: %v", err)
 	}
 
-	// 测试添加HTTP配置
+	// test adding HTTP configuration
 	httpCfg := config.ExternalMCPServerConfig{
 		Transport:   "http",
 		URL:         "http://127.0.0.1:8081/mcp",
@@ -40,21 +40,21 @@ func TestExternalMCPManager_AddOrUpdateConfig(t *testing.T) {
 
 	err = manager.AddOrUpdateConfig("test-http", httpCfg)
 	if err != nil {
-		t.Fatalf("添加HTTP配置失败: %v", err)
+		t.Fatalf("failed to add HTTP configuration: %v", err)
 	}
 
-	// 验证配置已保存
+	// verify configurations were saved
 	configs := manager.GetConfigs()
 	if len(configs) != 2 {
-		t.Fatalf("期望2个配置，实际%d个", len(configs))
+		t.Fatalf("expected 2 configurations, got %d", len(configs))
 	}
 
 	if configs["test-stdio"].Command != stdioCfg.Command {
-		t.Errorf("stdio配置命令不匹配")
+		t.Errorf("stdio configuration command does not match")
 	}
 
 	if configs["test-http"].URL != httpCfg.URL {
-		t.Errorf("HTTP配置URL不匹配")
+		t.Errorf("HTTP configuration URL does not match")
 	}
 }
 
@@ -70,15 +70,15 @@ func TestExternalMCPManager_RemoveConfig(t *testing.T) {
 
 	manager.AddOrUpdateConfig("test-remove", cfg)
 
-	// 移除配置
+	// remove configuration
 	err := manager.RemoveConfig("test-remove")
 	if err != nil {
-		t.Fatalf("移除配置失败: %v", err)
+		t.Fatalf("failed to remove configuration: %v", err)
 	}
 
 	configs := manager.GetConfigs()
 	if _, exists := configs["test-remove"]; exists {
-		t.Error("配置应该已被移除")
+		t.Error("configuration should have been removed")
 	}
 }
 
@@ -86,7 +86,7 @@ func TestExternalMCPManager_GetStats(t *testing.T) {
 	logger := zap.NewNop()
 	manager := NewExternalMCPManager(logger)
 
-	// 添加多个配置
+	// add multiple configurations
 	manager.AddOrUpdateConfig("enabled1", config.ExternalMCPServerConfig{
 		Command: "python3",
 		Enabled: true,
@@ -100,21 +100,21 @@ func TestExternalMCPManager_GetStats(t *testing.T) {
 	manager.AddOrUpdateConfig("disabled1", config.ExternalMCPServerConfig{
 		Command:  "python3",
 		Enabled:  false,
-		Disabled: true, // 明确设置为禁用
+		Disabled: true, // explicitly set as disabled
 	})
 
 	stats := manager.GetStats()
 
 	if stats["total"].(int) != 3 {
-		t.Errorf("期望总数3，实际%d", stats["total"])
+		t.Errorf("expected total 3, got %d", stats["total"])
 	}
 
 	if stats["enabled"].(int) != 2 {
-		t.Errorf("期望启用数2，实际%d", stats["enabled"])
+		t.Errorf("expected enabled 2, got %d", stats["enabled"])
 	}
 
 	if stats["disabled"].(int) != 1 {
-		t.Errorf("期望停用数1，实际%d", stats["disabled"])
+		t.Errorf("expected disabled 1, got %d", stats["disabled"])
 	}
 }
 
@@ -139,22 +139,22 @@ func TestExternalMCPManager_LoadConfigs(t *testing.T) {
 
 	configs := manager.GetConfigs()
 	if len(configs) != 2 {
-		t.Fatalf("期望2个配置，实际%d个", len(configs))
+		t.Fatalf("expected 2 configurations, got %d", len(configs))
 	}
 
 	if configs["loaded1"].Command != "python3" {
-		t.Error("配置1加载失败")
+		t.Error("configuration 1 failed to load")
 	}
 
 	if configs["loaded2"].URL != "http://127.0.0.1:8081/mcp" {
-		t.Error("配置2加载失败")
+		t.Error("configuration 2 failed to load")
 	}
 }
 
-// TestLazySDKClient_InitializeFails 验证无效配置时 SDK 客户端 Initialize 失败并设置 error 状态
+// TestLazySDKClient_InitializeFails verifies that Initialize fails and sets error status for invalid configurations
 func TestLazySDKClient_InitializeFails(t *testing.T) {
 	logger := zap.NewNop()
-	// 使用不存在的 HTTP 地址，Initialize 应失败
+	// use a non-existent HTTP address, Initialize should fail
 	cfg := config.ExternalMCPServerConfig{
 		Transport: "http",
 		URL:       "http://127.0.0.1:19999/nonexistent",
@@ -177,7 +177,7 @@ func TestExternalMCPManager_StartStopClient(t *testing.T) {
 	logger := zap.NewNop()
 	manager := NewExternalMCPManager(logger)
 
-	// 添加一个禁用的配置
+	// add a disabled configuration
 	cfg := config.ExternalMCPServerConfig{
 		Command:   "python3",
 		Transport: "stdio",
@@ -186,22 +186,22 @@ func TestExternalMCPManager_StartStopClient(t *testing.T) {
 
 	manager.AddOrUpdateConfig("test-start-stop", cfg)
 
-	// 尝试启动（可能会失败，因为没有真实的服务器）
+	// try to start (may fail as there is no real server)
 	err := manager.StartClient("test-start-stop")
 	if err != nil {
-		t.Logf("启动失败（可能是没有服务器）: %v", err)
+		t.Logf("start failed (possibly no server): %v", err)
 	}
 
-	// 停止
+	// stop
 	err = manager.StopClient("test-start-stop")
 	if err != nil {
-		t.Fatalf("停止失败: %v", err)
+		t.Fatalf("stop failed: %v", err)
 	}
 
-	// 验证配置已更新为禁用
+	// verify configuration was updated to disabled
 	configs := manager.GetConfigs()
 	if configs["test-start-stop"].Enabled {
-		t.Error("配置应该已被禁用")
+		t.Error("configuration should have been disabled")
 	}
 }
 
@@ -209,16 +209,16 @@ func TestExternalMCPManager_CallTool(t *testing.T) {
 	logger := zap.NewNop()
 	manager := NewExternalMCPManager(logger)
 
-	// 测试调用不存在的工具
+	// test calling a non-existent tool
 	_, _, err := manager.CallTool(context.Background(), "nonexistent::tool", map[string]interface{}{})
 	if err == nil {
-		t.Error("应该返回错误")
+		t.Error("should return an error")
 	}
 
-	// 测试无效的工具名称格式
+	// test invalid tool name format
 	_, _, err = manager.CallTool(context.Background(), "invalid-tool-name", map[string]interface{}{})
 	if err == nil {
-		t.Error("应该返回错误（无效格式）")
+		t.Error("should return an error (invalid format)")
 	}
 }
 
@@ -229,11 +229,11 @@ func TestExternalMCPManager_GetAllTools(t *testing.T) {
 	ctx := context.Background()
 	tools, err := manager.GetAllTools(ctx)
 	if err != nil {
-		t.Fatalf("获取工具列表失败: %v", err)
+		t.Fatalf("failed to get tool list: %v", err)
 	}
 
-	// 如果没有连接的客户端，应该返回空列表
+	// if no clients are connected, should return empty list
 	if len(tools) != 0 {
-		t.Logf("获取到%d个工具", len(tools))
+		t.Logf("got %d tools", len(tools))
 	}
 }

@@ -13,36 +13,36 @@ import (
 	"go.uber.org/zap"
 )
 
-// ResultStorage 结果存储接口
+// ResultStorage is the result storage interface.
 type ResultStorage interface {
-	// SaveResult 保存工具执行结果
+	// SaveResult saves the tool execution result.
 	SaveResult(executionID string, toolName string, result string) error
 
-	// GetResult 获取完整结果
+	// GetResult retrieves the full result.
 	GetResult(executionID string) (string, error)
 
-	// GetResultPage 分页获取结果
+	// GetResultPage retrieves results with pagination.
 	GetResultPage(executionID string, page int, limit int) (*ResultPage, error)
 
-	// SearchResult 搜索结果
-	// useRegex: 如果为 true，将 keyword 作为正则表达式使用；如果为 false，使用简单的字符串包含匹配
+	// SearchResult searches results.
+	// useRegex: if true, keyword is treated as a regular expression; if false, simple substring matching is used.
 	SearchResult(executionID string, keyword string, useRegex bool) ([]string, error)
 
-	// FilterResult 过滤结果
-	// useRegex: 如果为 true，将 filter 作为正则表达式使用；如果为 false，使用简单的字符串包含匹配
+	// FilterResult filters results.
+	// useRegex: if true, filter is treated as a regular expression; if false, simple substring matching is used.
 	FilterResult(executionID string, filter string, useRegex bool) ([]string, error)
 
-	// GetResultMetadata 获取结果元信息
+	// GetResultMetadata retrieves result metadata.
 	GetResultMetadata(executionID string) (*ResultMetadata, error)
 
-	// GetResultPath 获取结果文件路径
+	// GetResultPath returns the result file path.
 	GetResultPath(executionID string) string
 
-	// DeleteResult 删除结果
+	// DeleteResult deletes a result.
 	DeleteResult(executionID string) error
 }
 
-// ResultPage 分页结果
+// ResultPage represents a paginated result.
 type ResultPage struct {
 	Lines      []string `json:"lines"`
 	Page       int      `json:"page"`
@@ -51,7 +51,7 @@ type ResultPage struct {
 	TotalPages int      `json:"total_pages"`
 }
 
-// ResultMetadata 结果元信息
+// ResultMetadata holds result metadata.
 type ResultMetadata struct {
 	ExecutionID string    `json:"execution_id"`
 	ToolName    string    `json:"tool_name"`
@@ -60,18 +60,18 @@ type ResultMetadata struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
-// FileResultStorage 基于文件的结果存储实现
+// FileResultStorage is a file-based result storage implementation.
 type FileResultStorage struct {
 	baseDir string
 	logger  *zap.Logger
 	mu      sync.RWMutex
 }
 
-// NewFileResultStorage 创建新的文件结果存储
+// NewFileResultStorage creates a new file-based result storage.
 func NewFileResultStorage(baseDir string, logger *zap.Logger) (*FileResultStorage, error) {
-	// 确保目录存在
+	// Ensure directory exists
 	if err := os.MkdirAll(baseDir, 0755); err != nil {
-		return nil, fmt.Errorf("创建存储目录失败: %w", err)
+		return nil, fmt.Errorf("failed to create storage directory: %w", err)
 	}
 
 	return &FileResultStorage{
@@ -80,28 +80,28 @@ func NewFileResultStorage(baseDir string, logger *zap.Logger) (*FileResultStorag
 	}, nil
 }
 
-// getResultPath 获取结果文件路径
+// getResultPath returns the result file path.
 func (s *FileResultStorage) getResultPath(executionID string) string {
 	return filepath.Join(s.baseDir, executionID+".txt")
 }
 
-// getMetadataPath 获取元数据文件路径
+// getMetadataPath returns the metadata file path.
 func (s *FileResultStorage) getMetadataPath(executionID string) string {
 	return filepath.Join(s.baseDir, executionID+".meta.json")
 }
 
-// SaveResult 保存工具执行结果
+// SaveResult saves the tool execution result.
 func (s *FileResultStorage) SaveResult(executionID string, toolName string, result string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// 保存结果文件
+	// Save result file
 	resultPath := s.getResultPath(executionID)
 	if err := os.WriteFile(resultPath, []byte(result), 0644); err != nil {
-		return fmt.Errorf("保存结果文件失败: %w", err)
+		return fmt.Errorf("failed to save result file: %w", err)
 	}
 
-	// 计算统计信息
+	// Calculate statistics
 	lines := strings.Split(result, "\n")
 	metadata := &ResultMetadata{
 		ExecutionID: executionID,
@@ -111,18 +111,18 @@ func (s *FileResultStorage) SaveResult(executionID string, toolName string, resu
 		CreatedAt:   time.Now(),
 	}
 
-	// 保存元数据
+	// Save metadata
 	metadataPath := s.getMetadataPath(executionID)
 	metadataJSON, err := json.Marshal(metadata)
 	if err != nil {
-		return fmt.Errorf("序列化元数据失败: %w", err)
+		return fmt.Errorf("failed to serialize metadata: %w", err)
 	}
 
 	if err := os.WriteFile(metadataPath, metadataJSON, 0644); err != nil {
-		return fmt.Errorf("保存元数据文件失败: %w", err)
+		return fmt.Errorf("failed to save metadata file: %w", err)
 	}
 
-	s.logger.Info("保存工具执行结果",
+	s.logger.Info("saved tool execution result",
 		zap.String("executionID", executionID),
 		zap.String("toolName", toolName),
 		zap.Int("size", len(result)),
@@ -132,7 +132,7 @@ func (s *FileResultStorage) SaveResult(executionID string, toolName string, resu
 	return nil
 }
 
-// GetResult 获取完整结果
+// GetResult retrieves the full result.
 func (s *FileResultStorage) GetResult(executionID string) (string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -141,15 +141,15 @@ func (s *FileResultStorage) GetResult(executionID string) (string, error) {
 	data, err := os.ReadFile(resultPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", fmt.Errorf("结果不存在: %s", executionID)
+			return "", fmt.Errorf("result does not exist: %s", executionID)
 		}
-		return "", fmt.Errorf("读取结果文件失败: %w", err)
+		return "", fmt.Errorf("failed to read result file: %w", err)
 	}
 
 	return string(data), nil
 }
 
-// GetResultMetadata 获取结果元信息
+// GetResultMetadata retrieves result metadata.
 func (s *FileResultStorage) GetResultMetadata(executionID string) (*ResultMetadata, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -158,35 +158,35 @@ func (s *FileResultStorage) GetResultMetadata(executionID string) (*ResultMetada
 	data, err := os.ReadFile(metadataPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("结果不存在: %s", executionID)
+			return nil, fmt.Errorf("result does not exist: %s", executionID)
 		}
-		return nil, fmt.Errorf("读取元数据文件失败: %w", err)
+		return nil, fmt.Errorf("failed to read metadata file: %w", err)
 	}
 
 	var metadata ResultMetadata
 	if err := json.Unmarshal(data, &metadata); err != nil {
-		return nil, fmt.Errorf("解析元数据失败: %w", err)
+		return nil, fmt.Errorf("failed to parse metadata: %w", err)
 	}
 
 	return &metadata, nil
 }
 
-// GetResultPage 分页获取结果
+// GetResultPage retrieves results with pagination.
 func (s *FileResultStorage) GetResultPage(executionID string, page int, limit int) (*ResultPage, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	// 获取完整结果
+	// Get full result
 	result, err := s.GetResult(executionID)
 	if err != nil {
 		return nil, err
 	}
 
-	// 分割为行
+	// Split into lines
 	lines := strings.Split(result, "\n")
 	totalLines := len(lines)
 
-	// 计算分页
+	// Calculate pagination
 	totalPages := (totalLines + limit - 1) / limit
 	if page < 1 {
 		page = 1
@@ -195,14 +195,14 @@ func (s *FileResultStorage) GetResultPage(executionID string, page int, limit in
 		page = totalPages
 	}
 
-	// 计算起始和结束索引
+	// Calculate start and end indices
 	start := (page - 1) * limit
 	end := start + limit
 	if end > totalLines {
 		end = totalLines
 	}
 
-	// 提取指定页的行
+	// Extract lines for the specified page
 	var pageLines []string
 	if start < totalLines {
 		pageLines = lines[start:end]
@@ -219,28 +219,28 @@ func (s *FileResultStorage) GetResultPage(executionID string, page int, limit in
 	}, nil
 }
 
-// SearchResult 搜索结果
+// SearchResult searches results.
 func (s *FileResultStorage) SearchResult(executionID string, keyword string, useRegex bool) ([]string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	// 获取完整结果
+	// Get full result
 	result, err := s.GetResult(executionID)
 	if err != nil {
 		return nil, err
 	}
 
-	// 如果使用正则表达式，先编译正则
+	// If using regex, compile it first
 	var regex *regexp.Regexp
 	if useRegex {
 		compiledRegex, err := regexp.Compile(keyword)
 		if err != nil {
-			return nil, fmt.Errorf("无效的正则表达式: %w", err)
+			return nil, fmt.Errorf("invalid regular expression: %w", err)
 		}
 		regex = compiledRegex
 	}
 
-	// 分割为行并搜索
+	// Split into lines and search
 	lines := strings.Split(result, "\n")
 	var matchedLines []string
 
@@ -260,18 +260,18 @@ func (s *FileResultStorage) SearchResult(executionID string, keyword string, use
 	return matchedLines, nil
 }
 
-// FilterResult 过滤结果
+// FilterResult filters results.
 func (s *FileResultStorage) FilterResult(executionID string, filter string, useRegex bool) ([]string, error) {
-	// 过滤和搜索逻辑相同，都是查找包含关键词的行
+	// Filter and search logic is the same: find lines containing the keyword
 	return s.SearchResult(executionID, filter, useRegex)
 }
 
-// GetResultPath 获取结果文件路径
+// GetResultPath returns the result file path.
 func (s *FileResultStorage) GetResultPath(executionID string) string {
 	return s.getResultPath(executionID)
 }
 
-// DeleteResult 删除结果
+// DeleteResult deletes a result.
 func (s *FileResultStorage) DeleteResult(executionID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -279,17 +279,17 @@ func (s *FileResultStorage) DeleteResult(executionID string) error {
 	resultPath := s.getResultPath(executionID)
 	metadataPath := s.getMetadataPath(executionID)
 
-	// 删除结果文件
+	// Delete result file
 	if err := os.Remove(resultPath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("删除结果文件失败: %w", err)
+		return fmt.Errorf("failed to delete result file: %w", err)
 	}
 
-	// 删除元数据文件
+	// Delete metadata file
 	if err := os.Remove(metadataPath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("删除元数据文件失败: %w", err)
+		return fmt.Errorf("failed to delete metadata file: %w", err)
 	}
 
-	s.logger.Info("删除工具执行结果",
+	s.logger.Info("deleted tool execution result",
 		zap.String("executionID", executionID),
 	)
 

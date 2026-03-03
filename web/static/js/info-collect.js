@@ -1,4 +1,4 @@
-// 信息收集页面（FOFA）
+// Information gathering page (FOFA)
 
 const FOFA_FORM_STORAGE_KEY = 'info-collect-fofa-form';
 const FOFA_HIDDEN_FIELDS_STORAGE_KEY = 'info-collect-fofa-hidden-fields';
@@ -10,12 +10,12 @@ const infoCollectState = {
     tableBound: false
 };
 
-// AI 解析（自然语言 -> FOFA）交互状态
+// AI parsing (natural language -> FOFA) interaction status
 let fofaParseAbortController = null;
 let fofaParseSlowTimer = null;
 let fofaParseToastHandle = null;
 
-// HTML转义（如果未定义）
+// HTML escaping (if not already defined)
 if (typeof escapeHtml === 'undefined') {
     function escapeHtml(text) {
         if (text == null) return '';
@@ -86,10 +86,10 @@ function initInfoCollectPage() {
     const els = getFofaFormElements();
     if (!els.query || !els.size || !els.fields || !els.tbody) return;
 
-    // 恢复隐藏字段
+    // Restore hidden fields
     infoCollectState.hiddenFields = new Set(loadHiddenFieldsFromStorage());
 
-    // 恢复上次输入
+    // Restore last input
     const saved = loadFofaFormFromStorage();
     if (saved) {
         if (typeof saved.query === 'string') els.query.value = saved.query;
@@ -99,7 +99,7 @@ function initInfoCollectPage() {
         if (typeof saved.full === 'boolean') els.full.checked = saved.full;
     }
 
-    // 绑定 Enter 快捷查询（在 query 里用 Ctrl/Cmd+Enter）
+    // Bind Enter shortcut (Ctrl/Cmd+Enter in query field)
     els.query.addEventListener('keydown', (e) => {
         if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
             e.preventDefault();
@@ -107,7 +107,7 @@ function initInfoCollectPage() {
         }
     });
 
-    // 自然语言输入：Ctrl/Cmd+Enter 触发解析
+    // Natural language input: Ctrl/Cmd+Enter triggers parsing
     if (els.nl) {
         els.nl.addEventListener('keydown', (e) => {
             if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
@@ -117,7 +117,7 @@ function initInfoCollectPage() {
         });
     }
 
-    // textarea：按内容自动增高（避免默认留空白行）
+    // Textarea: auto-grow based on content (avoid default blank lines)
     const autoGrowTextarea = (el) => {
         if (!el) return;
         try {
@@ -131,13 +131,13 @@ function initInfoCollectPage() {
     };
     els.query.addEventListener('input', () => autoGrowTextarea(els.query));
     if (els.nl) els.nl.addEventListener('input', () => autoGrowTextarea(els.nl));
-    // 初始化时也执行一次
+    // Also run once on initialize
     setTimeout(() => {
         autoGrowTextarea(els.query);
         autoGrowTextarea(els.nl);
     }, 0);
 
-    // 绑定表格事件（事件委托，只绑定一次）
+    // Bind table events (event delegation, bound only once)
     bindFofaTableEvents();
     updateSelectedMeta();
 }
@@ -197,12 +197,12 @@ async function submitFofaSearch() {
     const full = !!els.full?.checked;
 
     if (!query) {
-        alert('请输入 FOFA 查询语法');
+        alert('Please enter a FOFA query');
         return;
     }
 
     saveFofaFormToStorage({ query, size, page, fields, full });
-    setFofaMeta('查询中...');
+    setFofaMeta('Querying...');
     setFofaLoading(true);
 
     try {
@@ -214,14 +214,14 @@ async function submitFofaSearch() {
 
         const result = await response.json().catch(() => ({}));
         if (!response.ok) {
-            throw new Error(result.error || `请求失败: ${response.status}`);
+            throw new Error(result.error || `Request failed: ${response.status}`);
         }
         renderFofaResults(result);
     } catch (e) {
-        console.error('FOFA 查询失败:', e);
-        setFofaMeta('查询失败');
+        console.error('FOFA query failed:', e);
+        setFofaMeta('Query failed');
         renderFofaResults({ query, fields: [], results: [], total: 0, page: 1, size: 0 });
-        alert('FOFA 查询失败: ' + (e && e.message ? e.message : String(e)));
+        alert('FOFA query failed: ' + (e && e.message ? e.message : String(e)));
     } finally {
         setFofaLoading(false);
     }
@@ -231,28 +231,28 @@ async function parseFofaNaturalLanguage() {
     const els = getFofaFormElements();
     const text = (els.nl?.value || '').trim();
     if (!text) {
-        alert('请输入自然语言描述');
+        alert('Please enter a natural language description');
         return;
     }
 
-    // 二次点击：取消进行中的解析（避免“以为卡死/失败”）
+    // Second click: cancel the in-progress parse (avoids impression of freezing/failure)
     if (fofaParseAbortController) {
         try { fofaParseAbortController.abort(); } catch (e) { /* ignore */ }
         return;
     }
 
-    // 先创建 controller，避免极快的重复点击触发并发请求
+    // Create controller first to prevent duplicate concurrent requests on rapid clicks
     fofaParseAbortController = new AbortController();
-    setFofaParseLoading(true, 'AI 解析中...');
+    setFofaParseLoading(true, 'AI parsing...');
 
-    // 持续提示：直到请求完成/取消/失败才消失
-    fofaParseToastHandle = showInlineToast('AI 解析中...（点击按钮可取消）', { duration: 0, id: 'fofa-parse-pending' });
+    // Persistent notice: stays until request completes/cancels/fails
+    fofaParseToastHandle = showInlineToast('AI parsing... (click button to cancel)', { duration: 0, id: 'fofa-parse-pending' });
 
-    // 如果超过一小段时间还没返回，再强调“仍在进行中”，降低误判为失败的概率
+    // If it takes longer than expected, reinforce "still in progress" to reduce false failure impressions
     fofaParseSlowTimer = setTimeout(() => {
         const status = document.getElementById('fofa-nl-status');
         if (status) {
-            status.textContent = 'AI 解析耗时较长，仍在处理中…';
+            status.textContent = 'AI parsing is taking longer than expected, still processing...';
             status.style.display = 'block';
         }
     }, 1800);
@@ -266,18 +266,18 @@ async function parseFofaNaturalLanguage() {
         });
         const result = await resp.json().catch(() => ({}));
         if (!resp.ok) {
-            throw new Error(result.error || `请求失败: ${resp.status}`);
+            throw new Error(result.error || `Request failed: ${resp.status}`);
         }
         showFofaParseModal(text, result);
-        showInlineToast('AI 解析完成');
+        showInlineToast('AI parsing complete');
     } catch (e) {
-        // AbortController 取消：不视为失败
+        // AbortController cancel: not treated as failure
         if (e && (e.name === 'AbortError' || String(e).includes('AbortError'))) {
-            showInlineToast('已取消 AI 解析');
+            showInlineToast('AI parsing cancelled');
             return;
         }
-        console.error('FOFA 自然语言解析失败:', e);
-        showInlineToast('AI 解析失败：' + (e && e.message ? e.message : String(e)), { duration: 2800 });
+        console.error('FOFA natural language parsing failed:', e);
+        showInlineToast('AI parsing failed: ' + (e && e.message ? e.message : String(e)), { duration: 2800 });
     }
     finally {
         fofaParseAbortController = null;
@@ -298,17 +298,17 @@ function setFofaParseLoading(loading, statusText) {
     const status = document.getElementById('fofa-nl-status');
     if (btn) {
         if (loading) {
-            if (!btn.dataset.originalText) btn.dataset.originalText = btn.textContent || 'AI 解析';
+            if (!btn.dataset.originalText) btn.dataset.originalText = btn.textContent || 'AI Parse';
             btn.classList.add('btn-loading');
-            btn.textContent = '取消解析';
-            btn.title = '点击取消 AI 解析';
+            btn.textContent = 'Cancel parsing';
+            btn.title = 'Click to cancel AI parsing';
             btn.dataset.loading = '1';
             btn.setAttribute('aria-busy', 'true');
             btn.disabled = false;
         } else {
             btn.classList.remove('btn-loading');
-            btn.textContent = btn.dataset.originalText || 'AI 解析';
-            btn.title = '将自然语言解析为 FOFA 查询语法';
+            btn.textContent = btn.dataset.originalText || 'AI Parse';
+            btn.title = 'Parse natural language into FOFA query syntax';
             btn.disabled = false;
             delete btn.dataset.loading;
             btn.removeAttribute('aria-busy');
@@ -336,7 +336,7 @@ function showFofaParseModal(nlText, parsed) {
 
     const warningsHtml = warnings.length
         ? `<ul style="margin: 8px 0 0 18px;">${warnings.map(w => `<li>${escapeHtml(w)}</li>`).join('')}</ul>`
-        : `<div class="muted" style="margin-top: 8px;">无</div>`;
+        : `<div class="muted" style="margin-top: 8px;">None</div>`;
 
     const modal = document.createElement('div');
     modal.id = 'fofa-parse-modal';
@@ -345,23 +345,23 @@ function showFofaParseModal(nlText, parsed) {
     modal.innerHTML = `
         <div class="modal-content" style="max-width: 900px;">
             <div class="modal-header">
-                <h2>AI 解析结果</h2>
-                <span class="modal-close" id="fofa-parse-modal-close" title="关闭">&times;</span>
+                <h2>AI Parse Result</h2>
+                <span class="modal-close" id="fofa-parse-modal-close" title="Close">&times;</span>
             </div>
             <div style="padding: 18px 28px; overflow: auto;">
                 <div class="form-group">
-                    <label>自然语言</label>
+                    <label>Natural Language</label>
                     <div class="muted" style="margin-top: 6px; white-space: pre-wrap;">${safeNL || '-'}</div>
                 </div>
 
                 <div class="form-group" style="margin-top: 14px;">
-                    <label for="fofa-parse-query">FOFA 查询语法（可编辑）</label>
-                    <textarea id="fofa-parse-query" class="info-collect-query-input" rows="2" placeholder='例如：app="Apache" && country="CN"'></textarea>
-                    <small class="form-hint">请人工确认语法与范围无误后再执行查询。</small>
+                    <label for="fofa-parse-query">FOFA Query Syntax (editable)</label>
+                    <textarea id="fofa-parse-query" class="info-collect-query-input" rows="2" placeholder='e.g.: app="Apache" && country="CN"'></textarea>
+                    <small class="form-hint">Please manually verify the syntax and scope before running the query.</small>
                 </div>
 
                 <div class="form-group" style="margin-top: 14px;">
-                    <label>提醒</label>
+                    <label>Warnings</label>
                     <div style="background: #fff8e1; border: 1px solid #ffe8a3; border-radius: 10px; padding: 10px 12px;">
                         ${warningsHtml}
                     </div>
@@ -369,14 +369,14 @@ function showFofaParseModal(nlText, parsed) {
 
                 ${explanation ? `
                 <div class="form-group" style="margin-top: 14px;">
-                    <label>解析说明</label>
+                    <label>Parse Explanation</label>
                     <pre style="margin-top: 8px; white-space: pre-wrap; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 10px; padding: 10px 12px; font-size: 13px;">${escapeHtml(explanation)}</pre>
                 </div>` : ''}
             </div>
             <div class="modal-footer" style="padding: 18px 28px;">
-                <button class="btn-secondary" type="button" id="fofa-parse-cancel">取消</button>
-                <button class="btn-secondary" type="button" id="fofa-parse-apply">填入查询框</button>
-                <button class="btn-primary" type="button" id="fofa-parse-apply-run">填入并查询</button>
+                <button class="btn-secondary" type="button" id="fofa-parse-cancel">Cancel</button>
+                <button class="btn-secondary" type="button" id="fofa-parse-apply">Fill into query box</button>
+                <button class="btn-primary" type="button" id="fofa-parse-apply-run">Fill and search</button>
             </div>
         </div>
     `;
@@ -402,14 +402,14 @@ function showFofaParseModal(nlText, parsed) {
         const els = getFofaFormElements();
         const q = (queryTextarea?.value || '').trim();
         if (!q) {
-            showInlineToast('解析结果为空：请在弹窗中补充/修改 FOFA 查询语法', { duration: 2600 });
+            showInlineToast('Parse result is empty: please fill in or edit the FOFA query syntax in the dialog', { duration: 2600 });
             return;
         }
         if (els.query) {
             els.query.value = q;
             try { els.query.focus(); } catch (e) { /* ignore */ }
         }
-        // 写入表单缓存（与现有“直接查询”一致）
+        // Write to form cache (consistent with existing direct query behavior)
         saveFofaFormToStorage({
             query: q,
             size: parseInt(els.size?.value, 10) || 100,
@@ -424,7 +424,7 @@ function showFofaParseModal(nlText, parsed) {
     document.getElementById('fofa-parse-apply')?.addEventListener('click', () => applyToQuery(false));
     document.getElementById('fofa-parse-apply-run')?.addEventListener('click', () => applyToQuery(true));
 
-    // Esc 关闭
+    // Esc to close
     const onKey = (e) => {
         if (e.key === 'Escape') {
             close();
@@ -444,7 +444,7 @@ function setFofaMeta(text) {
 function updateSelectedMeta() {
     const els = getFofaFormElements();
     if (els.selectedMeta) {
-        els.selectedMeta.textContent = `已选择 ${infoCollectState.selectedRowIndexes.size} 条`;
+        els.selectedMeta.textContent = `${infoCollectState.selectedRowIndexes.size} selected`;
     }
 }
 
@@ -454,7 +454,7 @@ function setFofaLoading(loading) {
     if (loading) {
         const fieldsCount = (document.getElementById('fofa-fields')?.value || '').split(',').filter(Boolean).length;
         const colspan = Math.max(1, fieldsCount + 1);
-        els.tbody.innerHTML = `<tr><td class="muted" style="padding: 16px;" colspan="${colspan}">加载中...</td></tr>`;
+        els.tbody.innerHTML = `<tr><td class="muted" style="padding: 16px;" colspan="${colspan}">Loading...</td></tr>`;
     }
 }
 
@@ -465,7 +465,7 @@ function renderFofaResults(payload) {
     const fields = Array.isArray(payload.fields) ? payload.fields : [];
     const results = Array.isArray(payload.results) ? payload.results : [];
 
-    // 保存当前 payload 到 state
+    // Save current payload to state
     infoCollectState.currentPayload = {
         query: payload.query || '',
         total: typeof payload.total === 'number' ? payload.total : 0,
@@ -475,11 +475,11 @@ function renderFofaResults(payload) {
         results
     };
 
-    // 清理选择（避免字段/结果变化导致错位）
+    // Clear selection (avoid misalignment when fields/results change)
     infoCollectState.selectedRowIndexes.clear();
     updateSelectedMeta();
 
-    // 修剪隐藏字段：只保留当前 fields 中存在的
+    // Trim hidden fields: keep only those present in current fields
     const allowed = new Set(fields);
     infoCollectState.hiddenFields.forEach(f => {
         if (!allowed.has(f)) infoCollectState.hiddenFields.delete(f);
@@ -490,26 +490,26 @@ function renderFofaResults(payload) {
     const size = typeof payload.size === 'number' ? payload.size : 0;
     const page = typeof payload.page === 'number' ? payload.page : 1;
 
-    setFofaMeta(`共 ${total} 条 · 本页 ${results.length} 条 · page=${page} · size=${size}`);
+    setFofaMeta(`Total ${total} · Page ${results.length} · page=${page} · size=${size}`);
 
-    // 可见字段
+    // Visible fields
     const visibleFields = fields.filter(f => !infoCollectState.hiddenFields.has(f));
 
-    // 列面板
+    // Columns panel
     renderFofaColumnsPanel(fields, visibleFields);
 
-    // 表头（左：勾选列；右：操作列固定）
+    // Table header (left: checkbox column; right: Actions column fixed)
     const headerCells = [
-        '<th class="info-collect-col-select"><input type="checkbox" id="fofa-select-all" title="全选/全不选"/></th>',
+        '<th class="info-collect-col-select"><input type="checkbox" id="fofa-select-all" title="Select all / Deselect all"/></th>',
         ...visibleFields.map(f => `<th>${escapeHtml(String(f))}</th>`),
-        '<th class="info-collect-col-actions">操作</th>'
+        '<th class="info-collect-col-actions">Actions</th>'
     ].join('');
     els.thead.innerHTML = `<tr>${headerCells}</tr>`;
 
-    // 表体
+    // Table body
     if (results.length === 0) {
         const colspan = Math.max(1, visibleFields.length + 2);
-        els.tbody.innerHTML = `<tr><td class="muted" style="padding: 16px;" colspan="${colspan}">暂无数据</td></tr>`;
+        els.tbody.innerHTML = `<tr><td class="muted" style="padding: 16px;" colspan="${colspan}">No data</td></tr>`;
         return;
     }
 
@@ -519,12 +519,12 @@ function renderFofaResults(payload) {
         const encoded = encodeURIComponent(JSON.stringify(safeRow));
         const encodedTarget = encodeURIComponent(target || '');
 
-        const selectHtml = `<td class="info-collect-col-select"><input class="fofa-row-select" type="checkbox" data-index="${idx}" title="选择该行"/></td>`;
+        const selectHtml = `<td class="info-collect-col-select"><input class="fofa-row-select" type="checkbox" data-index="${idx}" title="Select this row"/></td>`;
 
         const cellsHtml = visibleFields.map(f => {
             const val = safeRow[f];
             const text = val == null ? '' : String(val);
-            // host 字段：尽量渲染为可点击链接
+            // host field: render as clickable link when possible
             if (f === 'host') {
                 const href = normalizeHttpLink(text);
                 if (href) {
@@ -537,13 +537,13 @@ function renderFofaResults(payload) {
 
         const actionHtml = `
             <div class="info-collect-actions">
-                <button class="btn-icon" onclick="copyFofaTargetEncoded('${encodedTarget}'); event.stopPropagation();" title="复制目标">
+                <button class="btn-icon" onclick="copyFofaTargetEncoded('${encodedTarget}'); event.stopPropagation();" title="Copy target">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                         <rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2"/>
                         <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
                     </svg>
                 </button>
-                <button class="btn-icon" onclick="scanFofaRow('${encoded}', event); event.stopPropagation();" title="发送到对话（可编辑；Ctrl/⌘+点击可直接发送）">
+                <button class="btn-icon" onclick="scanFofaRow('${encoded}', event); event.stopPropagation();" title="Send to chat (editable; Ctrl/&#8984;+click to send directly)">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                         <path d="M10.5 13.5l3-3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
                         <path d="M8 8H5a4 4 0 1 0 0 8h3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
@@ -558,12 +558,12 @@ function renderFofaResults(payload) {
 
     els.tbody.innerHTML = rowsHtml;
 
-    // 更新全选框状态
+    // Update select-all checkbox status
     syncSelectAllCheckbox();
 }
 
 function inferTargetFromRow(row, fields) {
-    // 优先 host（FOFA 常见返回 http(s)://...）
+    // Prefer host (FOFA commonly returns http(s)://...)
     const host = row.host != null ? String(row.host).trim() : '';
     if (host) return host;
 
@@ -576,7 +576,7 @@ function inferTargetFromRow(row, fields) {
     if (!base) return '';
 
     if (port) {
-        // 仅做一个轻量推断：443 -> https, 80 -> http，其余不强行加 scheme
+        // Light inference: 443 -> https, 80 -> http, others without forced scheme
         const p = parseInt(port, 10);
         if (!isNaN(p) && (p === 80 || p === 443)) {
             const scheme = p === 443 ? 'https' : 'http';
@@ -595,21 +595,21 @@ function normalizeHttpLink(raw) {
     const v = (raw || '').trim();
     if (!v) return '';
     if (v.startsWith('http://') || v.startsWith('https://')) return v;
-    // 某些 host 可能是 domain 或 ip:port；这里不强行拼装，避免误导
+    // Some hosts may be a domain or ip:port; don't force-construct to avoid misleading
     return '';
 }
 
 function copyFofaTarget(target) {
     const text = (target || '').trim();
     if (!text) {
-        alert('没有可复制的目标');
+        alert('No target to copy');
         return;
     }
     navigator.clipboard.writeText(text).then(() => {
-        // 简单提示
-        showInlineToast('已复制目标');
+        // Simple notification
+        showInlineToast('Target copied');
     }).catch(() => {
-        alert('复制失败，请手动复制：' + text);
+        alert('Copy failed, please copy manually: ' + text);
     });
 }
 
@@ -621,7 +621,7 @@ function copyFofaTargetEncoded(encodedTarget) {
     }
 }
 
-// showInlineToast('xxx')；也支持 showInlineToast('xxx', { duration: 0, id: '...' })
+// showInlineToast('xxx'); also supports showInlineToast('xxx', { duration: 0, id: '...' })
 function showInlineToast(text, options) {
     const opts = options && typeof options === 'object' ? options : {};
     const duration = typeof opts.duration === 'number' ? opts.duration : 1200;
@@ -655,7 +655,7 @@ function showInlineToast(text, options) {
 function truncateForPreview(value, maxLen) {
     const s = value == null ? '' : String(value);
     if (maxLen <= 0 || s.length <= maxLen) return s;
-    return s.slice(0, maxLen) + '...（已截断）';
+    return s.slice(0, maxLen) + '...(truncated)';
 }
 
 function formatFofaRowSummary(row, fields) {
@@ -701,17 +701,17 @@ function scanFofaRow(encodedRowJson, clickEvent) {
     try {
         row = JSON.parse(decodeURIComponent(encodedRowJson));
     } catch (e) {
-        console.warn('解析行数据失败', e);
+        console.warn('Failed to parse row data', e);
     }
 
     const fields = (document.getElementById('fofa-fields')?.value || '').split(',').map(s => s.trim()).filter(Boolean);
     const target = inferTargetFromRow(row, fields);
     if (!target) {
-        alert('无法从该行推断扫描目标（建议在 fields 中包含 host/ip/port/domain）');
+        alert('Cannot infer scan target from this row (consider including host/ip/port/domain in fields)');
         return;
     }
 
-    // 切换到对话页并发送消息（每次点击都新建会话，避免发到历史会话）
+    // Switch to chat page and send message (each click starts a new session to avoid sending to history)
     if (typeof switchPage === 'function') {
         switchPage('chat');
     } else {
@@ -722,7 +722,7 @@ function scanFofaRow(encodedRowJson, clickEvent) {
     const autoSend = !!(clickEvent && (clickEvent.ctrlKey || clickEvent.metaKey));
 
     setTimeout(async () => {
-        // 新建会话：必须等待其完成，否则它会在后续把输入框清空
+        // New session: must wait for it to complete, otherwise it will clear the input box
         try {
             if (typeof startNewConversation === 'function') {
                 const maybePromise = startNewConversation();
@@ -737,7 +737,7 @@ function scanFofaRow(encodedRowJson, clickEvent) {
         const input = document.getElementById('chat-input');
         if (input) {
             input.value = message;
-            // 触发自动高度调整（chat.js 里如果监听 input）
+            // Trigger auto-height adjustment (if chat.js listens to input event)
             input.dispatchEvent(new Event('input', { bubbles: true }));
             input.focus();
         }
@@ -745,10 +745,10 @@ function scanFofaRow(encodedRowJson, clickEvent) {
             if (typeof sendMessage === 'function') {
                 sendMessage();
             } else {
-                alert('未找到 sendMessage()，请刷新页面后重试');
+                alert('sendMessage() not found, please refresh the page and try again');
             }
         } else {
-            showInlineToast('已填入对话输入框，可编辑后发送');
+            showInlineToast('Filled into chat input, you can edit before sending');
         }
     }, 250);
 }
@@ -758,7 +758,7 @@ function buildScanMessage(target, row, options) {
     const fields = Array.isArray(opts.fields) ? opts.fields : [];
 
     const summary = formatFofaRowSummary(row || {}, fields);
-    return `对以下目标做信息收集与基础扫描：\n${target}\n\n要求：\n1) 识别服务/框架与关键指纹\n2) 枚举开放端口与常见管理入口\n3) 用 httpx/指纹/目录探测等方式快速确认可访问面\n4) 输出可复现的命令与结论\n\n已知信息（来自 FOFA 该行全部字段）：\n${summary}`.trim();
+    return `Perform information gathering and basic scan on the following target:\n${target}\n\nRequirements:\n1) Identify services/frameworks and key fingerprints\n2) Enumerate open ports and common admin entry points\n3) Use httpx/fingerprinting/directory probing to quickly confirm accessible attack surface\n4) Output reproducible commands and conclusions\n\nKnown information (from FOFA row - all fields):\n${summary}`.trim();
 }
 
 function bindFofaTableEvents() {
@@ -768,7 +768,7 @@ function bindFofaTableEvents() {
     const els = getFofaFormElements();
     if (!els.tbody) return;
 
-    // 事件委托：选择/单元格展开
+    // Event delegation: select / cell expand
     els.tbody.addEventListener('click', (e) => {
         const checkbox = e.target && e.target.classList && e.target.classList.contains('fofa-row-select') ? e.target : null;
         if (checkbox) {
@@ -786,7 +786,7 @@ function bindFofaTableEvents() {
         if (cell) {
             const full = cell.getAttribute('data-full') || '';
             const field = cell.getAttribute('data-field') || '';
-            // 点击链接不弹窗
+            // Clicking a link should not open the modal
             if (e.target && e.target.tagName === 'A') return;
             if (full && full.length > 0) {
                 showCellDetailModal(field, full);
@@ -794,7 +794,7 @@ function bindFofaTableEvents() {
         }
     });
 
-    // thead 的全选（因为 thead 会重渲染，用事件捕获到 document）
+    // Select-all in thead (since thead re-renders, use event capture on document)
     document.addEventListener('change', (e) => {
         const t = e.target;
         if (!t || t.id !== 'fofa-select-all') return;
@@ -863,7 +863,7 @@ function toggleFofaColumn(field, visible) {
     if (visible) infoCollectState.hiddenFields.delete(f);
     else infoCollectState.hiddenFields.add(f);
     saveHiddenFieldsToStorage();
-    // 重新渲染表格（用 state 中缓存的 payload）
+    // Re-render table using the cached payload in state
     if (infoCollectState.currentPayload) {
         renderFofaResults(infoCollectState.currentPayload);
     }
@@ -881,7 +881,7 @@ function closeFofaColumnsPanel() {
     if (els.columnsPanel) els.columnsPanel.style.display = 'none';
 }
 
-// 点击面板外部关闭（避免一直占着表格顶部）
+// Click outside panel to close (avoid blocking the table header permanently)
 document.addEventListener('click', (e) => {
     const panel = document.getElementById('fofa-columns-panel');
     const btn = e.target && e.target.closest ? e.target.closest('button') : null;
@@ -900,7 +900,7 @@ function showAllFofaColumns() {
 function hideAllFofaColumns() {
     const p = infoCollectState.currentPayload;
     if (!p || !Array.isArray(p.fields)) return;
-    // 允许隐藏全部，但给用户一个最小可用：至少保留 host/ip/domain 中之一（如果存在）
+    // Allow hiding all, but keep a minimal visible column: at least one of host/ip/domain (if present)
     const keep = ['host', 'ip', 'domain'].find(x => p.fields.includes(x));
     infoCollectState.hiddenFields = new Set(p.fields.filter(f => f !== keep));
     saveHiddenFieldsToStorage();
@@ -910,7 +910,7 @@ function hideAllFofaColumns() {
 function exportFofaResults(format) {
     const p = infoCollectState.currentPayload;
     if (!p || !Array.isArray(p.results) || p.results.length === 0) {
-        alert('暂无可导出的结果');
+        alert('No results to export');
         return;
     }
 
@@ -934,9 +934,9 @@ function exportFofaResults(format) {
     }
 
     if (format === 'xlsx') {
-        // 使用 SheetJS 生成 XLSX（需在页面中引入 xlsx 库）
+        // Use SheetJS to generate XLSX (requires xlsx library to be included in the page)
         if (typeof XLSX === 'undefined') {
-            alert('未加载 XLSX 库，请刷新页面后重试');
+            alert('XLSX library not loaded, please refresh the page and try again');
             return;
         }
         const aoa = [visibleFields].concat(p.results.map(row => {
@@ -945,12 +945,12 @@ function exportFofaResults(format) {
         }));
         const ws = XLSX.utils.aoa_to_sheet(aoa);
         const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, 'FOFA结果');
+        XLSX.utils.book_append_sheet(wb, ws, 'FOFA Results');
         XLSX.writeFile(wb, `fofa_results_${ts}.xlsx`);
         return;
     }
 
-    // csv：默认导出可见字段，带 UTF-8 BOM 以兼容 Excel 中文
+    // csv: default export visible fields, with UTF-8 BOM for Excel compatibility
     const header = visibleFields;
     const rows = p.results.map(row => {
         const r = row && typeof row === 'object' ? row : {};
@@ -982,12 +982,12 @@ function downloadBlob(content, filename, mime) {
 async function batchScanSelectedFofaRows() {
     const p = infoCollectState.currentPayload;
     if (!p || !Array.isArray(p.results) || p.results.length === 0) {
-        alert('暂无结果');
+        alert('No results');
         return;
     }
     const selected = Array.from(infoCollectState.selectedRowIndexes).sort((a, b) => a - b);
     if (selected.length === 0) {
-        alert('请先勾选需要扫描的行');
+        alert('Please select rows to scan first');
         return;
     }
 
@@ -1002,25 +1002,25 @@ async function batchScanSelectedFofaRows() {
             skipped.push(idx + 1);
             return;
         }
-        // 批量任务：与单条一致，只带“该行全部字段”的摘要（避免重复与超长）
+        // Batch task: same as single row, include all fields summary (avoid duplication and excessive length)
         tasks.push(buildScanMessage(target, row || {}, {
             fields
         }));
     });
 
     if (tasks.length === 0) {
-        alert('未能从所选行推断任何可扫描目标（建议 fields 中包含 host/ip/port/domain）');
+        alert('Could not infer any scannable targets from selected rows (consider including host/ip/port/domain in fields)');
         return;
     }
 
-    const title = (p.query ? `FOFA 批量扫描：${p.query}` : 'FOFA 批量扫描').slice(0, 80);
+    const title = (p.query ? `FOFA Batch Scan: ${p.query}` : 'FOFA Batch Scan').slice(0, 80);
     try {
-        // 不强制切换到“信息收集”角色：沿用当前已选角色；若为默认则传空字符串交给后端走默认逻辑
+        // Do not force-switch to "info gathering" role: use current selected role; if Default, pass empty string for backend default logic
         let role = '';
         if (typeof getCurrentRole === 'function') {
             try { role = getCurrentRole() || ''; } catch (e) { /* ignore */ }
         }
-        if (role === '默认') role = '';
+        if (role === 'Default') role = '';
 
         const resp = await apiFetch('/api/batch-tasks', {
             method: 'POST',
@@ -1029,14 +1029,14 @@ async function batchScanSelectedFofaRows() {
         });
         const result = await resp.json().catch(() => ({}));
         if (!resp.ok) {
-            throw new Error(result.error || `创建批量队列失败: ${resp.status}`);
+            throw new Error(result.error || `Failed to create batch queue: ${resp.status}`);
         }
         const queueId = result.queueId;
         if (!queueId) {
-            throw new Error('创建成功但未返回 queueId');
+            throw new Error('Created successfully but no queueId returned');
         }
 
-        // 跳到任务管理并打开队列详情
+        // Navigate to task management and open queue details
         if (typeof switchPage === 'function') switchPage('tasks');
         setTimeout(() => {
             if (typeof showBatchQueueDetail === 'function') {
@@ -1045,13 +1045,13 @@ async function batchScanSelectedFofaRows() {
         }, 250);
 
         if (skipped.length > 0) {
-            showInlineToast(`已创建队列（跳过 ${skipped.length} 条无目标行）`);
+            showInlineToast(`Queue created (skipped ${skipped.length} rows with no target)`);
         } else {
-            showInlineToast('已创建批量扫描队列');
+            showInlineToast('Batch scan queue created');
         }
     } catch (e) {
-        console.error('批量扫描失败:', e);
-        alert('批量扫描失败: ' + (e && e.message ? e.message : String(e)));
+        console.error('Batch scan failed:', e);
+        alert('Batch scan failed: ' + (e && e.message ? e.message : String(e)));
     }
 }
 
@@ -1065,8 +1065,8 @@ function showCellDetailModal(field, fullText) {
     modal.innerHTML = `
         <div class="info-collect-cell-modal-content" role="dialog" aria-modal="true">
             <div class="info-collect-cell-modal-header">
-                <div class="info-collect-cell-modal-title">${escapeHtml(field || '字段')}</div>
-                <button class="btn-icon" type="button" id="info-collect-cell-modal-close" title="关闭">
+                <div class="info-collect-cell-modal-title">${escapeHtml(field || 'Field')}</div>
+                <button class="btn-icon" type="button" id="info-collect-cell-modal-close" title="Close">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                         <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
                     </svg>
@@ -1076,8 +1076,8 @@ function showCellDetailModal(field, fullText) {
                 <pre class="info-collect-cell-modal-pre">${escapeHtml(fullText || '')}</pre>
             </div>
             <div class="info-collect-cell-modal-footer">
-                <button class="btn-secondary" type="button" id="info-collect-cell-modal-copy">复制</button>
-                <button class="btn-primary" type="button" id="info-collect-cell-modal-ok">关闭</button>
+                <button class="btn-secondary" type="button" id="info-collect-cell-modal-copy">Copy</button>
+                <button class="btn-primary" type="button" id="info-collect-cell-modal-ok">Close</button>
             </div>
         </div>
     `;
@@ -1091,10 +1091,10 @@ function showCellDetailModal(field, fullText) {
     document.getElementById('info-collect-cell-modal-close')?.addEventListener('click', close);
     document.getElementById('info-collect-cell-modal-ok')?.addEventListener('click', close);
     document.getElementById('info-collect-cell-modal-copy')?.addEventListener('click', () => {
-        navigator.clipboard.writeText(fullText || '').then(() => showInlineToast('已复制')).catch(() => alert('复制失败'));
+        navigator.clipboard.writeText(fullText || '').then(() => showInlineToast('Copied')).catch(() => alert('Copy failed'));
     });
 
-    // Esc 关闭
+    // Esc to close
     const onKey = (e) => {
         if (e.key === 'Escape') {
             close();
@@ -1104,7 +1104,7 @@ function showCellDetailModal(field, fullText) {
     document.addEventListener('keydown', onKey);
 }
 
-// 暴露到全局（供 index.html onclick 调用）
+// Expose to global scope (for index.html onclick handlers)
 window.initInfoCollectPage = initInfoCollectPage;
 window.resetFofaForm = resetFofaForm;
 window.submitFofaSearch = submitFofaSearch;
@@ -1121,4 +1121,3 @@ window.hideAllFofaColumns = hideAllFofaColumns;
 window.toggleFofaColumn = toggleFofaColumn;
 window.exportFofaResults = exportFofaResults;
 window.batchScanSelectedFofaRows = batchScanSelectedFofaRows;
-

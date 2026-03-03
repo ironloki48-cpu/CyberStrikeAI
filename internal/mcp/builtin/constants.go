@@ -1,21 +1,21 @@
 package builtin
 
-// 内置工具名称常量
-// 所有代码中使用内置工具名称的地方都应该使用这些常量，而不是硬编码字符串
+// Built-in tool name constants.
+// All code that references built-in tool names should use these constants rather than hardcoded strings.
 const (
-	// 漏洞管理工具
+	// Vulnerability management tool
 	ToolRecordVulnerability = "record_vulnerability"
 
-	// 知识库工具
+	// Knowledge base tools
 	ToolListKnowledgeRiskTypes = "list_knowledge_risk_types"
 	ToolSearchKnowledgeBase    = "search_knowledge_base"
 
-	// Skills工具
+	// Skills tools
 	ToolListSkills    = "list_skills"
 	ToolReadSkill     = "read_skill"
 )
 
-// IsBuiltinTool 检查工具名称是否是内置工具
+// IsBuiltinTool reports whether the given tool name is a built-in tool.
 func IsBuiltinTool(toolName string) bool {
 	switch toolName {
 	case ToolRecordVulnerability,
@@ -29,7 +29,7 @@ func IsBuiltinTool(toolName string) bool {
 	}
 }
 
-// GetAllBuiltinTools 返回所有内置工具名称列表
+// GetAllBuiltinTools returns the list of all built-in tool names.
 func GetAllBuiltinTools() []string {
 	return []string{
 		ToolRecordVulnerability,

@@ -19,7 +19,7 @@ func AuthMiddleware(manager *AuthManager) gin.HandlerFunc {
 		session, ok := manager.ValidateToken(token)
 		if !ok {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error": "未授权访问，请先登录",
+				"error": "unauthorized access, please log in first",
 			})
 			return
 		}

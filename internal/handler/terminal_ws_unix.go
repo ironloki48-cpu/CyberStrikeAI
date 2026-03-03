@@ -13,16 +13,16 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// wsUpgrader 仅用于系统设置中的终端 WebSocket，会复用已有的登录保护（JWT 中间件在上层路由组）
+// wsUpgrader is used only for the terminal WebSocket in system settings, reusing the existing login protection (JWT middleware in parent route group).
 var wsUpgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
-		// 由于已在 Gin 路由层做了认证，这里放宽 Origin，方便在同一域名下通过 HTTPS/WSS 访问
+		// Since authentication is already done in the Gin route layer, relax Origin here to allow access via HTTPS/WSS under the same domain
 		return true
 	},
 }
 
-// RunCommandWS 提供真正交互式 Shell：基于 WebSocket + PTY 的长会话
-// 前端建立 WebSocket 连接后，所有键盘输入都会透传到 Shell，Shell 的输出也会实时写回前端。
+// RunCommandWS provides a truly interactive shell: a long-lived session based on WebSocket + PTY.
+// After the frontend establishes a WebSocket connection, all keyboard input is forwarded to the shell, and shell output is written back to the frontend in real time.
 func (h *TerminalHandler) RunCommandWS(c *gin.Context) {
 	conn, err := wsUpgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
@@ -30,7 +30,7 @@ func (h *TerminalHandler) RunCommandWS(c *gin.Context) {
 	}
 	defer conn.Close()
 
-	// 启动交互式 Shell，这里优先使用 bash，找不到则退回 sh
+	// Start interactive shell, prefer bash, fall back to sh if not found
 	shell := "bash"
 	if _, err := exec.LookPath(shell); err != nil {
 		shell = "sh"
@@ -48,7 +48,7 @@ func (h *TerminalHandler) RunCommandWS(c *gin.Context) {
 	}
 	defer ptmx.Close()
 
-	// Shell -> WebSocket：将 PTY 输出实时发给前端
+	// Shell -> WebSocket: send PTY output to the frontend in real time
 	doneChan := make(chan struct{})
 	go func() {
 		buf := make([]byte, 4096)
@@ -64,7 +64,7 @@ func (h *TerminalHandler) RunCommandWS(c *gin.Context) {
 		close(doneChan)
 	}()
 
-	// WebSocket -> Shell：将前端输入写入 PTY（包括 sudo 密码、Ctrl+C 等）
+	// WebSocket -> Shell: write frontend input to PTY (including sudo password, Ctrl+C, etc.)
 	conn.SetReadLimit(64 * 1024)
 	_ = conn.SetReadDeadline(time.Now().Add(terminalTimeout))
 	conn.SetPongHandler(func(string) error {

@@ -1,68 +1,68 @@
 ---
-name: ✨ 功能优化建议
-about: 提出新功能或优化建议
+name: ✨ Feature / Enhancement Request
+about: Suggest a new feature or improvement
 title: '[FEATURE] '
-labels: ['enhancement', '待讨论']
+labels: ['enhancement', 'needs-discussion']
 assignees: ''
 ---
 
-## 💡 功能描述
-<!-- 请清晰、简洁地描述你希望添加或优化的功能 -->
+## 💡 Feature Description
+<!-- Clearly and concisely describe the feature or improvement you would like to see -->
 
 
-## 🎯 使用场景
-<!-- 描述这个功能的使用场景，解决什么问题 -->
-<!-- 例如：在什么情况下会用到这个功能？它如何改善用户体验？ -->
+## 🎯 Use Case
+<!-- Describe the use case for this feature and the problem it solves -->
+<!-- e.g., In what situations would this feature be used? How does it improve the user experience? -->
 
 
-## 🔄 当前行为
-<!-- 描述当前系统是如何处理相关需求的，或者为什么需要这个功能 -->
+## 🔄 Current Behavior
+<!-- Describe how the current system handles the related need, or why this feature is needed -->
 
 
-## ✨ 期望行为
-<!-- 详细描述你期望的新功能或优化后的行为 -->
+## ✨ Expected Behavior
+<!-- Describe in detail the new feature or improved behavior you expect -->
 
 
-## 📸 参考示例（如有）
-<!-- 
-如果有其他项目的类似功能实现，可以在此提供截图或链接作为参考
-⚠️ 请确保截图完整，包含所有相关界面元素
+## 📸 Reference Examples (if any)
+<!--
+If a similar feature exists in another project, provide screenshots or links as reference.
+⚠️ Please ensure screenshots are complete and include all relevant UI elements.
 -->
 
-<!-- 请在此处拖拽或粘贴参考截图 -->
+<!-- Drag and paste reference screenshots here -->
 
 
-## 🛠️ 实现建议（可选）
-<!-- 如果你有具体的实现思路或技术建议，可以在此描述 -->
+## 🛠️ Implementation Suggestions (optional)
+<!-- If you have a specific implementation approach or technical suggestions, describe them here -->
 
 
-## 📊 优先级评估
-<!-- 请选择你认为的优先级 -->
-- [ ] 🔴 高优先级（严重影响使用体验或功能缺失）
-- [ ] 🟡 中优先级（能显著改善体验）
-- [ ] 🟢 低优先级（锦上添花的功能）
+## 📊 Priority Assessment
+<!-- Select the priority you think this has -->
+- [ ] 🔴 High priority (severely impacts usability or feature is missing)
+- [ ] 🟡 Medium priority (would significantly improve the experience)
+- [ ] 🟢 Low priority (nice-to-have improvement)
 
-## 🔍 相关功能
-<!-- 这个功能是否与现有功能相关？ -->
-<!-- 例如：是否与工具管理、攻击链分析、知识库等功能相关？ -->
+## 🔍 Related Features
+<!-- Is this feature related to existing features? -->
+<!-- e.g., Is it related to tool management, attack chain analysis, knowledge base, etc.? -->
 
 
-## 📝 额外信息
-<!-- 任何其他有助于理解需求的信息 -->
-- 是否已有替代方案？
-- 这个功能是否会影响现有功能？
-- 是否有相关的其他 issue 或讨论？
+## 📝 Additional Information
+<!-- Any other information that helps clarify the request -->
+- Is there already a workaround?
+- Will this feature affect existing functionality?
+- Are there related issues or discussions?
 
-## ✅ 检查清单
-<!-- 提交前请确认以下项目 -->
+## ✅ Checklist
+<!-- Please confirm the following before submitting -->
 
-- [ ] 我已清晰描述了功能需求和使用场景
-- [ ] 我已提供完整的参考截图（如有）
-- [ ] 我已评估了功能的优先级
-- [ ] 我已确认这不是重复的 issue
-- [ ] 我已考虑了对现有功能的影响
+- [ ] I have clearly described the feature request and use case
+- [ ] I have provided complete reference screenshots (if applicable)
+- [ ] I have assessed the priority of the feature
+- [ ] I have confirmed this is not a duplicate issue
+- [ ] I have considered the impact on existing functionality
 
 ---
 
-**注意**：请提供尽可能详细的信息，包括使用场景、参考示例等，这将有助于我们更好地理解和实现你的需求。
+**Note**: Please provide as much detail as possible, including use cases and reference examples — this will help us better understand and implement your request.
 

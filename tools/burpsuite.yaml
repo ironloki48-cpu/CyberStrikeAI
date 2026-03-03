@@ -1,43 +1,43 @@
 name: "burpsuite"
 command: "burpsuite"
 enabled: true
-short_description: "Web应用安全测试平台"
+short_description: "Web application security testing platform"
 description: |
-  Burp Suite是一个Web应用安全测试平台，提供全面的Web安全测试功能。
+  Burp Suite is a web application security testing platform providing comprehensive web security testing functionality.
 
-  **主要功能：**
-  - Web应用安全扫描
-  - 代理拦截
-  - 漏洞扫描
-  - 手动测试工具
+  **Key Features:**
+  - Web application security scanning
+  - Proxy interception
+  - Vulnerability scanning
+  - Manual testing tools
 
-  **使用场景：**
-  - Web应用安全测试
-  - 渗透测试
-  - 漏洞扫描
-  - 安全评估
+  **Use Cases:**
+  - Web application security testing
+  - Penetration testing
+  - Vulnerability scanning
+  - Security assessment
 parameters:
   - name: "project_file"
     type: "string"
-    description: "Burp Suite项目文件路径（--project-file）"
+    description: "Burp Suite project file path (--project-file)"
     required: false
     flag: "--project-file"
     format: "flag"
   - name: "config_file"
     type: "string"
-    description: "自动化/扫描配置文件（--config-file）"
+    description: "Automation/scan configuration file (--config-file)"
     required: false
     flag: "--config-file"
     format: "flag"
   - name: "user_config_file"
     type: "string"
-    description: "用户配置文件（--user-config-file）"
+    description: "User configuration file (--user-config-file)"
     required: false
     flag: "--user-config-file"
     format: "flag"
   - name: "headless"
     type: "bool"
-    description: "无头模式运行"
+    description: "Run in headless mode"
     required: false
     flag: "--headless"
     format: "flag"
@@ -45,6 +45,6 @@ parameters:
   - name: "additional_args"
     type: "string"
     description: |
-      额外的burpsuite参数。用于传递未在参数列表中定义的burpsuite选项（例如 --project-config、--log-config 等）。
+      Additional burpsuite parameters. Used to pass burpsuite options not defined in the parameter list (e.g. --project-config, --log-config, etc.).
     required: false
     format: "positional"

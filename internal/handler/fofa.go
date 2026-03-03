@@ -27,7 +27,7 @@ type FofaHandler struct {
 }
 
 func NewFofaHandler(cfg *config.Config, logger *zap.Logger) *FofaHandler {
-	// LLM 请求通常比 FOFA 查询更慢一点，单独给一个更宽松的超时。
+	// LLM requests are generally slower than FOFA queries; give it a more lenient timeout.
 	llmHTTPClient := &http.Client{Timeout: 2 * time.Minute}
 	var llmCfg *config.OpenAIConfig
 	if cfg != nil {
@@ -81,7 +81,7 @@ type fofaSearchResponse struct {
 }
 
 func (h *FofaHandler) resolveCredentials() (email, apiKey string) {
-	// 优先环境变量（便于容器部署），其次配置文件
+	// Prefer environment variables (convenient for container deployment), then config file
 	email = strings.TrimSpace(os.Getenv("FOFA_EMAIL"))
 	apiKey = strings.TrimSpace(os.Getenv("FOFA_API_KEY"))
 	if email != "" && apiKey != "" {
@@ -107,69 +107,69 @@ func (h *FofaHandler) resolveBaseURL() string {
 	return "https://fofa.info/api/v1/search/all"
 }
 
-// ParseNaturalLanguage 将自然语言解析为 FOFA 查询语法（仅生成，不执行查询）
+// ParseNaturalLanguage parses natural language into FOFA query syntax (generates only, does not execute the query)
 func (h *FofaHandler) ParseNaturalLanguage(c *gin.Context) {
 	var req fofaParseRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求参数: " + err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request parameters: " + err.Error()})
 		return
 	}
 	req.Text = strings.TrimSpace(req.Text)
 	if req.Text == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "text 不能为空"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "text cannot be empty"})
 		return
 	}
 
 	if h.cfg == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "系统配置未初始化"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "system configuration not initialized"})
 		return
 	}
 	if strings.TrimSpace(h.cfg.OpenAI.APIKey) == "" || strings.TrimSpace(h.cfg.OpenAI.Model) == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "未配置 AI 模型：请在系统设置中填写 openai.api_key 与 openai.model（支持 OpenAI 兼容 API，如 DeepSeek）",
+			"error": "AI model not configured: please fill in openai.api_key and openai.model in system settings (supports OpenAI-compatible APIs such as DeepSeek)",
 			"need":  []string{"openai.api_key", "openai.model"},
 		})
 		return
 	}
 	if h.openAIClient == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "AI 客户端未初始化"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "AI client not initialized"})
 		return
 	}
 
 	systemPrompt := strings.TrimSpace(`
-你是“FOFA 查询语法生成器”。任务：把用户输入的自然语言搜索意图，转换成 FOFA 查询语法。
+You are a "FOFA Query Syntax Generator". Task: convert the natural language search intent provided by the user into FOFA query syntax.
 
-输出要求（非常重要）：
-1) 只输出 JSON（不要 markdown、不要代码块、不要额外解释文本）
-2) JSON 结构必须是：
+Output requirements (very important):
+1) Output JSON only (no markdown, no code blocks, no extra explanatory text)
+2) JSON structure must be:
 {
-  "query": "string，FOFA查询语法（可直接粘贴到 FOFA 或本系统查询框）",
-  "explanation": "string，可选，解释你如何映射字段/逻辑",
-  "warnings": ["string"...] 可选，列出歧义/风险/需要人工确认的点
+  "query": "string, FOFA query syntax (can be pasted directly into FOFA or the query box of this system)",
+  "explanation": "string, optional, explains how you mapped fields/logic",
+  "warnings": ["string"...] optional, lists ambiguities/risks/points requiring manual confirmation
 }
-3) 如果用户输入本身已经是 FOFA 查询语法（或非常接近 FOFA 语法的表达式），应当“原样返回”为 query：
-   - 不要擅自改写字段名、操作符、括号结构
-   - 不要改写任何字符串值（尤其是地理位置类值），不要做缩写/同义词替换/翻译/音译
+3) If the user input is already FOFA query syntax (or an expression very close to FOFA syntax), return it "as-is" as query:
+   - Do not rewrite field names, operators, or bracket structure
+   - Do not rewrite any string values (especially geographic values); do not abbreviate/substitute synonyms/translate/transliterate
 
-查询语法要点（来自 FOFA 语法参考）：
-- 逻辑连接符：&&（与）、||（或），必要时用 () 包住子表达式以确认优先级（括号优先级最高）
-- 当同一层级同时出现 && 与 ||（混用）时，用 () 明确优先级（避免歧义）
-- 比较/匹配：
-  - =  匹配；当字段="" 时，可查询“不存在该字段”或“值为空”的情况
-  - == 完全匹配；当字段=="" 时，可查询“字段存在且值为空”的情况
-  - != 不匹配；当字段!="" 时，可查询“值不为空”的情况
-  - *= 模糊匹配；可使用 * 或 ? 进行搜索
-- 直接输入关键词（不带字段）会在标题、HTML内容、HTTP头、URL字段中搜索；但当意图明确时优先用字段表达（更可控、更准确）
+Query syntax essentials (from FOFA syntax reference):
+- Logical connectors: && (AND), || (OR); use () around sub-expressions when necessary to confirm precedence (parentheses have highest precedence)
+- When && and || appear at the same level (mixed), use () to clarify precedence (avoid ambiguity)
+- Comparison/matching:
+  - =  match; when field="" can query cases where "the field does not exist" or "value is empty"
+  - == exact match; when field=="" can query cases where "the field exists and value is empty"
+  - != does not match; when field!="" can query cases where "value is not empty"
+  - *= fuzzy match; * or ? can be used for searching
+- Entering a keyword directly (without a field) searches title, HTML content, HTTP headers, and URL fields; but when intent is clear, prefer field expressions (more controllable, more precise)
 
-字段示例速查（来自用户提供的案例，可直接套用/拼接）：
-- 高级搜索操作符示例：
-  - title="beijing"                    （= 匹配）
-  - title==""                          （== 完全匹配，字段存在且值为空）
-  - title=""                           （= 匹配，可能表示字段不存在或值为空）
-  - title!=""                          （!= 不匹配，可用于值不为空）
-  - title*="*Home*"                    （*= 模糊匹配，用 * 或 ?）
-  - (app="Apache" || app="Nginx") && country="CN"   （混用 && / || 时用括号）
-- 基础类（General）：
+Field quick-reference examples (from user-provided cases, can be used directly/concatenated):
+- Advanced search operator examples:
+  - title="beijing"                    (= match)
+  - title==""                          (== exact match, field exists and value is empty)
+  - title=""                           (= match, may indicate field does not exist or value is empty)
+  - title!=""                          (!= does not match, can be used for non-empty values)
+  - title*="*Home*"                    (*= fuzzy match, use * or ?)
+  - (app="Apache" || app="Nginx") && country="CN"   (use parentheses when mixing && / ||)
+- General:
   - ip="1.1.1.1"
   - ip="220.181.111.1/24"
   - ip="2600:9000:202a:2600:18:4ab7:f600:93a1"
@@ -182,28 +182,28 @@ func (h *FofaHandler) ParseNaturalLanguage(c *gin.Context) {
   - org="LLC Baxet"
   - is_domain=true / is_domain=false
   - is_ipv6=true / is_ipv6=false
-- 标记类（Special Label）：
+- Special Label:
   - app="Microsoft-Exchange"
   - fid="sSXXGNUO2FefBTcCLIT/2Q=="
   - product="NGINX"
   - product="Roundcube-Webmail" && product.version="1.6.10"
-  - category="服务"
+  - category="service"
   - type="service" / type="subdomain"
   - cloud_name="Aliyundun"
   - is_cloud=true / is_cloud=false
   - is_fraud=true / is_fraud=false
   - is_honeypot=true / is_honeypot=false
-- 协议类（type=service）：
+- Protocol (type=service):
   - protocol="quic"
   - banner="users"
   - banner_hash="7330105010150477363"
   - banner_fid="zRpqmn0FXQRjZpH8MjMX55zpMy9SgsW8"
   - base_protocol="udp" / base_protocol="tcp"
-- 网站类（type=subdomain）：
+- Website (type=subdomain):
   - title="beijing"
   - header="elastic"
   - header_hash="1258854265"
-  - body="网络空间测绘"
+  - body="cyberspace mapping"
   - body_hash="-2090962452"
   - js_name="js/jquery.js"
   - js_md5="82ac3f14327a8b7ba49baa208d4eaa15"
@@ -211,13 +211,13 @@ func (h *FofaHandler) ParseNaturalLanguage(c *gin.Context) {
   - cname_domain="siteforce.com"
   - icon_hash="-247388890"
   - status_code="402"
-  - icp="京ICP证030173号"
+  - icp="ICP030173"
   - sdk_hash="Are3qNnP2Eqn7q5kAoUO3l+w3mgVIytO"
-- 地理位置（Location）：
-  - country="CN" 或 country="中国"
-  - region="Zhejiang" 或 region="浙江"（仅支持中国地区中文）
+- Location:
+  - country="CN" or country="China"
+  - region="Zhejiang" (only Chinese region names for China are supported)
   - city="Hangzhou"
-- 证书类（Certificate）：
+- Certificate:
   - cert="baidu"
   - cert.subject="Oracle Corporation"
   - cert.issuer="DigiCert"
@@ -236,11 +236,11 @@ func (h *FofaHandler) ParseNaturalLanguage(c *gin.Context) {
   - cert.sn="356078156165546797850343536942784588840297"
   - cert.not_after.after="2025-03-01" / cert.not_after.before="2025-03-01"
   - cert.not_before.after="2025-03-01" / cert.not_before.before="2025-03-01"
-- 时间类（Last update time）：
+- Last update time:
   - after="2023-01-01"
   - before="2023-12-01"
   - after="2023-01-01" && before="2023-12-01"
-- 独立IP语法（需配合 ip_filter / ip_exclude）：
+- Standalone IP syntax (requires ip_filter / ip_exclude):
   - ip_filter(banner="SSH-2.0-OpenSSH_6.7p2") && ip_filter(icon_hash="-1057022626")
   - ip_filter(banner="SSH-2.0-OpenSSH_6.7p2" && asn="3462") && ip_exclude(title="EdgeOS")
   - port_size="6" / port_size_gt="6" / port_size_lt="12"
@@ -251,16 +251,16 @@ func (h *FofaHandler) ParseNaturalLanguage(c *gin.Context) {
   - ip_after="2021-03-18"
   - ip_before="2019-09-09"
 
-生成约束与注意事项：
-- 字符串值一律用英文双引号包裹，例如 title="登录"、country="CN"
-- 字符串值保持字面一致：不要缩写（例如 city="beijing" 不要变成 city="BJ"），不要用别名（例如 Beijing/Peking），不要擅自翻译/音译/改写大小写
-- 地理位置字段（country/region/city）更倾向于“按用户给定值输出”；不确定合法取值时，不要猜测，把备选写进 warnings
-- 不要捏造不存在的 FOFA 字段；不确定时把不确定点写进 warnings，并输出一个保守的 query
-- 当用户描述里有“多个与/或条件”，优先加 () 明确优先级，例如：(app="Apache" || app="Nginx") && country="CN"
-- 当用户缺少关键条件导致范围过大或歧义（如地点/协议/端口/服务类型未说明），允许 query 为空字符串，并在 warnings 里明确需要补充的信息
+Generation constraints and notes:
+- Always wrap string values in English double quotes, e.g. title="login", country="CN"
+- Keep string values literally consistent: do not abbreviate (e.g. city="beijing" should not become city="BJ"), do not use aliases (e.g. Beijing/Peking), do not arbitrarily translate/transliterate/change case
+- Geographic fields (country/region/city) should prefer "outputting the value as given by the user"; when unsure of valid values, do not guess—put alternatives in warnings
+- Do not fabricate non-existent FOFA fields; when unsure, put uncertain points in warnings and output a conservative query
+- When the user's description has "multiple AND/OR conditions", prefer adding () to clarify precedence, e.g.: (app="Apache" || app="Nginx") && country="CN"
+- When the user is missing key conditions causing the scope to be too broad or ambiguous (e.g. location/protocol/port/service type not specified), allow query to be an empty string and clearly state in warnings what information needs to be supplemented
 `)
 
-	userPrompt := fmt.Sprintf("自然语言意图：%s", req.Text)
+	userPrompt := fmt.Sprintf("Natural language intent: %s", req.Text)
 
 	requestBody := map[string]interface{}{
 		"model": h.cfg.OpenAI.Model,
@@ -272,7 +272,7 @@ func (h *FofaHandler) ParseNaturalLanguage(c *gin.Context) {
 		"max_tokens":  1200,
 	}
 
-	// OpenAI 返回结构：只需要 choices[0].message.content
+	// OpenAI response structure: only need choices[0].message.content
 	var apiResponse struct {
 		Choices []struct {
 			Message struct {
@@ -287,20 +287,20 @@ func (h *FofaHandler) ParseNaturalLanguage(c *gin.Context) {
 	if err := h.openAIClient.ChatCompletion(ctx, requestBody, &apiResponse); err != nil {
 		var apiErr *openaiClient.APIError
 		if errors.As(err, &apiErr) {
-			h.logger.Warn("FOFA自然语言解析：LLM返回错误", zap.Int("status", apiErr.StatusCode))
-			c.JSON(http.StatusBadGateway, gin.H{"error": "AI 解析失败（上游返回非 200），请检查模型配置或稍后重试"})
+			h.logger.Warn("FOFA natural language parsing: LLM returned error", zap.Int("status", apiErr.StatusCode))
+			c.JSON(http.StatusBadGateway, gin.H{"error": "AI parsing failed (upstream returned non-200), please check model configuration or try again later"})
 			return
 		}
-		c.JSON(http.StatusBadGateway, gin.H{"error": "AI 解析失败: " + err.Error()})
+		c.JSON(http.StatusBadGateway, gin.H{"error": "AI parsing failed: " + err.Error()})
 		return
 	}
 	if len(apiResponse.Choices) == 0 {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "AI 未返回有效结果"})
+		c.JSON(http.StatusBadGateway, gin.H{"error": "AI did not return a valid result"})
 		return
 	}
 
 	content := strings.TrimSpace(apiResponse.Choices[0].Message.Content)
-	// 兼容模型偶尔返回 ```json ... ``` 的情况
+	// handle cases where the model occasionally returns ```json ... ```
 	content = strings.TrimPrefix(content, "```json")
 	content = strings.TrimPrefix(content, "```")
 	content = strings.TrimSuffix(content, "```")
@@ -308,39 +308,39 @@ func (h *FofaHandler) ParseNaturalLanguage(c *gin.Context) {
 
 	var parsed fofaParseResponse
 	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
-		// 直接回传一部分原文，方便排查，但避免太大
+		// pass back a snippet of the raw text for debugging, but avoid too much data
 		snippet := content
 		if len(snippet) > 1200 {
 			snippet = snippet[:1200]
 		}
 		c.JSON(http.StatusBadGateway, gin.H{
-			"error":   "AI 返回内容无法解析为 JSON，请稍后重试或换个描述方式",
+			"error":   "AI response could not be parsed as JSON, please try again later or rephrase your description",
 			"snippet": snippet,
 		})
 		return
 	}
 	parsed.Query = strings.TrimSpace(parsed.Query)
 	if parsed.Query == "" {
-		// query 允许为空（表示需求不明确），但前端需要明确提示
+		// query is allowed to be empty (indicates unclear requirements), but the frontend needs a clear prompt
 		if len(parsed.Warnings) == 0 {
-			parsed.Warnings = []string{"需求信息不足，未能生成可用的 FOFA 查询语法，请补充关键条件（如国家/端口/产品/域名等）。"}
+			parsed.Warnings = []string{"Insufficient information to generate a valid FOFA query syntax. Please provide key conditions (such as country/port/product/domain, etc.)."}
 		}
 	}
 
 	c.JSON(http.StatusOK, parsed)
 }
 
-// Search FOFA 查询（后端代理，避免前端暴露 key）
+// Search FOFA query (backend proxy to avoid exposing the key on the frontend)
 func (h *FofaHandler) Search(c *gin.Context) {
 	var req fofaSearchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求参数: " + err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request parameters: " + err.Error()})
 		return
 	}
 
 	req.Query = strings.TrimSpace(req.Query)
 	if req.Query == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "query 不能为空"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "query cannot be empty"})
 		return
 	}
 	if req.Size <= 0 {
@@ -349,7 +349,7 @@ func (h *FofaHandler) Search(c *gin.Context) {
 	if req.Page <= 0 {
 		req.Page = 1
 	}
-	// FOFA 接口 size 上限和账户权限相关，这里只做一个合理的保护
+	// FOFA API size limit is related to account permissions; apply a reasonable cap here
 	if req.Size > 10000 {
 		req.Size = 10000
 	}
@@ -360,7 +360,7 @@ func (h *FofaHandler) Search(c *gin.Context) {
 	email, apiKey := h.resolveCredentials()
 	if email == "" || apiKey == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "FOFA 未配置：请在系统设置中填写 FOFA Email/API Key，或设置环境变量 FOFA_EMAIL/FOFA_API_KEY",
+			"error":   "FOFA not configured: please fill in FOFA Email/API Key in system settings, or set environment variables FOFA_EMAIL/FOFA_API_KEY",
 			"need":    []string{"fofa.email", "fofa.api_key"},
 			"env_key": []string{"FOFA_EMAIL", "FOFA_API_KEY"},
 		})
@@ -372,7 +372,7 @@ func (h *FofaHandler) Search(c *gin.Context) {
 
 	u, err := url.Parse(baseURL)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "FOFA base_url 无效: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "FOFA base_url is invalid: " + err.Error()})
 		return
 	}
 
@@ -386,38 +386,38 @@ func (h *FofaHandler) Search(c *gin.Context) {
 	if req.Full {
 		params.Set("full", "true")
 	} else {
-		// 明确传 false，便于排查
+		// explicitly pass false for easier debugging
 		params.Set("full", "false")
 	}
 	u.RawQuery = params.Encode()
 
 	httpReq, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, u.String(), nil)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建请求失败: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create request: " + err.Error()})
 		return
 	}
 
 	resp, err := h.client.Do(httpReq)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "请求 FOFA 失败: " + err.Error()})
+		c.JSON(http.StatusBadGateway, gin.H{"error": "FOFA request failed: " + err.Error()})
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("FOFA 返回非 2xx: %d", resp.StatusCode)})
+		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("FOFA returned non-2xx: %d", resp.StatusCode)})
 		return
 	}
 
 	var apiResp fofaAPIResponse
 	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "解析 FOFA 响应失败: " + err.Error()})
+		c.JSON(http.StatusBadGateway, gin.H{"error": "failed to parse FOFA response: " + err.Error()})
 		return
 	}
 	if apiResp.Error {
 		msg := strings.TrimSpace(apiResp.ErrMsg)
 		if msg == "" {
-			msg = "FOFA 返回错误"
+			msg = "FOFA returned an error"
 		}
 		c.JSON(http.StatusBadGateway, gin.H{"error": msg})
 		return

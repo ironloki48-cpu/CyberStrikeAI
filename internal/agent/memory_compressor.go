@@ -17,42 +17,42 @@ import (
 )
 
 const (
-	// DefaultMinRecentMessage 压缩历史消息时保留的最近消息数量，确保最近的对话上下文不被压缩
+	// DefaultMinRecentMessage is the number of recent messages to retain when compressing history, ensuring recent conversation context is not compressed
 	DefaultMinRecentMessage = 5
-	// defaultChunkSize 压缩历史消息时每次处理的消息块大小，将旧消息分成多个块进行摘要
+	// defaultChunkSize is the message chunk size for each compression pass, splitting old messages into multiple chunks for summarization
 	defaultChunkSize = 10
-	// defaultMaxImages 压缩时最多保留的图片数量，超过此数量的图片会被移除以节省上下文空间
+	// defaultMaxImages is the maximum number of images to retain during compression; images exceeding this limit are removed to save context space
 	defaultMaxImages = 3
-	// defaultSummaryTimeout 生成消息摘要时的超时时间
+	// defaultSummaryTimeout is the timeout duration for generating a message summary
 	defaultSummaryTimeout = 10 * time.Minute
 
-	summaryPromptTemplate = `你是一名负责为安全代理执行上下文压缩的助手，任务是在保持所有关键渗透信息完整的前提下压缩扫描数据。
+	summaryPromptTemplate = `You are an assistant responsible for performing context compression for a security agent. Your task is to compress scan data while keeping all critical penetration testing information intact.
 
-必须保留的关键信息：
-- 已发现的漏洞与潜在攻击路径
-- 扫描结果与工具输出（可压缩，但需保留核心发现）
-- 获取到的访问凭证、令牌或认证细节
-- 系统架构洞察与潜在薄弱点
-- 当前评估进展
-- 失败尝试与死路（避免重复劳动）
-- 关于测试策略的所有决策记录
+Key information that MUST be preserved:
+- Discovered vulnerabilities and potential attack paths
+- Scan results and tool outputs (may be compressed but core findings must be retained)
+- Obtained access credentials, tokens, or authentication details
+- System architecture insights and potential weaknesses
+- Current assessment progress
+- Failed attempts and dead ends (to avoid repeated work)
+- All decision records regarding testing strategy
 
-压缩指南：
-- 保留精确技术细节（URL、路径、参数、Payload 等）
-- 将冗长的工具输出压缩成概述，但保留关键发现
-- 记录版本号与识别出的技术/组件信息
-- 保留可能暗示漏洞的原始报错
-- 将重复或相似发现整合成一条带有共性说明的结论
+Compression guidelines:
+- Retain precise technical details (URLs, paths, parameters, payloads, etc.)
+- Compress verbose tool outputs into overviews but retain key findings
+- Record version numbers and identified technologies/components
+- Retain original error messages that may indicate vulnerabilities
+- Consolidate duplicate or similar findings into a single conclusion with a common description
 
-请牢记：另一位安全代理会依赖这份摘要继续测试，他必须在不损失任何作战上下文的情况下无缝接手。
+Remember: another security agent will rely on this summary to continue testing and must be able to take over seamlessly without losing any operational context.
 
-需要压缩的对话片段：
+Conversation segments to compress:
 %s
 
-请给出技术精准且简明扼要的摘要，覆盖全部与安全评估相关的上下文。`
+Please provide a technically precise and concise summary covering all context relevant to the security assessment.`
 )
 
-// MemoryCompressor 负责在调用LLM前压缩历史上下文，以避免Token爆炸。
+// MemoryCompressor is responsible for compressing historical context before calling the LLM to avoid token explosion.
 type MemoryCompressor struct {
 	maxTotalTokens   int
 	minRecentMessage int
@@ -66,7 +66,7 @@ type MemoryCompressor struct {
 	logger           *zap.Logger
 }
 
-// MemoryCompressorConfig 用于初始化 MemoryCompressor。
+// MemoryCompressorConfig is used to initialize a MemoryCompressor.
 type MemoryCompressorConfig struct {
 	MaxTotalTokens   int
 	MinRecentMessage int
@@ -78,19 +78,19 @@ type MemoryCompressorConfig struct {
 	CompletionClient CompletionClient
 	Logger           *zap.Logger
 
-	// 当 CompletionClient 为空时，可以通过 OpenAIConfig + HTTPClient 构造默认的客户端。
+	// When CompletionClient is nil, a default client can be constructed via OpenAIConfig + HTTPClient.
 	OpenAIConfig *config.OpenAIConfig
 	HTTPClient   *http.Client
 }
 
-// NewMemoryCompressor 创建新的 MemoryCompressor。
+// NewMemoryCompressor creates a new MemoryCompressor.
 func NewMemoryCompressor(cfg MemoryCompressorConfig) (*MemoryCompressor, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = zap.NewNop()
 	}
 
-	// 如果没有显式配置 MaxTotalTokens，则后续逻辑会根据模型的最大上下文长度进行控制；
-	// 优先推荐在 config.yaml 的 openai.max_total_tokens 中统一配置。
+	// If MaxTotalTokens is not explicitly configured, the subsequent logic controls it based on the model max context length;
+	// it is recommended to configure this uniformly in openai.max_total_tokens in config.yaml.
 	if cfg.MinRecentMessage <= 0 {
 		cfg.MinRecentMessage = DefaultMinRecentMessage
 	}
@@ -138,27 +138,27 @@ func NewMemoryCompressor(cfg MemoryCompressorConfig) (*MemoryCompressor, error) 
 	}, nil
 }
 
-// UpdateConfig 更新OpenAI配置（用于动态更新模型配置）
+// UpdateConfig updates the OpenAI configuration (used for dynamic model config updates).
 func (mc *MemoryCompressor) UpdateConfig(cfg *config.OpenAIConfig) {
 	if cfg == nil {
 		return
 	}
 
-	// 更新summaryModel字段
+	// Update summaryModel field
 	if cfg.Model != "" {
 		mc.summaryModel = cfg.Model
 	}
 
-	// 更新completionClient中的配置（如果是OpenAICompletionClient）
+	// Update config in completionClient (if it is an OpenAICompletionClient)
 	if openAIClient, ok := mc.completionClient.(*OpenAICompletionClient); ok {
 		openAIClient.UpdateConfig(cfg)
-		mc.logger.Info("MemoryCompressor配置已更新",
+		mc.logger.Info("MemoryCompressor config updated",
 			zap.String("model", cfg.Model),
 		)
 	}
 }
 
-// CompressHistory 根据 Token 限制压缩历史消息。reservedTokens 为预留给 tools 等非消息内容的 token 数，压缩时使用 (maxTotalTokens - reservedTokens) 作为消息上限。
+// CompressHistory compresses historical messages based on the token limit. reservedTokens is the number of tokens reserved for non-message content such as tools; compression uses (maxTotalTokens - reservedTokens) as the message token ceiling.
 func (mc *MemoryCompressor) CompressHistory(ctx context.Context, messages []ChatMessage, reservedTokens int) ([]ChatMessage, bool, error) {
 	if len(messages) == 0 {
 		return messages, false, nil
@@ -265,15 +265,15 @@ func (mc *MemoryCompressor) countTotalTokens(systemMsgs, regularMsgs []ChatMessa
 	return total
 }
 
-// getModelName 获取当前使用的模型名称（优先从completionClient获取最新配置）
+// getModelName returns the name of the model currently in use (prefers the latest config from completionClient).
 func (mc *MemoryCompressor) getModelName() string {
-	// 如果completionClient是OpenAICompletionClient，从它获取最新的模型名称
+	// If completionClient is an OpenAICompletionClient, get the latest model name from it
 	if openAIClient, ok := mc.completionClient.(*OpenAICompletionClient); ok {
 		if openAIClient.config != nil && openAIClient.config.Model != "" {
 			return openAIClient.config.Model
 		}
 	}
-	// 否则使用保存的summaryModel
+	// Otherwise use the saved summaryModel
 	return mc.summaryModel
 }
 
@@ -289,7 +289,7 @@ func (mc *MemoryCompressor) countTokens(text string) int {
 	return count
 }
 
-// CountTextTokens 对外暴露的文本 Token 计数，用于统计 tools 等非消息内容的 token（如 agent 侧序列化 tools 后计数）。
+// CountTextTokens is a publicly exposed text token counter, used to count tokens for non-message content such as tools (e.g., after serializing tools on the agent side).
 func (mc *MemoryCompressor) CountTextTokens(text string) int {
 	return mc.countTokens(text)
 }
@@ -314,7 +314,7 @@ func (mc *MemoryCompressor) summarizeChunk(ctx context.Context, chunk []ChatMess
 	conversation := strings.Join(formatted, "\n")
 	prompt := fmt.Sprintf(summaryPromptTemplate, conversation)
 
-	// 使用动态获取的模型名称，而不是保存的summaryModel
+	// Use dynamically obtained model name, not the saved summaryModel
 	modelName := mc.getModelName()
 	summary, err := mc.completionClient.Complete(ctx, modelName, prompt, mc.timeout)
 	if err != nil {
@@ -355,26 +355,26 @@ func (mc *MemoryCompressor) adjustRecentStartForToolCalls(msgs []ChatMessage, re
 	return adjusted
 }
 
-// TokenCounter 用于计算文本Token数量。
+// TokenCounter is used to count the number of text tokens.
 type TokenCounter interface {
 	Count(model, text string) (int, error)
 }
 
-// TikTokenCounter 基于 tiktoken 的 Token 统计器。
+// TikTokenCounter is a token counter based on tiktoken.
 type TikTokenCounter struct {
 	mu               sync.RWMutex
 	cache            map[string]*tiktoken.Tiktoken
 	fallbackEncoding *tiktoken.Tiktoken
 }
 
-// NewTikTokenCounter 创建新的 TikTokenCounter。
+// NewTikTokenCounter creates a new TikTokenCounter.
 func NewTikTokenCounter() *TikTokenCounter {
 	return &TikTokenCounter{
 		cache: make(map[string]*tiktoken.Tiktoken),
 	}
 }
 
-// Count 实现 TokenCounter 接口。
+// Count implements the TokenCounter interface.
 func (tc *TikTokenCounter) Count(model, text string) (int, error) {
 	enc, err := tc.encodingForModel(model)
 	if err != nil {
@@ -415,19 +415,19 @@ func (tc *TikTokenCounter) encodingForModel(model string) (*tiktoken.Tiktoken, e
 	return enc, nil
 }
 
-// CompletionClient 对话压缩时使用的补全接口。
+// CompletionClient is the completion interface used during conversation compression.
 type CompletionClient interface {
 	Complete(ctx context.Context, model string, prompt string, timeout time.Duration) (string, error)
 }
 
-// OpenAICompletionClient 基于 OpenAI Chat Completion。
+// OpenAICompletionClient is based on OpenAI Chat Completion.
 type OpenAICompletionClient struct {
 	config *config.OpenAIConfig
 	client *openai.Client
 	logger *zap.Logger
 }
 
-// NewOpenAICompletionClient 创建 OpenAICompletionClient。
+// NewOpenAICompletionClient creates an OpenAICompletionClient.
 func NewOpenAICompletionClient(cfg *config.OpenAIConfig, client *http.Client, logger *zap.Logger) *OpenAICompletionClient {
 	if logger == nil {
 		logger = zap.NewNop()
@@ -439,7 +439,7 @@ func NewOpenAICompletionClient(cfg *config.OpenAIConfig, client *http.Client, lo
 	}
 }
 
-// UpdateConfig 更新底层配置。
+// UpdateConfig updates the underlying configuration.
 func (c *OpenAICompletionClient) UpdateConfig(cfg *config.OpenAIConfig) {
 	c.config = cfg
 	if c.client != nil {
@@ -447,7 +447,7 @@ func (c *OpenAICompletionClient) UpdateConfig(cfg *config.OpenAIConfig) {
 	}
 }
 
-// Complete 调用OpenAI获取摘要。
+// Complete calls OpenAI to obtain a summary.
 func (c *OpenAICompletionClient) Complete(ctx context.Context, model string, prompt string, timeout time.Duration) (string, error) {
 	if c.config == nil {
 		return "", errors.New("openai config is required")

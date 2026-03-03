@@ -1,20 +1,20 @@
-# 角色配置文件说明
+# Role Configuration Guide
 
-本目录包含所有角色配置文件，每个角色定义了AI的行为模式、可用工具和技能。
+This directory contains all role configuration files. Each role defines the AI's behavior pattern, available tools, and skills.
 
-## 创建新角色
+## Creating a New Role
 
-创建新角色时，请在 `roles/` 目录下创建 YAML 文件，格式如下：
+To create a new role, create a YAML file in the `roles/` directory using the following format:
 
-**方式1：显式指定工具列表（推荐）**
+**Option 1: Explicitly specify the tool list (recommended)**
 ```yaml
-name: 角色名称
-description: 角色描述
-user_prompt: 用户提示词（追加到用户消息前，用于引导AI行为）
-icon: "图标（可选）"
+name: Role Name
+description: Role description
+user_prompt: User prompt (prepended to user messages to guide AI behavior)
+icon: "Icon (optional)"
 tools:
-    # 添加你需要的工具...
-    # ⚠️ 重要：建议包含以下5个内置MCP工具
+    # Add the tools you need...
+    # ⚠️ Important: it is recommended to include the following 5 built-in MCP tools:
     - record_vulnerability
     - list_knowledge_risk_types
     - search_knowledge_base
@@ -23,45 +23,45 @@ tools:
 enabled: true
 ```
 
-**方式2：不设置tools字段（使用所有已开启的工具）**
+**Option 2: Leave the tools field unset (use all enabled tools)**
 ```yaml
-name: 角色名称
-description: 角色描述
-user_prompt: 用户提示词（追加到用户消息前，用于引导AI行为）
-icon: "图标（可选）"
-# 不设置tools字段，将默认使用所有MCP管理中已开启的工具
+name: Role Name
+description: Role description
+user_prompt: User prompt (prepended to user messages to guide AI behavior)
+icon: "Icon (optional)"
+# Leaving the tools field unset will use all tools enabled in MCP management by default
 enabled: true
 ```
 
-## ⚠️ 重要提醒：内置MCP工具
+## ⚠️ Important: Built-in MCP Tools
 
-**如果设置了 `tools` 字段，请务必在列表中添加以下5个内置MCP工具：**
+**If the `tools` field is set, make sure to include the following 5 built-in MCP tools in the list:**
 
-1. **`record_vulnerability`** - 漏洞管理工具，用于记录发现的漏洞
-2. **`list_knowledge_risk_types`** - 知识库工具，列出可用的风险类型
-3. **`search_knowledge_base`** - 知识库工具，搜索知识库内容
-4. **`list_skills`** - Skills工具，列出可用的技能
-5. **`read_skill`** - Skills工具，读取技能详情
+1. **`record_vulnerability`** — Vulnerability management tool for recording discovered vulnerabilities
+2. **`list_knowledge_risk_types`** — Knowledge base tool for listing available risk types
+3. **`search_knowledge_base`** — Knowledge base tool for searching knowledge base content
+4. **`list_skills`** — Skills tool for listing available skills
+5. **`read_skill`** — Skills tool for reading skill details
 
-这些内置工具是系统核心功能，建议所有角色都包含它们，以确保：
-- 能够记录和管理发现的漏洞
-- 能够访问知识库获取安全测试知识
-- 能够查看和使用可用的安全测试技能
+These built-in tools are core system features. It is recommended that all roles include them to ensure:
+- Ability to record and manage discovered vulnerabilities
+- Ability to access the knowledge base for security testing knowledge
+- Ability to view and use available security testing skills
 
-**注意**：如果不设置 `tools` 字段，系统会默认使用所有MCP管理中已开启的工具（包括这5个内置工具），但为了明确控制角色可用的工具范围，建议显式设置 `tools` 字段。
+**Note**: If the `tools` field is not set, the system defaults to using all tools enabled in MCP management (including these 5 built-in tools). However, for explicit control over the tools available to a role, it is recommended to set the `tools` field explicitly.
 
-## 角色配置字段说明
+## Role Configuration Fields
 
-- **name**: 角色名称（必填）
-- **description**: 角色描述（必填）
-- **user_prompt**: 用户提示词，会追加到用户消息前，用于引导AI采用特定的测试方法和关注点（可选）
-- **icon**: 角色图标，支持Unicode emoji（可选）
-- **tools**: 工具列表，指定该角色可用的工具（可选）
-  - **如果不设置 `tools` 字段**：默认会选中**全部MCP管理中已开启的工具**
-  - **如果设置了 `tools` 字段**：只使用列表中指定的工具（建议至少包含5个内置工具）
-- **skills**: 技能列表，指定该角色关联的技能（可选）
-- **enabled**: 是否启用该角色（必填，true/false）
+- **name**: Role name (required)
+- **description**: Role description (required)
+- **user_prompt**: User prompt — prepended to user messages to guide the AI to adopt specific testing methodologies and focus areas (optional)
+- **icon**: Role icon, supports Unicode emoji (optional)
+- **tools**: Tool list — specifies the tools available to the role (optional)
+  - **If `tools` is not set**: defaults to all tools enabled in MCP management
+  - **If `tools` is set**: only the tools specified in the list are used (recommended to include at least the 5 built-in tools)
+- **skills**: Skill list — specifies the skills associated with the role (optional)
+- **enabled**: Whether to enable the role (required, true/false)
 
-## 示例
+## Examples
 
-参考本目录下的其他角色文件，如 `渗透测试.yaml`、`Web应用扫描.yaml` 等。
+Refer to the other role files in this directory, such as `penetration-testing.yaml`, `web-app-scanning.yaml`, etc.

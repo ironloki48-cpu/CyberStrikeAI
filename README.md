@@ -5,7 +5,7 @@
 # CyberStrikeAI
 
 
-[中文](README_CN.md) | [English](README.md)
+[Chinese](README_CN.md) | [English](README.md)
 
 CyberStrikeAI is an **AI-native security testing platform** built in Go. It integrates 100+ security tools, an intelligent orchestration engine, role-based testing with predefined security roles, a skills system with specialized testing skills, and comprehensive lifecycle management capabilities. Through native MCP protocol and AI agents, it enables end-to-end automation from conversational commands to vulnerability discovery, attack-chain analysis, knowledge retrieval, and result visualization—delivering an auditable, traceable, and collaborative testing environment for security teams.
 
@@ -461,25 +461,33 @@ tools:
 enabled: true
 ```
 
-## Related documentation
+## Related Documentation
 
-- [Robot / Chatbot guide (DingTalk & Lark)](docs/robot_en.md): Full setup, commands, and troubleshooting for using CyberStrikeAI from DingTalk or Lark on your phone. **Follow this doc to avoid common pitfalls.**
+| Document | Description |
+|----------|-------------|
+| [Robot / Chatbot guide](docs/robot_en.md) | Full setup, commands, and troubleshooting for DingTalk & Lark integration. **Follow this to avoid common pitfalls.** |
+| [Tool Configuration Guide](tools/README.md) | How to write, configure, and extend YAML tool recipes. |
+| [Role Configuration Guide](roles/README.md) | How to create and manage security testing roles. |
+| [Skills System Guide](skills/README.md) | How to create and attach skills to roles. |
+| [Roadmap](ROADMAP.md) | Planned features and development direction. |
 
 ## Project Layout
 
 ```
 CyberStrikeAI/
-├── cmd/                 # Server, MCP stdio entrypoints, tooling
-├── internal/            # Agent, MCP core, handlers, security executor
-├── web/                 # Static SPA + templates
-├── tools/               # YAML tool recipes (100+ examples provided)
+├── cmd/                 # Server, MCP stdio, and test entrypoints
+├── internal/            # Agent engine, MCP core, handlers, security executor
+├── web/                 # Single-page application (templates + static assets)
+├── tools/               # YAML tool recipes (100+ provided)
 ├── roles/               # Role configurations (12+ predefined security testing roles)
-├── skills/              # Skills directory (20+ predefined security testing skills)
-├── docs/                # Documentation (e.g. robot/chbot guide)
-├── images/              # Docs screenshots & diagrams
+├── skills/              # Skills library (20+ predefined security testing skills)
+├── knowledge_base/      # Markdown files for the vector knowledge base
+├── docs/                # Additional documentation (chatbot guide, etc.)
+├── images/              # Screenshots and diagrams for documentation
 ├── config.yaml          # Runtime configuration
-├── run.sh               # Convenience launcher
-└── README*.md
+├── run.sh               # One-command launcher script
+├── ROADMAP.md           # Development roadmap
+└── README.md
 ```
 
 ## Basic Usage Examples
@@ -537,5 +545,7 @@ CyberStrikeAI is a professional security testing platform designed to assist sec
 ---
 
 Need help or want to contribute? Open an issue or PR—community tooling additions are welcome!
+
+See [ROADMAP.md](ROADMAP.md) for planned features and the project direction.
 
 

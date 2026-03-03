@@ -1,9 +1,9 @@
-// 页面路由管理
+// Page routing management
 let currentPage = 'dashboard';
 
-// 初始化路由
+// Initialize routes
 function initRouter() {
-    // 从URL hash读取页面（如果有）
+    // Read page from URL hash (if present)
     const hash = window.location.hash.slice(1);
     if (hash) {
         const hashParts = hash.split('?');
@@ -11,13 +11,13 @@ function initRouter() {
         if (pageId && ['dashboard', 'chat', 'info-collect', 'vulnerabilities', 'mcp-monitor', 'mcp-management', 'knowledge-management', 'knowledge-retrieval-logs', 'roles-management', 'skills-monitor', 'skills-management', 'settings', 'tasks'].includes(pageId)) {
             switchPage(pageId);
             
-            // 如果是chat页面且带有conversation参数，加载对应对话
+            // If this is the chat page with a conversation param, load that conversation
             if (pageId === 'chat' && hashParts.length > 1) {
                 const params = new URLSearchParams(hashParts[1]);
                 const conversationId = params.get('conversation');
                 if (conversationId) {
                     setTimeout(() => {
-                        // 尝试多种方式调用loadConversation
+                        // Try multiple ways to call loadConversation
                         if (typeof loadConversation === 'function') {
                             loadConversation(conversationId);
                         } else if (typeof window.loadConversation === 'function') {
@@ -32,37 +32,37 @@ function initRouter() {
         }
     }
     
-    // 默认显示仪表盘
+    // Default: show dashboard
     switchPage('dashboard');
 }
 
-// 切换页面
+// Toggle page
 function switchPage(pageId) {
-    // 隐藏所有页面
+    // Hide all pages
     document.querySelectorAll('.page').forEach(page => {
         page.classList.remove('active');
     });
     
-    // 显示目标页面
+    // Show target page
     const targetPage = document.getElementById(`page-${pageId}`);
     if (targetPage) {
         targetPage.classList.add('active');
         currentPage = pageId;
         
-        // 更新URL hash
+        // UpdateURL hash
         window.location.hash = pageId;
         
-        // 更新导航状态
+        // Update navigation status
         updateNavState(pageId);
         
-        // 页面特定的初始化
+        // Page-specific initialization
         initPage(pageId);
     }
 }
 
-// 更新导航状态
+// Update navigation status
 function updateNavState(pageId) {
-    // 移除所有活动状态
+    // Remove all active states
     document.querySelectorAll('.nav-item').forEach(item => {
         item.classList.remove('active');
     });
@@ -71,13 +71,13 @@ function updateNavState(pageId) {
         item.classList.remove('active');
     });
     
-    // 设置活动状态
+    // Set active state
     if (pageId === 'mcp-monitor' || pageId === 'mcp-management') {
-        // MCP子菜单项
+        // MCP submenu item
         const mcpItem = document.querySelector('.nav-item[data-page="mcp"]');
         if (mcpItem) {
             mcpItem.classList.add('active');
-            // 展开MCP子菜单
+            // Expand MCP submenu
             mcpItem.classList.add('expanded');
         }
         
@@ -86,11 +86,11 @@ function updateNavState(pageId) {
             submenuItem.classList.add('active');
         }
     } else if (pageId === 'knowledge-management' || pageId === 'knowledge-retrieval-logs') {
-        // 知识子菜单项
+        // Knowledge submenu item
         const knowledgeItem = document.querySelector('.nav-item[data-page="knowledge"]');
         if (knowledgeItem) {
             knowledgeItem.classList.add('active');
-            // 展开知识子菜单
+            // Expand Knowledge submenu
             knowledgeItem.classList.add('expanded');
         }
         
@@ -99,11 +99,11 @@ function updateNavState(pageId) {
             submenuItem.classList.add('active');
         }
     } else if (pageId === 'skills-monitor' || pageId === 'skills-management') {
-        // Skills子菜单项
+        // Skills submenu item
         const skillsItem = document.querySelector('.nav-item[data-page="skills"]');
         if (skillsItem) {
             skillsItem.classList.add('active');
-            // 展开Skills子菜单
+            // Expand Skills submenu
             skillsItem.classList.add('expanded');
         }
         
@@ -112,11 +112,11 @@ function updateNavState(pageId) {
             submenuItem.classList.add('active');
         }
     } else if (pageId === 'roles-management') {
-        // 角色子菜单项
+        // Roles submenu item
         const rolesItem = document.querySelector('.nav-item[data-page="roles"]');
         if (rolesItem) {
             rolesItem.classList.add('active');
-            // 展开角色子菜单
+            // Expand Roles submenu
             rolesItem.classList.add('expanded');
         }
         
@@ -125,11 +125,11 @@ function updateNavState(pageId) {
             submenuItem.classList.add('active');
         }
     } else if (pageId === 'skills-monitor' || pageId === 'skills-management') {
-        // Skills子菜单项
+        // Skills submenu item
         const skillsItem = document.querySelector('.nav-item[data-page="skills"]');
         if (skillsItem) {
             skillsItem.classList.add('active');
-            // 展开Skills子菜单
+            // Expand Skills submenu
             skillsItem.classList.add('expanded');
         }
         
@@ -138,7 +138,7 @@ function updateNavState(pageId) {
             submenuItem.classList.add('active');
         }
     } else {
-        // 主菜单项
+        // Main menu item
         const navItem = document.querySelector(`.nav-item[data-page="${pageId}"]`);
         if (navItem) {
             navItem.classList.add('active');
@@ -146,30 +146,30 @@ function updateNavState(pageId) {
     }
 }
 
-// 切换子菜单
+// Toggle submenu
 function toggleSubmenu(menuId) {
     const sidebar = document.getElementById('main-sidebar');
     const navItem = document.querySelector(`.nav-item[data-page="${menuId}"]`);
     
     if (!navItem) return;
     
-    // 检查侧边栏是否折叠
+    // Check if sidebar is collapsed
     if (sidebar && sidebar.classList.contains('collapsed')) {
-        // 折叠状态下显示弹出菜单
+        // Show popup menu when collapsed
         showSubmenuPopup(navItem, menuId);
     } else {
-        // 展开状态下正常切换子菜单
+        // Normal toggle when expanded
         navItem.classList.toggle('expanded');
     }
 }
 
-// 显示子菜单弹出框
+// Show submenu popup
 function showSubmenuPopup(navItem, menuId) {
-    // 移除其他已打开的弹出菜单
+    // Remove other open popup menus
     const existingPopup = document.querySelector('.submenu-popup');
     if (existingPopup) {
         existingPopup.remove();
-        return; // 如果已经打开，点击时关闭
+        return; // already open, close on click
     }
     
     const navItemContent = navItem.querySelector('.nav-item-content');
@@ -177,10 +177,10 @@ function showSubmenuPopup(navItem, menuId) {
     
     if (!submenu) return;
     
-    // 获取菜单位置
+    // Get menu position
     const rect = navItemContent.getBoundingClientRect();
     
-    // 创建弹出菜单
+    // Create popup menu
     const popup = document.createElement('div');
     popup.className = 'submenu-popup';
     popup.style.position = 'fixed';
@@ -188,14 +188,14 @@ function showSubmenuPopup(navItem, menuId) {
     popup.style.top = rect.top + 'px';
     popup.style.zIndex = '1000';
     
-    // 复制子菜单项到弹出菜单
+    // Copy submenu items into popup
     const submenuItems = submenu.querySelectorAll('.nav-submenu-item');
     submenuItems.forEach(item => {
         const popupItem = document.createElement('div');
         popupItem.className = 'submenu-popup-item';
         popupItem.textContent = item.textContent.trim();
         
-        // 检查是否是当前激活的页面
+        // Check if current page is active
         const pageId = item.getAttribute('data-page');
         if (pageId && document.querySelector(`.nav-submenu-item[data-page="${pageId}"].active`)) {
             popupItem.classList.add('active');
@@ -205,13 +205,13 @@ function showSubmenuPopup(navItem, menuId) {
             e.stopPropagation();
             e.preventDefault();
             
-            // 获取页面ID并切换
+            // Get page ID and switch
             const pageId = item.getAttribute('data-page');
             if (pageId) {
                 switchPage(pageId);
             }
             
-            // 关闭弹出菜单
+            // Close popup menu
             popup.remove();
             document.removeEventListener('click', closePopup);
         };
@@ -220,7 +220,7 @@ function showSubmenuPopup(navItem, menuId) {
     
     document.body.appendChild(popup);
     
-    // 点击外部关闭弹出菜单
+    // Click outside to close popup menu
     const closePopup = function(e) {
         if (!popup.contains(e.target) && !navItem.contains(e.target)) {
             popup.remove();
@@ -228,13 +228,13 @@ function showSubmenuPopup(navItem, menuId) {
         }
     };
     
-    // 延迟添加事件监听，避免立即触发
+    // Delay adding event listener to avoid immediate trigger
     setTimeout(() => {
         document.addEventListener('click', closePopup);
     }, 0);
 }
 
-// 初始化页面
+// Initialize page
 function initPage(pageId) {
     switch(pageId) {
         case 'dashboard':
@@ -243,64 +243,64 @@ function initPage(pageId) {
             }
             break;
         case 'chat':
-            // 对话页面已由chat.js初始化
+            // Conversation page already initialized by chat.js
             break;
         case 'info-collect':
-            // 信息收集页面
+            // Information gathering page
             if (typeof initInfoCollectPage === 'function') {
                 initInfoCollectPage();
             }
             break;
         case 'tasks':
-            // 初始化任务管理页面
+            // Initialize task management page
             if (typeof initTasksPage === 'function') {
                 initTasksPage();
             }
             break;
         case 'mcp-monitor':
-            // 初始化监控面板
+            // Initialize monitoring panel
             if (typeof refreshMonitorPanel === 'function') {
                 refreshMonitorPanel();
             }
             break;
         case 'mcp-management':
-            // 初始化MCP管理
-            // 先加载外部MCP列表（快速），然后加载工具列表
+            // Initialize MCP management
+            // Load external MCP list first (fast), then load the tool list
             if (typeof loadExternalMCPs === 'function') {
                 loadExternalMCPs().catch(err => {
-                    console.warn('加载外部MCP列表失败:', err);
+                    console.warn('Failed to load external MCP list:', err);
                 });
             }
-            // 加载工具列表（MCP工具配置已移到MCP管理页面）
-            // 使用异步加载，避免阻塞页面渲染
+            // Load tool list (MCP tool config has moved to the MCP management page)
+            // Use async loading to avoid blocking page rendering
             if (typeof loadToolsList === 'function') {
-                // 确保工具分页设置已初始化
+                // Ensure tool pagination settings are initialized
                 if (typeof getToolsPageSize === 'function' && typeof toolsPagination !== 'undefined') {
                     toolsPagination.pageSize = getToolsPageSize();
                 }
-                // 延迟加载，让页面先渲染
+                // Delay loading to let the page render first
                 setTimeout(() => {
                     loadToolsList(1, '').catch(err => {
-                        console.error('加载工具列表失败:', err);
+                        console.error('Failed to load tool list:', err);
                     });
                 }, 100);
             }
             break;
         case 'vulnerabilities':
-            // 初始化漏洞管理页面
+            // Initialize vulnerability management page
             if (typeof initVulnerabilityPage === 'function') {
                 initVulnerabilityPage();
             }
             break;
         case 'settings':
-            // 初始化设置页面（不需要加载工具列表）
+            // Initialize settings page (no tool list needed)
             if (typeof loadConfig === 'function') {
                 loadConfig(false);
             }
             break;
         case 'roles-management':
-            // 初始化角色管理页面
-            // 重置搜索UI（变量会在下次搜索时自动更新）
+            // Initialize role management page
+            // Reset search UI (variables will auto-update on next search)
             const rolesSearchInput = document.getElementById('roles-search');
             if (rolesSearchInput) {
                 rolesSearchInput.value = '';
@@ -318,14 +318,14 @@ function initPage(pageId) {
             }
             break;
         case 'skills-monitor':
-            // 初始化Skills状态监控页面
+            // Initialize Skills Status monitor page
             if (typeof loadSkillsMonitor === 'function') {
                 loadSkillsMonitor();
             }
             break;
         case 'skills-management':
-            // 初始化Skills管理页面
-            // 重置搜索UI（变量会在下次搜索时自动更新）
+            // Initialize Skills management page
+            // Reset search UI (variables will auto-update on next search)
             const skillsSearchInput = document.getElementById('skills-search');
             if (skillsSearchInput) {
                 skillsSearchInput.value = '';
@@ -343,34 +343,34 @@ function initPage(pageId) {
             break;
     }
     
-    // 清理其他页面的定时器
+    // Clean up timers for other pages
     if (pageId !== 'tasks' && typeof cleanupTasksPage === 'function') {
         cleanupTasksPage();
     }
 }
 
-// 页面加载完成后初始化路由
+// Initialize routing after page load
 document.addEventListener('DOMContentLoaded', function() {
     initRouter();
     initSidebarState();
     
-    // 监听hash变化
+    // Listen for hash changes
     window.addEventListener('hashchange', function() {
         const hash = window.location.hash.slice(1);
-        // 处理带参数的hash（如 chat?conversation=xxx）
+        // Handle hash with parameters (e.g., chat?conversation=xxx)
         const hashParts = hash.split('?');
         const pageId = hashParts[0];
         
         if (pageId && ['chat', 'info-collect', 'tasks', 'vulnerabilities', 'mcp-monitor', 'mcp-management', 'knowledge-management', 'knowledge-retrieval-logs', 'roles-management', 'skills-monitor', 'skills-management', 'settings'].includes(pageId)) {
             switchPage(pageId);
             
-            // 如果是chat页面且带有conversation参数，加载对应对话
+            // If this is the chat page with a conversation param, load that conversation
             if (pageId === 'chat' && hashParts.length > 1) {
                 const params = new URLSearchParams(hashParts[1]);
                 const conversationId = params.get('conversation');
                 if (conversationId) {
                     setTimeout(() => {
-                        // 尝试多种方式调用loadConversation
+                        // Try multiple ways to call loadConversation
                         if (typeof loadConversation === 'function') {
                             loadConversation(conversationId);
                         } else if (typeof window.loadConversation === 'function') {
@@ -384,7 +384,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
     
-    // 页面加载时也检查hash参数
+    // Also check hash parameters on page load
     const hash = window.location.hash.slice(1);
     if (hash) {
         const hashParts = hash.split('?');
@@ -401,18 +401,18 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 });
 
-// 切换侧边栏折叠/展开
+// Toggle sidebar collapse/expand
 function toggleSidebar() {
     const sidebar = document.getElementById('main-sidebar');
     if (sidebar) {
         sidebar.classList.toggle('collapsed');
-        // 保存折叠状态到localStorage
+        // Save collapsed state to localStorage
         const isCollapsed = sidebar.classList.contains('collapsed');
         localStorage.setItem('sidebarCollapsed', isCollapsed ? 'true' : 'false');
     }
 }
 
-// 初始化侧边栏状态
+// Initialize sidebar state
 function initSidebarState() {
     const sidebar = document.getElementById('main-sidebar');
     if (sidebar) {
@@ -423,7 +423,7 @@ function initSidebarState() {
     }
 }
 
-// 导出函数供其他脚本使用
+// Export functions for use by other scripts
 window.switchPage = switchPage;
 window.toggleSubmenu = toggleSubmenu;
 window.toggleSidebar = toggleSidebar;

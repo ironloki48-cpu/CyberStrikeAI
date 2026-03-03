@@ -1,20 +1,20 @@
-// 设置相关功能
+// Settings-related functionality
 let currentConfig = null;
 let allTools = [];
-// 全局工具状态映射，用于保存用户在所有页面的修改
-// key: 唯一工具标识符（toolKey），value: { enabled: boolean, is_external: boolean, external_mcp: string }
+// Global tool status map, used to save user changes across all pages
+// key: unique tool identifier (toolKey), value: { enabled: boolean, is_external: boolean, external_mcp: string }
 let toolStateMap = new Map();
 
-// 生成工具的唯一标识符，用于区分同名但来源不同的工具
+// Generate a unique identifier for a tool to distinguish tools with the same name but different sources
 function getToolKey(tool) {
-    // 如果是外部工具，使用 external_mcp::tool.name 作为唯一标识
-    // 如果是内部工具，使用 tool.name 作为标识
+    // If it's an external tool, use external_mcp::tool.name as the unique identifier
+    // If it's a built-in tool, use tool.name as the identifier
     if (tool.is_external && tool.external_mcp) {
         return `${tool.external_mcp}::${tool.name}`;
     }
     return tool.name;
 }
-// 从localStorage读取每页显示数量，默认为20
+// Read per-page count from localStorage, default is 20
 const getToolsPageSize = () => {
     const saved = localStorage.getItem('toolsPageSize');
     return saved ? parseInt(saved, 10) : 20;
@@ -27,9 +27,9 @@ let toolsPagination = {
     totalPages: 0
 };
 
-// 切换设置分类
+// Toggle settings category
 function switchSettingsSection(section) {
-    // 更新导航项状态
+    // Update nav item status
     document.querySelectorAll('.settings-nav-item').forEach(item => {
         item.classList.remove('active');
     });
@@ -38,7 +38,7 @@ function switchSettingsSection(section) {
         activeNavItem.classList.add('active');
     }
     
-    // 更新内容区域显示
+    // Update content area display
     document.querySelectorAll('.settings-section-content').forEach(content => {
         content.classList.remove('active');
     });
@@ -51,38 +51,38 @@ function switchSettingsSection(section) {
     }
 }
 
-// 打开设置
+// Open settings
 async function openSettings() {
-    // 切换到设置页面
+    // Switch to settings page
     if (typeof switchPage === 'function') {
         switchPage('settings');
     }
     
-    // 每次打开时清空全局状态映射，重新加载最新配置
+    // Clear global status map on each open, reload latest config
     toolStateMap.clear();
     
-    // 每次打开时重新加载最新配置（系统设置页面不需要加载工具列表）
+    // Reload latest config on each open (system settings page does not need tool list)
     await loadConfig(false);
     
-    // 清除之前的验证错误状态
+    // Clear previous validation error status
     document.querySelectorAll('.form-group input').forEach(input => {
         input.classList.remove('error');
     });
     
-    // 默认显示基本设置
+    // Default display basic settings
     switchSettingsSection('basic');
 }
 
-// 关闭设置（保留函数以兼容旧代码，但现在不需要关闭功能）
+// Close settings (keep function for backward compat, no close functionality needed now)
 function closeSettings() {
-    // 不再需要关闭功能，因为现在是页面而不是模态框
-    // 如果需要，可以切换回对话页面
+    // Close is no longer needed since this is now a page, not a modal
+    // If needed, can switch back to conversations page
     if (typeof switchPage === 'function') {
         switchPage('chat');
     }
 }
 
-// 点击模态框外部关闭（只保留MCP详情模态框）
+// Click outside modal to close (only MCP details modal)
 window.onclick = function(event) {
     const mcpModal = document.getElementById('mcp-detail-modal');
     
@@ -91,22 +91,22 @@ window.onclick = function(event) {
     }
 }
 
-// 加载配置
+// Load config
 async function loadConfig(loadTools = true) {
     try {
         const response = await apiFetch('/api/config');
         if (!response.ok) {
-            throw new Error('获取配置失败');
+            throw new Error('Failed to get config');
         }
         
         currentConfig = await response.json();
         
-        // 填充OpenAI配置
+        // Fill OpenAI config
         document.getElementById('openai-api-key').value = currentConfig.openai.api_key || '';
         document.getElementById('openai-base-url').value = currentConfig.openai.base_url || '';
         document.getElementById('openai-model').value = currentConfig.openai.model || '';
 
-        // 填充FOFA配置
+        // Fill FOFA config
         const fofa = currentConfig.fofa || {};
         const fofaEmailEl = document.getElementById('fofa-email');
         const fofaKeyEl = document.getElementById('fofa-api-key');
@@ -115,26 +115,26 @@ async function loadConfig(loadTools = true) {
         if (fofaKeyEl) fofaKeyEl.value = fofa.api_key || '';
         if (fofaBaseUrlEl) fofaBaseUrlEl.value = fofa.base_url || '';
         
-        // 填充Agent配置
+        // Fill Agent config
         document.getElementById('agent-max-iterations').value = currentConfig.agent.max_iterations || 30;
         
-        // 填充知识库配置
+        // Fill knowledge base config
         const knowledgeEnabledCheckbox = document.getElementById('knowledge-enabled');
         if (knowledgeEnabledCheckbox) {
             knowledgeEnabledCheckbox.checked = currentConfig.knowledge?.enabled !== false;
         }
         
-        // 填充知识库详细配置
+        // Fill knowledge base detailed config
         if (currentConfig.knowledge) {
             const knowledge = currentConfig.knowledge;
             
-            // 基本配置
+            // Basic config
             const basePathInput = document.getElementById('knowledge-base-path');
             if (basePathInput) {
                 basePathInput.value = knowledge.base_path || 'knowledge_base';
             }
             
-            // 嵌入模型配置
+            // Embedding model config
             const embeddingProviderSelect = document.getElementById('knowledge-embedding-provider');
             if (embeddingProviderSelect) {
                 embeddingProviderSelect.value = knowledge.embedding?.provider || 'openai';
@@ -155,7 +155,7 @@ async function loadConfig(loadTools = true) {
                 embeddingApiKeyInput.value = knowledge.embedding?.api_key || '';
             }
             
-            // 检索配置
+            // Retrieval config
             const retrievalTopKInput = document.getElementById('knowledge-retrieval-top-k');
             if (retrievalTopKInput) {
                 retrievalTopKInput.value = knowledge.retrieval?.top_k || 5;
@@ -169,12 +169,12 @@ async function loadConfig(loadTools = true) {
             const retrievalWeightInput = document.getElementById('knowledge-retrieval-hybrid-weight');
             if (retrievalWeightInput) {
                 const hybridWeight = knowledge.retrieval?.hybrid_weight;
-                // 允许0.0值，只有undefined/null时才使用默认值
+                // Allow 0.0 value, only use default when undefined/null
                 retrievalWeightInput.value = (hybridWeight !== undefined && hybridWeight !== null) ? hybridWeight : 0.7;
             }
         }
 
-        // 填充机器人配置
+        // Fill bot config
         const robots = currentConfig.robots || {};
         const wecom = robots.wecom || {};
         const dingtalk = robots.dingtalk || {};
@@ -206,37 +206,37 @@ async function loadConfig(loadTools = true) {
         const larkVerify = document.getElementById('robot-lark-verify-token');
         if (larkVerify) larkVerify.value = lark.verify_token || '';
         
-        // 只有在需要时才加载工具列表（MCP管理页面需要，系统设置页面不需要）
+        // Only load tool list when needed (MCP management page needs it, system settings does not)
         if (loadTools) {
-            // 设置每页显示数量（会在分页控件渲染时设置）
+            // Set per-page count (will be set when pagination controls render)
             const savedPageSize = getToolsPageSize();
             toolsPagination.pageSize = savedPageSize;
             
-            // 加载工具列表（使用分页）
+            // Load tool list (with pagination)
             toolsSearchKeyword = '';
             await loadToolsList(1, '');
         }
     } catch (error) {
-        console.error('加载配置失败:', error);
-        alert('加载配置失败: ' + error.message);
+        console.error('Failed to load config:', error);
+        alert('Failed to load config: ' + error.message);
     }
 }
 
-// 工具搜索关键词
+// Tool search keyword
 let toolsSearchKeyword = '';
 
-// 加载工具列表（分页）
+// Load tool list (paginated)
 async function loadToolsList(page = 1, searchKeyword = '') {
     const toolsList = document.getElementById('tools-list');
     
-    // 显示加载状态
+    // Show loading status
     if (toolsList) {
-        // 清空整个容器，包括可能存在的分页控件
-        toolsList.innerHTML = '<div class="tools-list-items"><div class="loading" style="padding: 20px; text-align: center; color: var(--text-muted);">⏳ 正在加载工具列表...</div></div>';
+        // Clear entire container, including any existing pagination controls
+        toolsList.innerHTML = '<div class="tools-list-items"><div class="loading" style="padding: 20px; text-align: center; color: var(--text-muted);">⏳ Loading tool list...</div></div>';
     }
     
     try {
-        // 在加载新页面之前，先保存当前页的状态到全局映射
+        // Before loading new page, save current page status to global map
         saveCurrentPageToolStates();
         
         const pageSize = toolsPagination.pageSize;
@@ -245,7 +245,7 @@ async function loadToolsList(page = 1, searchKeyword = '') {
             url += `&search=${encodeURIComponent(searchKeyword)}`;
         }
         
-        // 使用较短的超时时间（10秒），避免长时间等待
+        // Use shorter timeout (10 seconds) to avoid long waits
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 10000);
         
@@ -255,7 +255,7 @@ async function loadToolsList(page = 1, searchKeyword = '') {
         clearTimeout(timeoutId);
         
         if (!response.ok) {
-            throw new Error('获取工具列表失败');
+            throw new Error('Failed to get tool list');
         }
         
         const result = await response.json();
@@ -267,7 +267,7 @@ async function loadToolsList(page = 1, searchKeyword = '') {
             totalPages: result.total_pages || 1
         };
         
-        // 初始化工具状态映射（如果工具不在映射中，使用服务器返回的状态）
+        // Initialize tool status map (use server-returned status if tool not in map)
         allTools.forEach(tool => {
             const toolKey = getToolKey(tool);
             if (!toolStateMap.has(toolKey)) {
@@ -275,7 +275,7 @@ async function loadToolsList(page = 1, searchKeyword = '') {
                     enabled: tool.enabled,
                     is_external: tool.is_external || false,
                     external_mcp: tool.external_mcp || '',
-                    name: tool.name // 保存原始工具名称
+                    name: tool.name // Save original tool name
                 });
             }
         });
@@ -283,22 +283,22 @@ async function loadToolsList(page = 1, searchKeyword = '') {
         renderToolsList();
         renderToolsPagination();
     } catch (error) {
-        console.error('加载工具列表失败:', error);
+        console.error('Failed to load tool list:', error);
         if (toolsList) {
             const isTimeout = error.name === 'AbortError' || error.message.includes('timeout');
             const errorMsg = isTimeout 
-                ? '加载工具列表超时，可能是外部MCP连接较慢。请点击"刷新"按钮重试，或检查外部MCP连接状态。'
-                : `加载工具列表失败: ${escapeHtml(error.message)}`;
+                ? 'Tool list load timed out; external MCP connection may be slow. Click "Refresh" to retry, or check external MCP connection status.'
+                : `Failed to load tool list: ${escapeHtml(error.message)}`;
             toolsList.innerHTML = `<div class="error" style="padding: 20px; text-align: center;">${errorMsg}</div>`;
         }
     }
 }
 
-// 保存当前页的工具状态到全局映射
+// Save current page tool status to global map
 function saveCurrentPageToolStates() {
     document.querySelectorAll('#tools-list .tool-item').forEach(item => {
         const checkbox = item.querySelector('input[type="checkbox"]');
-        const toolKey = item.dataset.toolKey; // 使用唯一标识符
+        const toolKey = item.dataset.toolKey; // Use unique identifier
         const toolName = item.dataset.toolName;
         const isExternal = item.dataset.isExternal === 'true';
         const externalMcp = item.dataset.externalMcp || '';
@@ -307,22 +307,22 @@ function saveCurrentPageToolStates() {
                 enabled: checkbox.checked,
                 is_external: isExternal,
                 external_mcp: externalMcp,
-                name: toolName // 保存原始工具名称
+                name: toolName // Save original tool name
             });
         }
     });
 }
 
-// 搜索工具
+// Search tools
 function searchTools() {
     const searchInput = document.getElementById('tools-search');
     const keyword = searchInput ? searchInput.value.trim() : '';
     toolsSearchKeyword = keyword;
-    // 搜索时重置到第一页
+    // Reset to first page when searching
     loadToolsList(1, keyword);
 }
 
-// 清除搜索
+// Clear search
 function clearSearch() {
     const searchInput = document.getElementById('tools-search');
     if (searchInput) {
@@ -332,25 +332,25 @@ function clearSearch() {
     loadToolsList(1, '');
 }
 
-// 处理搜索框回车事件
+// Handle search box enter key event
 function handleSearchKeyPress(event) {
     if (event.key === 'Enter') {
         searchTools();
     }
 }
 
-// 渲染工具列表
+// Render tool list
 function renderToolsList() {
     const toolsList = document.getElementById('tools-list');
     if (!toolsList) return;
     
-    // 移除可能存在的分页控件（会在 renderToolsPagination 中重新添加）
+    // Remove any existing pagination controls (will be re-added in renderToolsPagination)
     const oldPagination = toolsList.querySelector('.tools-pagination');
     if (oldPagination) {
         oldPagination.remove();
     }
     
-    // 获取或创建列表容器
+    // Get or create list container
     let listContainer = toolsList.querySelector('.tools-list-items');
     if (!listContainer) {
         listContainer = document.createElement('div');
@@ -358,45 +358,45 @@ function renderToolsList() {
         toolsList.appendChild(listContainer);
     }
     
-    // 清空列表容器内容（移除加载提示）
+    // Clear list container content (remove loading prompt)
     listContainer.innerHTML = '';
     
     if (allTools.length === 0) {
-        listContainer.innerHTML = '<div class="empty">暂无工具</div>';
+        listContainer.innerHTML = '<div class="empty">No tools</div>';
         if (!toolsList.contains(listContainer)) {
             toolsList.appendChild(listContainer);
         }
-        // 更新统计
+        // Update statistics
         updateToolsStats();
         return;
     }
     
     allTools.forEach(tool => {
-        const toolKey = getToolKey(tool); // 生成唯一标识符
+        const toolKey = getToolKey(tool); // Generate unique identifier
         const toolItem = document.createElement('div');
         toolItem.className = 'tool-item';
-        toolItem.dataset.toolKey = toolKey; // 保存唯一标识符
-        toolItem.dataset.toolName = tool.name; // 保存原始工具名称
+        toolItem.dataset.toolKey = toolKey; // Save unique identifier
+        toolItem.dataset.toolName = tool.name; // Save original tool name
         toolItem.dataset.isExternal = tool.is_external ? 'true' : 'false';
         toolItem.dataset.externalMcp = tool.external_mcp || '';
         
-        // 从全局状态映射获取工具状态，如果不存在则使用服务器返回的状态
+        // Get tool status from global map, use server-returned status if not in map
         const toolState = toolStateMap.get(toolKey) || {
             enabled: tool.enabled,
             is_external: tool.is_external || false,
             external_mcp: tool.external_mcp || ''
         };
         
-        // 外部工具标签，显示来源信息
+        // External tool badge, show source info
         let externalBadge = '';
         if (toolState.is_external || tool.is_external) {
             const externalMcpName = toolState.external_mcp || tool.external_mcp || '';
-            const badgeText = externalMcpName ? `外部 (${escapeHtml(externalMcpName)})` : '外部';
-            const badgeTitle = externalMcpName ? `外部MCP工具 - 来源：${escapeHtml(externalMcpName)}` : '外部MCP工具';
+            const badgeText = externalMcpName ? `External (${escapeHtml(externalMcpName)})` : 'External';
+            const badgeTitle = externalMcpName ? `External MCP Tool - Source: ${escapeHtml(externalMcpName)}` : 'External MCP Tool';
             externalBadge = `<span class="external-tool-badge" title="${badgeTitle}">${badgeText}</span>`;
         }
         
-        // 生成唯一的checkbox id，使用工具唯一标识符
+        // Generate unique checkbox id using tool unique identifier
         const checkboxId = `tool-${escapeHtml(toolKey).replace(/::/g, '--')}`;
         
         toolItem.innerHTML = `
@@ -406,7 +406,7 @@ function renderToolsList() {
                     ${escapeHtml(tool.name)}
                     ${externalBadge}
                 </div>
-                <div class="tool-item-desc">${escapeHtml(tool.description || '无描述')}</div>
+                <div class="tool-item-desc">${escapeHtml(tool.description || 'NoneDescription')}</div>
             </div>
         `;
         listContainer.appendChild(toolItem);
@@ -416,22 +416,22 @@ function renderToolsList() {
         toolsList.appendChild(listContainer);
     }
     
-    // 更新统计
+    // Update statistics
     updateToolsStats();
 }
 
-// 渲染工具列表分页控件
+// Render tool list pagination controls
 function renderToolsPagination() {
     const toolsList = document.getElementById('tools-list');
     if (!toolsList) return;
     
-    // 移除旧的分页控件
+    // Remove old pagination controls
     const oldPagination = toolsList.querySelector('.tools-pagination');
     if (oldPagination) {
         oldPagination.remove();
     }
     
-    // 如果只有一页或没有数据，不显示分页
+    // If only one page or no data, do not show pagination
     if (toolsPagination.totalPages <= 1) {
         return;
     }
@@ -446,10 +446,10 @@ function renderToolsPagination() {
     const savedPageSize = getToolsPageSize();
     pagination.innerHTML = `
         <div class="pagination-info">
-            显示 ${startItem}-${endItem} / 共 ${total} 个工具${toolsSearchKeyword ? ` (搜索: "${escapeHtml(toolsSearchKeyword)}")` : ''}
+            Showing ${startItem}-${endItem} of ${total} tools${toolsSearchKeyword ? ` (search: "${escapeHtml(toolsSearchKeyword)}")` : ''}
         </div>
         <div class="pagination-page-size">
-            <label for="tools-page-size-pagination">每页:</label>
+            <label for="tools-page-size-pagination">Per page:</label>
             <select id="tools-page-size-pagination" onchange="changeToolsPageSize()">
                 <option value="10" ${savedPageSize === 10 ? 'selected' : ''}>10</option>
                 <option value="20" ${savedPageSize === 20 ? 'selected' : ''}>20</option>
@@ -458,20 +458,20 @@ function renderToolsPagination() {
             </select>
         </div>
         <div class="pagination-controls">
-            <button class="btn-secondary" onclick="loadToolsList(1, '${escapeHtml(toolsSearchKeyword)}')" ${page === 1 ? 'disabled' : ''}>首页</button>
-            <button class="btn-secondary" onclick="loadToolsList(${page - 1}, '${escapeHtml(toolsSearchKeyword)}')" ${page === 1 ? 'disabled' : ''}>上一页</button>
-            <span class="pagination-page">第 ${page} / ${totalPages} 页</span>
-            <button class="btn-secondary" onclick="loadToolsList(${page + 1}, '${escapeHtml(toolsSearchKeyword)}')" ${page === totalPages ? 'disabled' : ''}>下一页</button>
-            <button class="btn-secondary" onclick="loadToolsList(${totalPages}, '${escapeHtml(toolsSearchKeyword)}')" ${page === totalPages ? 'disabled' : ''}>末页</button>
+            <button class="btn-secondary" onclick="loadToolsList(1, '${escapeHtml(toolsSearchKeyword)}')" ${page === 1 ? 'disabled' : ''}>First</button>
+            <button class="btn-secondary" onclick="loadToolsList(${page - 1}, '${escapeHtml(toolsSearchKeyword)}')" ${page === 1 ? 'disabled' : ''}>Prev</button>
+            <span class="pagination-page">Page ${page} / ${totalPages}</span>
+            <button class="btn-secondary" onclick="loadToolsList(${page + 1}, '${escapeHtml(toolsSearchKeyword)}')" ${page === totalPages ? 'disabled' : ''}>Next</button>
+            <button class="btn-secondary" onclick="loadToolsList(${totalPages}, '${escapeHtml(toolsSearchKeyword)}')" ${page === totalPages ? 'disabled' : ''}>Last</button>
         </div>
     `;
     
     toolsList.appendChild(pagination);
 }
 
-// 处理工具checkbox状态变化
+// Handle tool checkbox status change
 function handleToolCheckboxChange(toolKey, enabled) {
-    // 更新全局状态映射
+    // Update global status map
     const toolItem = document.querySelector(`.tool-item[data-tool-key="${toolKey}"]`);
     if (toolItem) {
         const toolName = toolItem.dataset.toolName;
@@ -481,17 +481,17 @@ function handleToolCheckboxChange(toolKey, enabled) {
             enabled: enabled,
             is_external: isExternal,
             external_mcp: externalMcp,
-            name: toolName // 保存原始工具名称
+            name: toolName // Save original tool name
         });
     }
     updateToolsStats();
 }
 
-// 全选工具
+// Select all tools
 function selectAllTools() {
     document.querySelectorAll('#tools-list input[type="checkbox"]').forEach(checkbox => {
         checkbox.checked = true;
-        // 更新全局状态映射
+        // Update global status map
         const toolItem = checkbox.closest('.tool-item');
         if (toolItem) {
             const toolKey = toolItem.dataset.toolKey;
@@ -503,7 +503,7 @@ function selectAllTools() {
                     enabled: true,
                     is_external: isExternal,
                     external_mcp: externalMcp,
-                    name: toolName // 保存原始工具名称
+                    name: toolName // Save original tool name
                 });
             }
         }
@@ -511,11 +511,11 @@ function selectAllTools() {
     updateToolsStats();
 }
 
-// 全不选工具
+// Deselect all tools
 function deselectAllTools() {
     document.querySelectorAll('#tools-list input[type="checkbox"]').forEach(checkbox => {
         checkbox.checked = false;
-        // 更新全局状态映射
+        // Update global status map
         const toolItem = checkbox.closest('.tool-item');
         if (toolItem) {
             const toolKey = toolItem.dataset.toolKey;
@@ -527,7 +527,7 @@ function deselectAllTools() {
                     enabled: false,
                     is_external: isExternal,
                     external_mcp: externalMcp,
-                    name: toolName // 保存原始工具名称
+                    name: toolName // Save original tool name
                 });
             }
         }
@@ -535,9 +535,9 @@ function deselectAllTools() {
     updateToolsStats();
 }
 
-// 改变每页显示数量
+// Change per-page count
 async function changeToolsPageSize() {
-    // 尝试从两个位置获取选择器（顶部或分页区域）
+    // Try to get selector from two locations (top or pagination area)
     const pageSizeSelect = document.getElementById('tools-page-size') || document.getElementById('tools-page-size-pagination');
     if (!pageSizeSelect) return;
     
@@ -546,44 +546,44 @@ async function changeToolsPageSize() {
         return;
     }
     
-    // 保存到localStorage
+    // Save to localStorage
     localStorage.setItem('toolsPageSize', newPageSize.toString());
     
-    // 更新分页配置
+    // Update pagination config
     toolsPagination.pageSize = newPageSize;
     
-    // 同步更新另一个选择器（如果存在）
+    // Sync update the other selector (if exists)
     const otherSelect = document.getElementById('tools-page-size') || document.getElementById('tools-page-size-pagination');
     if (otherSelect && otherSelect !== pageSizeSelect) {
         otherSelect.value = newPageSize;
     }
     
-    // 重新加载第一页
+    // Reload first page
     await loadToolsList(1, toolsSearchKeyword);
 }
 
-// 更新工具统计信息
+// Update tool statistics
 async function updateToolsStats() {
     const statsEl = document.getElementById('tools-stats');
     if (!statsEl) return;
     
-    // 先保存当前页的状态到全局映射
+    // Save current page status to global map first
     saveCurrentPageToolStates();
     
-    // 计算当前页的启用工具数
+    // Calculate enabled tool count on current page
     const currentPageEnabled = Array.from(document.querySelectorAll('#tools-list input[type="checkbox"]:checked')).length;
     const currentPageTotal = document.querySelectorAll('#tools-list input[type="checkbox"]').length;
     
-    // 计算所有工具的启用数
+    // Calculate enabled count for all tools
     let totalEnabled = 0;
     let totalTools = toolsPagination.total || 0;
     
     try {
-        // 如果有搜索关键词，只统计搜索结果
+        // If search keyword, only count search results
         if (toolsSearchKeyword) {
             totalTools = allTools.length;
             totalEnabled = allTools.filter(tool => {
-                // 优先使用全局状态映射，否则使用checkbox状态，最后使用服务器返回的状态
+                // Prefer global status map, then checkbox status, lastly server-returned status
                 const toolKey = getToolKey(tool);
                 const savedState = toolStateMap.get(toolKey);
                 if (savedState !== undefined) {
@@ -594,11 +594,11 @@ async function updateToolsStats() {
                 return checkbox ? checkbox.checked : tool.enabled;
             }).length;
         } else {
-            // 没有搜索时，需要获取所有工具的状态
-            // 先使用全局状态映射和当前页的checkbox状态
+            // Without search, need to get all tools status
+            // Use global status map and current page checkbox status first
             const localStateMap = new Map();
             
-            // 从当前页的checkbox获取状态（如果全局映射中没有）
+            // Get status from current page checkboxes (if not in global map)
             allTools.forEach(tool => {
                 const toolKey = getToolKey(tool);
                 const savedState = toolStateMap.get(toolKey);
@@ -610,27 +610,27 @@ async function updateToolsStats() {
                     if (checkbox) {
                         localStateMap.set(toolKey, checkbox.checked);
                     } else {
-                        // 如果checkbox不存在（不在当前页），使用工具原始状态
+                        // If checkbox does not exist (not on current page), use original tool status
                         localStateMap.set(toolKey, tool.enabled);
                     }
                 }
             });
             
-            // 如果总工具数大于当前页，需要获取所有工具的状态
+            // If total tool count exceeds current page, need to get all tools status
             if (totalTools > allTools.length) {
-                // 遍历所有页面获取完整状态
+                // Traverse all pages to get complete status
                 let page = 1;
                 let hasMore = true;
-                const pageSize = 100; // 使用较大的页面大小以减少请求次数
+                const pageSize = 100; // Use large page size to reduce requests
                 
-                while (hasMore && page <= 10) { // 限制最多10页，避免无限循环
+                while (hasMore && page <= 10) { // Limit to max 10 pages to avoid infinite loop
                     const url = `/api/config/tools?page=${page}&page_size=${pageSize}`;
                     const pageResponse = await apiFetch(url);
                     if (!pageResponse.ok) break;
                     
                     const pageResult = await pageResponse.json();
                     pageResult.tools.forEach(tool => {
-                        // 优先使用全局状态映射，否则使用服务器返回的状态
+                        // Prefer global status map, then server-returned status
                         const toolKey = getToolKey(tool);
                         if (!localStateMap.has(toolKey)) {
                             const savedState = toolStateMap.get(toolKey);
@@ -646,38 +646,38 @@ async function updateToolsStats() {
                 }
             }
             
-            // 计算启用的工具数
+            // Calculate enabled tool count
             totalEnabled = Array.from(localStateMap.values()).filter(enabled => enabled).length;
         }
     } catch (error) {
-        console.warn('获取工具统计失败，使用当前页数据', error);
-        // 如果获取失败，使用当前页的数据
+        console.warn('Failed to get tool stats, using current page data', error);
+        // If fetch fails, use current page data
         totalTools = totalTools || currentPageTotal;
         totalEnabled = currentPageEnabled;
     }
     
     statsEl.innerHTML = `
-        <span title="当前页启用的工具数">✅ 当前页已启用: <strong>${currentPageEnabled}</strong> / ${currentPageTotal}</span>
-        <span title="所有工具中启用的工具总数">📊 总计已启用: <strong>${totalEnabled}</strong> / ${totalTools}</span>
+        <span title="Number of enabled tools on current page">✅ Current page enabled: <strong>${currentPageEnabled}</strong> / ${currentPageTotal}</span>
+        <span title="Total enabled tools among all tools">📊 Total enabled: <strong>${totalEnabled}</strong> / ${totalTools}</span>
     `;
 }
 
-// 过滤工具（已废弃，现在使用服务端搜索）
-// 保留此函数以防其他地方调用，但实际功能已由searchTools()替代
+// Filter tools (deprecated, now using server-side search)
+// Keep this function in case it is called elsewhere, actual functionality replaced by searchTools()
 function filterTools() {
-    // 不再使用客户端过滤，改为触发服务端搜索
-    // 可以保留为空函数或移除oninput事件
+    // No longer use client-side filtering, trigger server-side search instead
+    // Can keep as empty function or remove oninput event
 }
 
-// 应用设置
+// Apply settings
 async function applySettings() {
     try {
-        // 清除之前的验证错误状态
+        // Clear previous validation error status
         document.querySelectorAll('.form-group input').forEach(input => {
             input.classList.remove('error');
         });
         
-        // 验证必填字段
+        // Validate required fields
         const apiKey = document.getElementById('openai-api-key').value.trim();
         const baseUrl = document.getElementById('openai-base-url').value.trim();
         const model = document.getElementById('openai-model').value.trim();
@@ -700,15 +700,15 @@ async function applySettings() {
         }
         
         if (hasError) {
-            alert('请填写所有必填字段（标记为 * 的字段）');
+            alert('Please fill in all required fields (fields marked with *)');
             return;
         }
         
-        // 收集配置
+        // Collect config
         const knowledgeEnabledCheckbox = document.getElementById('knowledge-enabled');
         const knowledgeEnabled = knowledgeEnabledCheckbox ? knowledgeEnabledCheckbox.checked : true;
         
-        // 收集知识库配置
+        // Collect knowledge base config
         const knowledgeConfig = {
             enabled: knowledgeEnabled,
             base_path: document.getElementById('knowledge-base-path')?.value.trim() || 'knowledge_base',
@@ -726,7 +726,7 @@ async function applySettings() {
                 })(),
                 hybrid_weight: (() => {
                     const val = parseFloat(document.getElementById('knowledge-retrieval-hybrid-weight')?.value);
-                    return isNaN(val) ? 0.7 : val; // 允许0.0值，只有NaN时才使用默认值
+                    return isNaN(val) ? 0.7 : val; // Allow 0.0 value, only use default when NaN
                 })()
             }
         };
@@ -771,31 +771,31 @@ async function applySettings() {
             tools: []
         };
         
-        // 收集工具启用状态
-        // 先保存当前页的状态到全局映射
+        // Collect tool enabled status
+        // Save current page status to global map first
         saveCurrentPageToolStates();
         
-        // 获取所有工具列表以获取完整状态（遍历所有页面）
-        // 注意：无论是否在搜索状态下，都要获取所有工具的状态，以确保完整保存
+        // Get all tool list for complete status (traverse all pages)
+        // Note: regardless of search status, get all tools status to ensure complete save
         try {
             const allToolsMap = new Map();
             let page = 1;
             let hasMore = true;
-            const pageSize = 100; // 使用合理的页面大小
+            const pageSize = 100; // Use reasonable page size
             
-            // 遍历所有页面获取所有工具（不使用搜索关键词，获取全部工具）
+            // Traverse all pages to get all tools (no search keyword, get all tools)
             while (hasMore) {
                 const url = `/api/config/tools?page=${page}&page_size=${pageSize}`;
                 
                 const pageResponse = await apiFetch(url);
                 if (!pageResponse.ok) {
-                    throw new Error('获取工具列表失败');
+                    throw new Error('Failed to get tool list');
                 }
                 
                 const pageResult = await pageResponse.json();
                 
-                // 将工具添加到映射中
-                // 优先使用全局状态映射中的状态（用户修改过的），否则使用服务器返回的状态
+                // Add tools to map
+                // Prefer status from global map (user-modified), then server-returned status
                 pageResult.tools.forEach(tool => {
                     const toolKey = getToolKey(tool);
                     const savedState = toolStateMap.get(toolKey);
@@ -807,7 +807,7 @@ async function applySettings() {
                     });
                 });
                 
-                // 检查是否还有更多页面
+                // Check if there are more pages
                 if (page >= pageResult.total_pages) {
                     hasMore = false;
                 } else {
@@ -815,7 +815,7 @@ async function applySettings() {
                 }
             }
             
-            // 将所有工具添加到配置中
+            // Add all tools to config
             allToolsMap.forEach((tool, toolKey) => {
                 config.tools.push({
                     name: tool.name,
@@ -825,10 +825,10 @@ async function applySettings() {
                 });
             });
         } catch (error) {
-            console.warn('获取所有工具列表失败，仅使用全局状态映射', error);
-            // 如果获取失败，使用全局状态映射
+            console.warn('Failed to get all tool list, using global status map only', error);
+            // If fetch fails, use global status map
             toolStateMap.forEach((toolData, toolKey) => {
-                // toolData.name 保存了原始工具名称
+                // toolData.name saves original tool name
                 const toolName = toolData.name || toolKey.split('::').pop();
                 config.tools.push({
                     name: toolName,
@@ -839,7 +839,7 @@ async function applySettings() {
             });
         }
         
-        // 更新配置
+        // Update config
         const updateResponse = await apiFetch('/api/config', {
             method: 'PUT',
             headers: {
@@ -850,67 +850,67 @@ async function applySettings() {
         
         if (!updateResponse.ok) {
             const error = await updateResponse.json();
-            throw new Error(error.error || '更新配置失败');
+            throw new Error(error.error || 'Failed to update config');
         }
         
-        // 应用配置
+        // Apply config
         const applyResponse = await apiFetch('/api/config/apply', {
             method: 'POST'
         });
         
         if (!applyResponse.ok) {
             const error = await applyResponse.json();
-            throw new Error(error.error || '应用配置失败');
+            throw new Error(error.error || 'Failed to apply config');
         }
         
-        alert('配置已成功应用！');
+        alert('Configuration applied successfully!');
         closeSettings();
     } catch (error) {
-        console.error('应用配置失败:', error);
-        alert('应用配置失败: ' + error.message);
+        console.error('Failed to apply config:', error);
+        alert('Failed to apply config: ' + error.message);
     }
 }
 
-// 保存工具配置（独立函数，用于MCP管理页面）
+// Save tool config (standalone function, for MCP management page)
 async function saveToolsConfig() {
     try {
-        // 先保存当前页的状态到全局映射
+        // Save current page status to global map first
         saveCurrentPageToolStates();
         
-        // 获取当前配置（只获取工具部分）
+        // Get current config (only tool part)
         const response = await apiFetch('/api/config');
         if (!response.ok) {
-            throw new Error('获取配置失败');
+            throw new Error('Failed to get config');
         }
         
         const currentConfig = await response.json();
         
-        // 构建只包含工具配置的配置对象
+        // Build config object containing only tool config
         const config = {
             openai: currentConfig.openai || {},
             agent: currentConfig.agent || {},
             tools: []
         };
         
-        // 收集工具启用状态（与applySettings中的逻辑相同）
+        // Collect tool enabled status (same logic as in applySettings)
         try {
             const allToolsMap = new Map();
             let page = 1;
             let hasMore = true;
             const pageSize = 100;
             
-            // 遍历所有页面获取所有工具
+            // Traverse all pages to get all tools
             while (hasMore) {
                 const url = `/api/config/tools?page=${page}&page_size=${pageSize}`;
                 
                 const pageResponse = await apiFetch(url);
                 if (!pageResponse.ok) {
-                    throw new Error('获取工具列表失败');
+                    throw new Error('Failed to get tool list');
                 }
                 
                 const pageResult = await pageResponse.json();
                 
-                // 将工具添加到映射中
+                // Add tools to map
                 pageResult.tools.forEach(tool => {
                     const toolKey = getToolKey(tool);
                     const savedState = toolStateMap.get(toolKey);
@@ -922,7 +922,7 @@ async function saveToolsConfig() {
                     });
                 });
                 
-                // 检查是否还有更多页面
+                // Check if there are more pages
                 if (page >= pageResult.total_pages) {
                     hasMore = false;
                 } else {
@@ -930,7 +930,7 @@ async function saveToolsConfig() {
                 }
             }
             
-            // 将所有工具添加到配置中
+            // Add all tools to config
             allToolsMap.forEach((tool, toolKey) => {
                 config.tools.push({
                     name: tool.name,
@@ -940,10 +940,10 @@ async function saveToolsConfig() {
                 });
             });
         } catch (error) {
-            console.warn('获取所有工具列表失败，仅使用全局状态映射', error);
-            // 如果获取失败，使用全局状态映射
+            console.warn('Failed to get all tool list, using global status map only', error);
+            // If fetch fails, use global status map
             toolStateMap.forEach((toolData, toolKey) => {
-                // toolData.name 保存了原始工具名称
+                // toolData.name saves original tool name
                 const toolName = toolData.name || toolKey.split('::').pop();
                 config.tools.push({
                     name: toolName,
@@ -954,7 +954,7 @@ async function saveToolsConfig() {
             });
         }
         
-        // 更新配置
+        // Update config
         const updateResponse = await apiFetch('/api/config', {
             method: 'PUT',
             headers: {
@@ -965,28 +965,28 @@ async function saveToolsConfig() {
         
         if (!updateResponse.ok) {
             const error = await updateResponse.json();
-            throw new Error(error.error || '更新配置失败');
+            throw new Error(error.error || 'Failed to update config');
         }
         
-        // 应用配置
+        // Apply config
         const applyResponse = await apiFetch('/api/config/apply', {
             method: 'POST'
         });
         
         if (!applyResponse.ok) {
             const error = await applyResponse.json();
-            throw new Error(error.error || '应用配置失败');
+            throw new Error(error.error || 'Failed to apply config');
         }
         
-        alert('工具配置已成功保存！');
+        alert('Tool configuration saved successfully!');
         
-        // 重新加载工具列表以反映最新状态
+        // Reload tool list to reflect latest status
         if (typeof loadToolsList === 'function') {
             await loadToolsList(toolsPagination.page, toolsSearchKeyword);
         }
     } catch (error) {
-        console.error('保存工具配置失败:', error);
-        alert('保存工具配置失败: ' + error.message);
+        console.error('Failed to save tool config:', error);
+        alert('Failed to save tool config: ' + error.message);
     }
 }
 
@@ -1033,7 +1033,7 @@ async function changePassword() {
     }
 
     if (hasError) {
-        alert('请正确填写当前密码和新密码，新密码至少 8 位且需要两次输入一致。');
+        alert('Please fill in the current password and new password correctly. The new password must be at least 8 characters and match the confirmation.');
         return;
     }
 
@@ -1055,16 +1055,16 @@ async function changePassword() {
 
         const result = await response.json().catch(() => ({}));
         if (!response.ok) {
-            throw new Error(result.error || '修改密码失败');
+            throw new Error(result.error || 'Failed to change password');
         }
 
-        alert('密码已更新，请使用新密码重新登录。');
+        alert('Password updated. Please log in again with your new password.');
         resetPasswordForm();
-        handleUnauthorized({ message: '密码已更新，请使用新密码重新登录。', silent: false });
+        handleUnauthorized({ message: 'Password updated. Please log in again with your new password.', silent: false });
         closeSettings();
     } catch (error) {
-        console.error('修改密码失败:', error);
-        alert('修改密码失败: ' + error.message);
+        console.error('Failed to change password:', error);
+        alert('Failed to change password: ' + error.message);
     } finally {
         if (submitBtn) {
             submitBtn.disabled = false;
@@ -1072,34 +1072,34 @@ async function changePassword() {
     }
 }
 
-// ==================== 外部MCP管理 ====================
+// ==================== External MCP Management ====================
 
 let currentEditingMCPName = null;
 
-// 拉取外部MCP列表数据（供轮询使用，返回 { servers, stats }）
+// Fetch external MCP list data (for polling, returns { servers, stats })
 async function fetchExternalMCPs() {
     const response = await apiFetch('/api/external-mcp');
-    if (!response.ok) throw new Error('获取外部MCP列表失败');
+    if (!response.ok) throw new Error('Failed to get external MCP list');
     return response.json();
 }
 
-// 加载外部MCP列表并渲染
+// Load external MCP list and render
 async function loadExternalMCPs() {
     try {
         const data = await fetchExternalMCPs();
         renderExternalMCPList(data.servers || {});
         renderExternalMCPStats(data.stats || {});
     } catch (error) {
-        console.error('加载外部MCP列表失败:', error);
+        console.error('Failed to load external MCP list:', error);
         const list = document.getElementById('external-mcp-list');
         if (list) {
-            list.innerHTML = `<div class="error">加载失败: ${escapeHtml(error.message)}</div>`;
+            list.innerHTML = `<div class="error">Failed to load: ${escapeHtml(error.message)}</div>`;
         }
     }
 }
 
-// 轮询列表直到指定 MCP 的工具数量已更新（每秒拉一次，拿到即停，无固定延迟）
-// name 为 null 时仅按 maxAttempts 次数轮询，不判断 tool_count
+// Poll list until specified MCP tool count is updated (poll every second, stop when obtained, no fixed delay)
+// When name is null, only poll maxAttempts times without checking tool_count
 async function pollExternalMCPToolCount(name, maxAttempts = 10) {
     const pollIntervalMs = 1000;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -1113,7 +1113,7 @@ async function pollExternalMCPToolCount(name, maxAttempts = 10) {
                 if (server && server.tool_count > 0) break;
             }
         } catch (e) {
-            console.warn('轮询工具数量失败:', e);
+            console.warn('Failed to poll tool count:', e);
         }
     }
     if (typeof window !== 'undefined' && typeof window.refreshMentionTools === 'function') {
@@ -1121,13 +1121,13 @@ async function pollExternalMCPToolCount(name, maxAttempts = 10) {
     }
 }
 
-// 渲染外部MCP列表
+// Render external MCP list
 function renderExternalMCPList(servers) {
     const list = document.getElementById('external-mcp-list');
     if (!list) return;
     
     if (Object.keys(servers).length === 0) {
-        list.innerHTML = '<div class="empty">📋 暂无外部MCP配置<br><span style="font-size: 0.875rem; margin-top: 8px; display: block;">点击"添加外部MCP"按钮开始配置</span></div>';
+        list.innerHTML = '<div class="empty">📋 No external MCP configurations<br><span style="font-size: 0.875rem; margin-top: 8px; display: block;">Click the "Add External MCP" button to start configuring</span></div>';
         return;
     }
     
@@ -1138,10 +1138,10 @@ function renderExternalMCPList(servers) {
                            status === 'connecting' ? 'status-connecting' :
                            status === 'error' ? 'status-error' :
                            status === 'disabled' ? 'status-disabled' : 'status-disconnected';
-        const statusText = status === 'connected' ? '已连接' : 
-                          status === 'connecting' ? '连接中...' :
-                          status === 'error' ? '连接失败' :
-                          status === 'disabled' ? '已禁用' : '未连接';
+        const statusText = status === 'connected' ? 'Connected' : 
+                          status === 'connecting' ? 'Connecting...' :
+                          status === 'error' ? 'Connection failed' :
+                          status === 'disabled' ? 'Disabled' : 'Not connected';
         const transport = server.config.transport || (server.config.command ? 'stdio' : 'http');
         const transportIcon = transport === 'stdio' ? '⚙️' : '🌐';
         
@@ -1149,53 +1149,53 @@ function renderExternalMCPList(servers) {
             <div class="external-mcp-item">
                 <div class="external-mcp-item-header">
                     <div class="external-mcp-item-info">
-                        <h4>${transportIcon} ${escapeHtml(name)}${server.tool_count !== undefined && server.tool_count > 0 ? `<span class="tool-count-badge" title="工具数量">🔧 ${server.tool_count}</span>` : ''}</h4>
+                        <h4>${transportIcon} ${escapeHtml(name)}${server.tool_count !== undefined && server.tool_count > 0 ? `<span class="tool-count-badge" title="Tool count">🔧 ${server.tool_count}</span>` : ''}</h4>
                         <span class="external-mcp-status ${statusClass}">${statusText}</span>
                     </div>
                     <div class="external-mcp-item-actions">
                         ${status === 'connected' || status === 'disconnected' || status === 'error' ? 
-                            `<button class="btn-small" id="btn-toggle-${escapeHtml(name)}" onclick="toggleExternalMCP('${escapeHtml(name)}', '${status}')" title="${status === 'connected' ? '停止连接' : '启动连接'}">
-                                ${status === 'connected' ? '⏸ 停止' : '▶ 启动'}
+                            `<button class="btn-small" id="btn-toggle-${escapeHtml(name)}" onclick="toggleExternalMCP('${escapeHtml(name)}', '${status}')" title="${status === 'connected' ? 'Stop connection' : 'Start connection'}">
+                                ${status === 'connected' ? '⏸ Stop' : '▶ Start'}
                             </button>` : 
                             status === 'connecting' ? 
                             `<button class="btn-small" id="btn-toggle-${escapeHtml(name)}" disabled style="opacity: 0.6; cursor: not-allowed;">
-                                ⏳ 连接中...
+                                ⏳ Connecting...
                             </button>` : ''}
-                        <button class="btn-small" onclick="editExternalMCP('${escapeHtml(name)}')" title="编辑配置" ${status === 'connecting' ? 'disabled' : ''}>✏️ 编辑</button>
-                        <button class="btn-small btn-danger" onclick="deleteExternalMCP('${escapeHtml(name)}')" title="删除配置" ${status === 'connecting' ? 'disabled' : ''}>🗑 删除</button>
+                        <button class="btn-small" onclick="editExternalMCP('${escapeHtml(name)}')" title="Edit config" ${status === 'connecting' ? 'disabled' : ''}>✏️ Edit</button>
+                        <button class="btn-small btn-danger" onclick="deleteExternalMCP('${escapeHtml(name)}')" title="Delete config" ${status === 'connecting' ? 'disabled' : ''}>🗑 Delete</button>
                     </div>
                 </div>
                 ${status === 'error' && server.error ? `
                 <div class="external-mcp-error" style="margin: 12px 0; padding: 12px; background: #fee; border-left: 3px solid #f44; border-radius: 4px; color: #c33; font-size: 0.875rem;">
-                    <strong>❌ 连接错误：</strong>${escapeHtml(server.error)}
+                    <strong>❌ Connection error:</strong> ${escapeHtml(server.error)}
                 </div>` : ''}
                 <div class="external-mcp-item-details">
                     <div>
-                        <strong>传输模式</strong>
+                        <strong>Transport Mode</strong>
                         <span>${transportIcon} ${escapeHtml(transport.toUpperCase())}</span>
                     </div>
                     ${server.tool_count !== undefined && server.tool_count > 0 ? `
                     <div>
-                        <strong>工具数量</strong>
-                        <span style="font-weight: 600; color: var(--accent-color);">🔧 ${server.tool_count} 个工具</span>
+                        <strong>Tool Count</strong>
+                        <span style="font-weight: 600; color: var(--accent-color);">🔧 ${server.tool_count} tool(s)</span>
                     </div>` : server.tool_count === 0 && status === 'connected' ? `
                     <div>
-                        <strong>工具数量</strong>
-                        <span style="color: var(--text-muted);">暂无工具</span>
+                        <strong>Tool Count</strong>
+                        <span style="color: var(--text-muted);">No tools</span>
                     </div>` : ''}
                     ${server.config.description ? `
                     <div>
-                        <strong>描述</strong>
+                        <strong>Description</strong>
                         <span>${escapeHtml(server.config.description)}</span>
                     </div>` : ''}
                     ${server.config.timeout ? `
                     <div>
-                        <strong>超时时间</strong>
-                        <span>${server.config.timeout} 秒</span>
+                        <strong>Timeout</strong>
+                        <span>${server.config.timeout} seconds</span>
                     </div>` : ''}
                     ${transport === 'stdio' && server.config.command ? `
                     <div>
-                        <strong>命令</strong>
+                        <strong>Command</strong>
                         <span style="font-family: monospace; font-size: 0.8125rem;">${escapeHtml(server.config.command)}</span>
                     </div>` : ''}
                     ${transport === 'http' && server.config.url ? `
@@ -1211,7 +1211,7 @@ function renderExternalMCPList(servers) {
     list.innerHTML = html;
 }
 
-// 渲染外部MCP统计信息
+// Render external MCP statistics
 function renderExternalMCPStats(stats) {
     const statsEl = document.getElementById('external-mcp-stats');
     if (!statsEl) return;
@@ -1222,17 +1222,17 @@ function renderExternalMCPStats(stats) {
     const connected = stats.connected || 0;
     
     statsEl.innerHTML = `
-        <span title="总配置数">📊 总数: <strong>${total}</strong></span>
-        <span title="已启用的配置数">✅ 已启用: <strong>${enabled}</strong></span>
-        <span title="已停用的配置数">⏸ 已停用: <strong>${disabled}</strong></span>
-        <span title="当前已连接的配置数">🔗 已连接: <strong>${connected}</strong></span>
+        <span title="Total config count">📊 Total: <strong>${total}</strong></span>
+        <span title="Enabled config count">✅ Enabled: <strong>${enabled}</strong></span>
+        <span title="Disabled config count">⏸ Disabled: <strong>${disabled}</strong></span>
+        <span title="Currently connected config count">🔗 Connected: <strong>${connected}</strong></span>
     `;
 }
 
-// 显示添加外部MCP模态框
+// Show Add External MCP modal
 function showAddExternalMCPModal() {
     currentEditingMCPName = null;
-    document.getElementById('external-mcp-modal-title').textContent = '添加外部MCP';
+    document.getElementById('external-mcp-modal-title').textContent = 'AddExternalMCP';
     document.getElementById('external-mcp-json').value = '';
     document.getElementById('external-mcp-json-error').style.display = 'none';
     document.getElementById('external-mcp-json-error').textContent = '';
@@ -1240,36 +1240,36 @@ function showAddExternalMCPModal() {
     document.getElementById('external-mcp-modal').style.display = 'block';
 }
 
-// 关闭外部MCP模态框
+// Close External MCP modal
 function closeExternalMCPModal() {
     document.getElementById('external-mcp-modal').style.display = 'none';
     currentEditingMCPName = null;
 }
 
-// 编辑外部MCP
+// EditExternalMCP
 async function editExternalMCP(name) {
     try {
         const response = await apiFetch(`/api/external-mcp/${encodeURIComponent(name)}`);
         if (!response.ok) {
-            throw new Error('获取外部MCP配置失败');
+            throw new Error('Failed to get external MCP config');
         }
         
         const server = await response.json();
         currentEditingMCPName = name;
         
-        document.getElementById('external-mcp-modal-title').textContent = '编辑外部MCP';
+        document.getElementById('external-mcp-modal-title').textContent = 'EditExternalMCP';
         
-        // 将配置转换为对象格式（key为名称）
+        // Convert config to object format (key is name)
         const config = { ...server.config };
-        // 移除tool_count、external_mcp_enable等前端字段，但保留enabled/disabled用于向后兼容
+        // Remove frontend fields like tool_count, external_mcp_enable, but keep enabled/disabled for backward compat
         delete config.tool_count;
         delete config.external_mcp_enable;
         
-        // 包装成对象格式：{ "name": { config } }
+        // Wrap into object format: { "name": { config } }
         const configObj = {};
         configObj[name] = config;
         
-        // 格式化JSON
+        // Format JSON
         const jsonStr = JSON.stringify(configObj, null, 2);
         document.getElementById('external-mcp-json').value = jsonStr;
         document.getElementById('external-mcp-json-error').style.display = 'none';
@@ -1278,12 +1278,12 @@ async function editExternalMCP(name) {
         
         document.getElementById('external-mcp-modal').style.display = 'block';
     } catch (error) {
-        console.error('编辑外部MCP失败:', error);
-        alert('编辑失败: ' + error.message);
+        console.error('EditExternalMCPFailed:', error);
+        alert('EditFailed: ' + error.message);
     }
 }
 
-// 格式化JSON
+// Format JSON
 function formatExternalMCPJSON() {
     const jsonTextarea = document.getElementById('external-mcp-json');
     const errorDiv = document.getElementById('external-mcp-json-error');
@@ -1291,7 +1291,7 @@ function formatExternalMCPJSON() {
     try {
         const jsonStr = jsonTextarea.value.trim();
         if (!jsonStr) {
-            errorDiv.textContent = 'JSON不能为空';
+            errorDiv.textContent = 'JSON cannot be empty';
             errorDiv.style.display = 'block';
             jsonTextarea.classList.add('error');
             return;
@@ -1303,13 +1303,13 @@ function formatExternalMCPJSON() {
         errorDiv.style.display = 'none';
         jsonTextarea.classList.remove('error');
     } catch (error) {
-        errorDiv.textContent = 'JSON格式错误: ' + error.message;
+        errorDiv.textContent = 'JSON format error: ' + error.message;
         errorDiv.style.display = 'block';
         jsonTextarea.classList.add('error');
     }
 }
 
-// 加载示例
+// Load example
 function loadExternalMCPExample() {
     const example = {
         "hexstrike-ai": {
@@ -1319,7 +1319,7 @@ function loadExternalMCPExample() {
                 "--server",
                 "http://example.com"
             ],
-            description: "示例描述",
+            description: "Example description",
             timeout: 300
         },
         "cyberstrike-ai-http": {
@@ -1337,14 +1337,14 @@ function loadExternalMCPExample() {
     document.getElementById('external-mcp-json').classList.remove('error');
 }
 
-// 保存外部MCP
+// SaveExternalMCP
 async function saveExternalMCP() {
     const jsonTextarea = document.getElementById('external-mcp-json');
     const jsonStr = jsonTextarea.value.trim();
     const errorDiv = document.getElementById('external-mcp-json-error');
     
     if (!jsonStr) {
-        errorDiv.textContent = 'JSON配置不能为空';
+        errorDiv.textContent = 'JSON config cannot be empty';
         errorDiv.style.display = 'block';
         jsonTextarea.classList.add('error');
         jsonTextarea.focus();
@@ -1355,34 +1355,34 @@ async function saveExternalMCP() {
     try {
         configObj = JSON.parse(jsonStr);
     } catch (error) {
-        errorDiv.textContent = 'JSON格式错误: ' + error.message;
+        errorDiv.textContent = 'JSON format error: ' + error.message;
         errorDiv.style.display = 'block';
         jsonTextarea.classList.add('error');
         jsonTextarea.focus();
         return;
     }
     
-    // 验证必须是对象格式
+    // Validate must be object format
     if (typeof configObj !== 'object' || Array.isArray(configObj) || configObj === null) {
-        errorDiv.textContent = '配置错误: 必须是JSON对象格式，key为配置名称，value为配置内容';
+        errorDiv.textContent = 'Config error: must be JSON object format, key is config name, value is config content';
         errorDiv.style.display = 'block';
         jsonTextarea.classList.add('error');
         return;
     }
     
-    // 获取所有配置名称
+    // Get all config names
     const names = Object.keys(configObj);
     if (names.length === 0) {
-        errorDiv.textContent = '配置错误: 至少需要一个配置项';
+        errorDiv.textContent = 'Config error: at least one config item is required';
         errorDiv.style.display = 'block';
         jsonTextarea.classList.add('error');
         return;
     }
     
-    // 验证每个配置
+    // Validate each config
     for (const name of names) {
         if (!name || name.trim() === '') {
-            errorDiv.textContent = '配置错误: 配置名称不能为空';
+            errorDiv.textContent = 'Config error: config name cannot be empty';
             errorDiv.style.display = 'block';
             jsonTextarea.classList.add('error');
             return;
@@ -1390,55 +1390,55 @@ async function saveExternalMCP() {
         
         const config = configObj[name];
         if (typeof config !== 'object' || Array.isArray(config) || config === null) {
-            errorDiv.textContent = `配置错误: "${name}" 的配置必须是对象`;
+            errorDiv.textContent = `Configuration error: configuration for "${name}" must be an object`;
             errorDiv.style.display = 'block';
             jsonTextarea.classList.add('error');
             return;
         }
         
-        // 移除 external_mcp_enable 字段（由按钮控制，但保留 enabled/disabled 用于向后兼容）
+        // Remove external_mcp_enable field (controlled by button, but keep enabled/disabled for backward compat)
         delete config.external_mcp_enable;
         
-        // 验证配置内容
+        // Validate config content
         const transport = config.transport || (config.command ? 'stdio' : config.url ? 'http' : '');
         if (!transport) {
-            errorDiv.textContent = `配置错误: "${name}" 需要指定command（stdio模式）或url（http/sse模式）`;
+            errorDiv.textContent = `Configuration error: "${name}" requires command (stdio mode) or url (http/sse mode)`;
             errorDiv.style.display = 'block';
             jsonTextarea.classList.add('error');
             return;
         }
         
         if (transport === 'stdio' && !config.command) {
-            errorDiv.textContent = `配置错误: "${name}" stdio模式需要command字段`;
+            errorDiv.textContent = `Configuration error: "${name}" stdio mode requires command field`;
             errorDiv.style.display = 'block';
             jsonTextarea.classList.add('error');
             return;
         }
         
         if (transport === 'http' && !config.url) {
-            errorDiv.textContent = `配置错误: "${name}" http模式需要url字段`;
+            errorDiv.textContent = `Configuration error: "${name}" http mode requires url field`;
             errorDiv.style.display = 'block';
             jsonTextarea.classList.add('error');
             return;
         }
         
         if (transport === 'sse' && !config.url) {
-            errorDiv.textContent = `配置错误: "${name}" sse模式需要url字段`;
+            errorDiv.textContent = `Configuration error: "${name}" sse mode requires url field`;
             errorDiv.style.display = 'block';
             jsonTextarea.classList.add('error');
             return;
         }
     }
     
-    // 清除错误提示
+    // Clear error prompt
     errorDiv.style.display = 'none';
     jsonTextarea.classList.remove('error');
     
     try {
-        // 如果是编辑模式，只更新当前编辑的配置
+        // If in edit mode, only update current editing config
         if (currentEditingMCPName) {
             if (!configObj[currentEditingMCPName]) {
-                errorDiv.textContent = `配置错误: 编辑模式下，JSON必须包含配置名称 "${currentEditingMCPName}"`;
+                errorDiv.textContent = `Configuration error: in edit mode, JSON must contain config name "${currentEditingMCPName}"`;
                 errorDiv.style.display = 'block';
                 jsonTextarea.classList.add('error');
                 return;
@@ -1454,10 +1454,10 @@ async function saveExternalMCP() {
             
             if (!response.ok) {
                 const error = await response.json();
-                throw new Error(error.error || '保存失败');
+                throw new Error(error.error || 'Save failed');
             }
         } else {
-            // 添加模式：保存所有配置
+            // Add mode: save all configs
             for (const name of names) {
                 const config = configObj[name];
                 const response = await apiFetch(`/api/external-mcp/${encodeURIComponent(name)}`, {
@@ -1470,7 +1470,7 @@ async function saveExternalMCP() {
                 
                 if (!response.ok) {
                     const error = await response.json();
-                    throw new Error(`保存 "${name}" 失败: ${error.error || '未知错误'}`);
+                    throw new Error(`Save "${name}" Failed: ${error.error || 'Unknown error'}`);
                 }
             }
         }
@@ -1480,20 +1480,20 @@ async function saveExternalMCP() {
         if (typeof window !== 'undefined' && typeof window.refreshMentionTools === 'function') {
             window.refreshMentionTools();
         }
-        // 轮询几次以拉取后端异步更新的工具数量（无固定延迟，拿到即停）
+        // Poll a few times to get asynchronously updated tool count from backend (no fixed delay, stop when obtained)
         pollExternalMCPToolCount(null, 5);
-        alert('保存成功');
+        alert('Saved successfully');
     } catch (error) {
-        console.error('保存外部MCP失败:', error);
-        errorDiv.textContent = '保存失败: ' + error.message;
+        console.error('SaveExternalMCPFailed:', error);
+        errorDiv.textContent = 'Save failed: ' + error.message;
         errorDiv.style.display = 'block';
         jsonTextarea.classList.add('error');
     }
 }
 
-// 删除外部MCP
+// DeleteExternalMCP
 async function deleteExternalMCP(name) {
-    if (!confirm(`确定要删除外部MCP "${name}" 吗？`)) {
+    if (!confirm(`Are you sure you want to delete external MCP "${name}"?`)) {
         return;
     }
     
@@ -1504,33 +1504,33 @@ async function deleteExternalMCP(name) {
         
         if (!response.ok) {
             const error = await response.json();
-            throw new Error(error.error || '删除失败');
+            throw new Error(error.error || 'Delete failed');
         }
         
         await loadExternalMCPs();
-        // 刷新对话界面的工具列表，移除已删除的MCP工具
+        // Refresh chat interface tool list, remove deleted MCP tools
         if (typeof window !== 'undefined' && typeof window.refreshMentionTools === 'function') {
             window.refreshMentionTools();
         }
-        alert('删除成功');
+        alert('Deleted successfully');
     } catch (error) {
-        console.error('删除外部MCP失败:', error);
-        alert('删除失败: ' + error.message);
+        console.error('DeleteExternalMCPFailed:', error);
+        alert('Failed to delete: ' + error.message);
     }
 }
 
-// 切换外部MCP启停
+// Toggle external MCP start/stop
 async function toggleExternalMCP(name, currentStatus) {
     const action = currentStatus === 'connected' ? 'stop' : 'start';
     const buttonId = `btn-toggle-${name}`;
     const button = document.getElementById(buttonId);
     
-    // 如果是启动操作，显示加载状态
+    // If starting, show loading status
     if (action === 'start' && button) {
         button.disabled = true;
         button.style.opacity = '0.6';
         button.style.cursor = 'not-allowed';
-        button.innerHTML = '⏳ 连接中...';
+        button.innerHTML = '⏳ Connecting...';
     }
     
     try {
@@ -1540,14 +1540,14 @@ async function toggleExternalMCP(name, currentStatus) {
         
         if (!response.ok) {
             const error = await response.json();
-            throw new Error(error.error || '操作失败');
+            throw new Error(error.error || 'Operation failed');
         }
         
         const result = await response.json();
         
-        // 如果是启动操作，先立即检查一次状态
+        // If starting, immediately check status once
         if (action === 'start') {
-            // 立即检查一次状态（可能已经连接）
+            // Immediately check status once (may already be connected)
             try {
                 const statusResponse = await apiFetch(`/api/external-mcp/${encodeURIComponent(name)}`);
                 if (statusResponse.ok) {
@@ -1559,50 +1559,50 @@ async function toggleExternalMCP(name, currentStatus) {
                         if (typeof window !== 'undefined' && typeof window.refreshMentionTools === 'function') {
                             window.refreshMentionTools();
                         }
-                        // 轮询直到该 MCP 工具数量已更新（每秒拉一次，无固定延迟）
+                        // Poll until MCP tool count is updated (poll every second, no fixed delay)
                         pollExternalMCPToolCount(name, 10);
                         return;
                     }
                 }
             } catch (error) {
-                console.error('检查状态失败:', error);
+                console.error('Failed to check status:', error);
             }
             
-            // 如果还未连接，开始轮询
-            await pollExternalMCPStatus(name, 30); // 最多轮询30次（约30秒）
+            // If not yet connected, start polling
+            await pollExternalMCPStatus(name, 30); // Poll at most 30 times (about 30 seconds)
         } else {
-            // 停止操作，直接刷新
+            // Stop action, refresh directly
             await loadExternalMCPs();
-            // 刷新对话界面的工具列表
+            // Refresh chat interface tool list
             if (typeof window !== 'undefined' && typeof window.refreshMentionTools === 'function') {
                 window.refreshMentionTools();
             }
         }
     } catch (error) {
-        console.error('切换外部MCP状态失败:', error);
-        alert('操作失败: ' + error.message);
+        console.error('Failed to toggle external MCP status:', error);
+        alert('Operation failed: ' + error.message);
         
-        // 恢复按钮状态
+        // Restore button status
         if (button) {
             button.disabled = false;
             button.style.opacity = '1';
             button.style.cursor = 'pointer';
-            button.innerHTML = '▶ 启动';
+            button.innerHTML = '▶ Start';
         }
         
-        // 刷新状态
+        // Refresh status
         await loadExternalMCPs();
-        // 刷新对话界面的工具列表
+        // Refresh chat interface tool list
         if (typeof window !== 'undefined' && typeof window.refreshMentionTools === 'function') {
             window.refreshMentionTools();
         }
     }
 }
 
-// 轮询外部MCP状态
+// Poll external MCP status
 async function pollExternalMCPStatus(name, maxAttempts = 30) {
     let attempts = 0;
-    const pollInterval = 1000; // 1秒轮询一次
+    const pollInterval = 1000; // Poll every 1 second
     
     while (attempts < maxAttempts) {
         await new Promise(resolve => setTimeout(resolve, pollInterval));
@@ -1613,7 +1613,7 @@ async function pollExternalMCPStatus(name, maxAttempts = 30) {
                 const data = await response.json();
                 const status = data.status || 'disconnected';
                 
-                // 更新按钮状态
+                // Update button status
                 const buttonId = `btn-toggle-${name}`;
                 const button = document.getElementById(buttonId);
                 
@@ -1622,43 +1622,43 @@ async function pollExternalMCPStatus(name, maxAttempts = 30) {
                     if (typeof window !== 'undefined' && typeof window.refreshMentionTools === 'function') {
                         window.refreshMentionTools();
                     }
-                    // 轮询直到该 MCP 工具数量已更新（每秒拉一次，无固定延迟）
+                    // Poll until MCP tool count is updated (poll every second, no fixed delay)
                     pollExternalMCPToolCount(name, 10);
                     return;
                 } else if (status === 'error' || status === 'disconnected') {
-                    // 连接失败，刷新列表并显示错误
+                    // Connection failed, refresh list and show error
                     await loadExternalMCPs();
-                    // 刷新对话界面的工具列表
+                    // Refresh chat interface tool list
                     if (typeof window !== 'undefined' && typeof window.refreshMentionTools === 'function') {
                         window.refreshMentionTools();
                     }
                     if (status === 'error') {
-                        alert('连接失败，请检查配置和网络连接');
+                        alert('Connection failed, please check config and network connection');
                     }
                     return;
                 } else if (status === 'connecting') {
-                    // 仍在连接中，继续轮询
+                    // Still connecting, continue polling
                     attempts++;
                     continue;
                 }
             }
         } catch (error) {
-            console.error('轮询状态失败:', error);
+            console.error('Failed to poll status:', error);
         }
         
         attempts++;
     }
     
-    // 超时，刷新列表
+    // Timeout, refresh list
     await loadExternalMCPs();
-    // 刷新对话界面的工具列表
+    // Refresh chat interface tool list
     if (typeof window !== 'undefined' && typeof window.refreshMentionTools === 'function') {
         window.refreshMentionTools();
     }
-    alert('连接超时，请检查配置和网络连接');
+    alert('Connection timed out, please check config and network connection');
 }
 
-// 在打开设置时加载外部MCP列表
+// Load external MCP list when settings open
 const originalOpenSettings = openSettings;
 openSettings = async function() {
     await originalOpenSettings();

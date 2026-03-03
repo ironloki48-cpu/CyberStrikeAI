@@ -1,5 +1,5 @@
 /**
- * 系统设置 - 终端：多标签、流式输出、命令历史、Ctrl+L 清屏、长时间可取消
+ * System Settings - Terminal: multi-tab, streaming output, command history, Ctrl+L to clear, long-running task can be cancelled
  */
 (function () {
     var getContext = HTMLCanvasElement.prototype.getContext;
@@ -15,7 +15,7 @@
     var currentTabId = 1;
     var inited = false;
     var tabIdCounter = 1;
-    var PROMPT = ''; // 真实 Shell 自己输出提示符，这里不再自定义
+    var PROMPT = ''; // The real shell outputs its own prompt; no custom prompt here
     var HISTORY_MAX = 100;
     var CANCEL_AFTER_MS = 125000;
 
@@ -26,10 +26,10 @@
         return terminals[0] || null;
     }
 
-    var WELCOME_LINE = 'CyberStrikeAI 终端 - 真实 Shell 会话，直接输入命令；Ctrl+L 清屏\r\n';
+    var WELCOME_LINE = 'CyberStrikeAI Terminal - Real shell session; type commands directly; Ctrl+L to clear\r\n';
 
     function writePrompt(tab) {
-        // 提示符交由后端 Shell 自行输出，这里仅保留占位函数，避免旧代码报错
+        // The backend shell outputs its own prompt; keep this placeholder to avoid errors in old code
     }
 
     function redrawTabDisplay(t) {
@@ -61,7 +61,7 @@
         t.term.write(suffix);
     }
 
-    // 从本地存储中获取当前登录 token（与 auth.js 使用的结构保持一致）
+    // Get the current login token from local storage (consistent with the structure used by auth.js)
     function getStoredAuthToken() {
         try {
             var raw = localStorage.getItem('cyberstrike-auth');
@@ -72,7 +72,7 @@
         return null;
     }
 
-    // WebSocket 地址构造（兼容 http/https，并通过 query 传递 token 以通过后端鉴权）
+    // Build WebSocket URL (supports http/https; pass token via query param for backend auth)
     function buildTerminalWSURL() {
         var proto = (window.location.protocol === 'https:') ? 'wss://' : 'ws://';
         var url = proto + window.location.host + '/api/terminal/ws';
@@ -106,19 +106,19 @@
             ws.onclose = function () {
                 tab.running = false;
                 if (tab.term) {
-                    tab.term.writeln('\r\n\x1b[2m[会话已关闭]\x1b[0m');
+                    tab.term.writeln('\r\n\x1b[2m[Session closed]\x1b[0m');
                 }
             };
 
             ws.onerror = function () {
                 tab.running = false;
                 if (tab.term) {
-                    tab.term.writeln('\r\n\x1b[31m[终端连接出错]\x1b[0m');
+                    tab.term.writeln('\r\n\x1b[31m[Terminal connection error]\x1b[0m');
                 }
             };
         } catch (e) {
             if (tab.term) {
-                tab.term.writeln('\r\n\x1b[31m[无法连接终端服务: ' + String(e) + ']\x1b[0m');
+                tab.term.writeln('\r\n\x1b[31m[Unable to connect to terminal service: ' + String(e) + ']\x1b[0m');
             }
         }
     }
@@ -173,7 +173,7 @@
             if (term) term.focus();
         });
         container.setAttribute('tabindex', '0');
-        container.title = '点击此处后输入命令';
+        container.title = 'Click here to enter commands';
 
         function sendToWS(data) {
             ensureTerminalWS(tab);
@@ -185,7 +185,7 @@
         }
 
         term.onData(function (data) {
-            // Ctrl+L：本地清屏，同时把 ^L 也发给后端
+            // Ctrl+L: clear locally and also send ^L to the backend
             if (data === '\x0c') {
                 term.clear();
                 sendToWS(data);
@@ -238,12 +238,12 @@
         tabDiv.setAttribute('data-tab-id', String(id));
         var label = document.createElement('span');
         label.className = 'terminal-tab-label';
-        label.textContent = '终端 ' + id;
+        label.textContent = 'Terminal ' + id;
         label.onclick = function () { switchTerminalTab(id); };
         var closeBtn = document.createElement('button');
         closeBtn.type = 'button';
         closeBtn.className = 'terminal-tab-close';
-        closeBtn.title = '关闭';
+        closeBtn.title = 'Close';
         closeBtn.textContent = '×';
         closeBtn.onclick = function (e) { e.stopPropagation(); removeTerminalTab(id); };
         tabDiv.appendChild(label);
@@ -325,7 +325,7 @@
                 var t = terminals[i];
                 tabDivs[i].setAttribute('data-tab-id', String(t.id));
                 var lbl = tabDivs[i].querySelector('.terminal-tab-label');
-                if (lbl) lbl.textContent = '终端 ' + t.id;
+                if (lbl) lbl.textContent = 'Terminal ' + t.id;
                 if (lbl) lbl.onclick = (function (tid) { return function () { switchTerminalTab(tid); }; })(t.id);
                 var cb = tabDivs[i].querySelector('.terminal-tab-close');
                 if (cb) cb.onclick = (function (tid) { return function (e) { e.stopPropagation(); removeTerminalTab(tid); }; })(t.id);
@@ -362,7 +362,7 @@
         inited = true;
 
         if (typeof Terminal === 'undefined') {
-            container1.innerHTML = '<p class="terminal-error">未加载 xterm.js，请刷新页面或检查网络。</p>';
+            container1.innerHTML = '<p class="terminal-error">xterm.js not loaded. Please refresh the page or check your network connection.</p>';
             return;
         }
 

@@ -1,29 +1,29 @@
 name: "delete-file"
 command: "rm"
 enabled: true
-short_description: "删除文件或目录工具"
+short_description: "File or directory deletion tool"
 description: |
-  删除服务器上的文件或目录。
+  Delete files or directories on the server.
 
-  **主要功能：**
-  - 删除文件
-  - 删除目录
-  - 递归删除
+  **Key Features:**
+  - Delete files
+  - Delete directories
+  - Recursive deletion
 
-  **使用场景：**
-  - 文件清理
-  - 临时文件删除
-  - 目录清理
+  **Use Cases:**
+  - File cleanup
+  - Temporary file deletion
+  - Directory cleanup
 parameters:
   - name: "filename"
     type: "string"
-    description: "要删除的文件或目录名"
+    description: "Filename or directory name to delete"
     required: true
     position: 0
     format: "positional"
   - name: "recursive"
     type: "bool"
-    description: "递归删除目录"
+    description: "Recursively delete directory"
     required: false
     flag: "-r"
     format: "flag"
@@ -31,14 +31,14 @@ parameters:
   - name: "additional_args"
     type: "string"
     description: |
-      额外的delete-file参数。用于传递未在参数列表中定义的delete-file选项。
+      Additional delete-file parameters. Used to pass delete-file options not defined in the parameter list.
 
-      **示例值：**
-      - 根据工具特性添加常用参数示例
+      **Example values:**
+      - Add common parameter examples based on tool characteristics
 
-      **注意事项：**
-      - 多个参数用空格分隔
-      - 确保参数格式正确，避免命令注入
-      - 此参数会直接追加到命令末尾
+      **Notes:**
+      - Multiple parameters separated by spaces
+      - Ensure parameter format is correct to avoid command injection
+      - This parameter will be appended directly to the end of the command
     required: false
     format: "positional"

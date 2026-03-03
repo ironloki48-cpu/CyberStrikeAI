@@ -1,71 +1,71 @@
 name: "nmap-advanced"
 command: "nmap"
 enabled: true
-short_description: "高级Nmap扫描，支持自定义NSE脚本和优化时序"
+short_description: "Advanced Nmap scanning with support for custom NSE scripts and optimized timing"
 description: |
-  高级Nmap扫描工具，支持自定义NSE脚本、优化时序和多种扫描技术。
+  Advanced Nmap scanning tool supporting custom NSE scripts, optimized timing, and multiple scanning techniques.
 
-  **主要功能：**
-  - 多种扫描技术（SYN, TCP, UDP等）
-  - 自定义NSE脚本
-  - 时序优化
-  - OS检测和版本检测
+  **Key Features:**
+  - Multiple scanning techniques (SYN, TCP, UDP, etc.)
+  - Custom NSE scripts
+  - Timing optimization
+  - OS detection and version detection
 
-  **使用场景：**
-  - 高级网络扫描
-  - 深度安全评估
-  - 渗透测试
-  - 网络侦察
+  **Use Cases:**
+  - Advanced network scanning
+  - In-depth security assessment
+  - Penetration testing
+  - Network reconnaissance
 parameters:
   - name: "target"
     type: "string"
-    description: "目标IP地址或主机名"
+    description: "Target IP address or hostname"
     required: true
     position: 0
     format: "positional"
   - name: "scan_type"
     type: "string"
-    description: "扫描类型（-sS, -sT, -sU等）"
+    description: "Scan type (-sS, -sT, -sU, etc.)"
     required: false
     format: "template"
     template: "{value}"
     default: "-sS"
   - name: "ports"
     type: "string"
-    description: "要扫描的端口"
+    description: "Ports to scan"
     required: false
     flag: "-p"
     format: "flag"
   - name: "timing"
     type: "string"
-    description: "时序模板（T0-T5）"
+    description: "Timing template (T0-T5)"
     required: false
     format: "template"
     template: "-T{value}"
     default: "4"
   - name: "nse_scripts"
     type: "string"
-    description: "要运行的自定义NSE脚本"
+    description: "Custom NSE scripts to run"
     required: false
     flag: "--script"
     format: "flag"
   - name: "os_detection"
     type: "bool"
-    description: "启用OS检测"
+    description: "Enable OS detection"
     required: false
     flag: "-O"
     format: "flag"
     default: false
   - name: "version_detection"
     type: "bool"
-    description: "启用版本检测"
+    description: "Enable version detection"
     required: false
     flag: "-sV"
     format: "flag"
     default: false
   - name: "aggressive"
     type: "bool"
-    description: "启用激进扫描"
+    description: "Enable aggressive scanning"
     required: false
     flag: "-A"
     format: "flag"
@@ -73,14 +73,14 @@ parameters:
   - name: "additional_args"
     type: "string"
     description: |
-      额外的nmap-advanced参数。用于传递未在参数列表中定义的nmap-advanced选项。
+      Additional nmap-advanced parameters. Used to pass nmap-advanced options not defined in the parameter list.
 
-      **示例值：**
-      - 根据工具特性添加常用参数示例
+      **Example values:**
+      - Add common parameter examples based on tool characteristics
 
-      **注意事项：**
-      - 多个参数用空格分隔
-      - 确保参数格式正确，避免命令注入
-      - 此参数会直接追加到命令末尾
+      **Notes:**
+      - Multiple parameters separated by spaces
+      - Ensure parameter format is correct to avoid command injection
+      - This parameter will be appended directly to the end of the command
     required: false
     format: "positional"

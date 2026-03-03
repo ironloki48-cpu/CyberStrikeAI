@@ -7,24 +7,24 @@ import (
 	"cyberstrike-ai/internal/skills"
 )
 
-// skillStatsDBAdapter 将database.DB适配为skills.SkillStatsStorage接口
+// skillStatsDBAdapter adapts database.DB to the skills.SkillStatsStorage interface
 type skillStatsDBAdapter struct {
 	db *database.DB
 }
 
-// UpdateSkillStats 更新Skills统计信息
+// UpdateSkillStats updates Skills statistics
 func (a *skillStatsDBAdapter) UpdateSkillStats(skillName string, totalCalls, successCalls, failedCalls int, lastCallTime *time.Time) error {
 	return a.db.UpdateSkillStats(skillName, totalCalls, successCalls, failedCalls, lastCallTime)
 }
 
-// LoadSkillStats 加载所有Skills统计信息
+// LoadSkillStats loads all Skills statistics
 func (a *skillStatsDBAdapter) LoadSkillStats() (map[string]*skills.SkillStats, error) {
 	dbStats, err := a.db.LoadSkillStats()
 	if err != nil {
 		return nil, err
 	}
 
-	// 转换为skills.SkillStats格式
+	// convert to skills.SkillStats format
 	result := make(map[string]*skills.SkillStats)
 	for name, stat := range dbStats {
 		result[name] = &skills.SkillStats{

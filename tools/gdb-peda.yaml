@@ -1,57 +1,57 @@
 name: "gdb-peda"
 command: "gdb"
 enabled: true
-short_description: "带PEDA增强的GDB调试器"
+short_description: "GDB debugger with PEDA enhancements"
 description: |
-  GDB-PEDA是带有PEDA（Python Exploit Development Assistance）增强的GDB调试器。
+  GDB-PEDA is the GDB debugger enhanced with PEDA (Python Exploit Development Assistance).
 
-  **主要功能：**
-  - 增强的GDB功能
-  - 自动化分析
-  - 漏洞利用辅助
-  - 可视化显示
+  **Key Features:**
+  - Enhanced GDB functionality
+  - Automated analysis
+  - Exploit development assistance
+  - Visual display
 
-  **使用场景：**
-  - 二进制调试
-  - 漏洞利用开发
-  - 逆向工程
-  - 安全研究
+  **Use Cases:**
+  - Binary debugging
+  - Exploit development
+  - Reverse engineering
+  - Security research
 parameters:
   - name: "binary"
     type: "string"
-    description: "要调试的二进制文件"
+    description: "Binary file to debug"
     required: false
     position: 0
     format: "positional"
   - name: "commands"
     type: "string"
-    description: "GDB命令（分号分隔）"
+    description: "GDB commands (semicolon-separated)"
     required: false
     flag: "-ex"
     format: "flag"
   - name: "attach_pid"
     type: "int"
-    description: "要附加的进程ID"
+    description: "Process ID to attach to"
     required: false
     flag: "-p"
     format: "flag"
   - name: "core_file"
     type: "string"
-    description: "核心转储文件路径"
+    description: "Core dump file path"
     required: false
     flag: "-c"
     format: "flag"
   - name: "additional_args"
     type: "string"
     description: |
-      额外的gdb-peda参数。用于传递未在参数列表中定义的gdb-peda选项。
+      Additional gdb-peda arguments. Used to pass gdb-peda options not defined in the parameter list.
 
-      **示例值：**
-      - 根据工具特性添加常用参数示例
+      **Example values:**
+      - Add common parameter examples based on tool characteristics
 
-      **注意事项：**
-      - 多个参数用空格分隔
-      - 确保参数格式正确，避免命令注入
-      - 此参数会直接追加到命令末尾
+      **Notes:**
+      - Separate multiple arguments with spaces
+      - Ensure correct argument format to avoid command injection
+      - This parameter is appended directly to the end of the command
     required: false
     format: "positional"

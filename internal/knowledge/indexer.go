@@ -14,50 +14,50 @@ import (
 	"go.uber.org/zap"
 )
 
-// Indexer 索引器，负责将知识项分块并向量化
+// Indexer is responsible for chunking and vectorizing knowledge items
 type Indexer struct {
 	db        *sql.DB
 	embedder  *Embedder
 	logger    *zap.Logger
-	chunkSize int // 每个块的最大token数（估算）
-	overlap   int // 块之间的重叠token数
-	
-	// 错误跟踪
-	mu           sync.RWMutex
-	lastError    string    // 最近一次错误信息
-	lastErrorTime time.Time // 最近一次错误时间
-	errorCount   int       // 连续错误计数
+	chunkSize int // maximum estimated token count per chunk
+	overlap   int // overlapping token count between chunks
+
+	// error tracking
+	mu            sync.RWMutex
+	lastError     string    // most recent error message
+	lastErrorTime time.Time // time of most recent error
+	errorCount    int       // consecutive error count
 }
 
-// NewIndexer 创建新的索引器
+// NewIndexer creates a new indexer
 func NewIndexer(db *sql.DB, embedder *Embedder, logger *zap.Logger) *Indexer {
 	return &Indexer{
 		db:        db,
 		embedder:  embedder,
 		logger:    logger,
-		chunkSize: 512, // 默认512 tokens
-		overlap:   50,  // 默认50 tokens重叠
+		chunkSize: 512, // default 512 tokens
+		overlap:   50,  // default 50 token overlap
 	}
 }
 
-// ChunkText 将文本分块（支持重叠）
+// ChunkText splits text into chunks (supports overlap)
 func (idx *Indexer) ChunkText(text string) []string {
-	// 按Markdown标题分割
+	// split by Markdown headers
 	chunks := idx.splitByMarkdownHeaders(text)
 
-	// 如果块太大，进一步分割
+	// if a chunk is too large, split further
 	result := make([]string, 0)
 	for _, chunk := range chunks {
 		if idx.estimateTokens(chunk) <= idx.chunkSize {
 			result = append(result, chunk)
 		} else {
-			// 按段落分割
+			// split by paragraphs
 			subChunks := idx.splitByParagraphs(chunk)
 			for _, subChunk := range subChunks {
 				if idx.estimateTokens(subChunk) <= idx.chunkSize {
 					result = append(result, subChunk)
 				} else {
-					// 按句子分割（支持重叠）
+					// split by sentences (with overlap)
 					chunksWithOverlap := idx.splitBySentencesWithOverlap(subChunk)
 					result = append(result, chunksWithOverlap...)
 				}
@@ -68,12 +68,12 @@ func (idx *Indexer) ChunkText(text string) []string {
 	return result
 }
 
-// splitByMarkdownHeaders 按Markdown标题分割
+// splitByMarkdownHeaders splits by Markdown headers
 func (idx *Indexer) splitByMarkdownHeaders(text string) []string {
-	// 匹配Markdown标题 (# ## ### 等)
+	// match Markdown headers (# ## ### etc.)
 	headerRegex := regexp.MustCompile(`(?m)^#{1,6}\s+.+$`)
 
-	// 找到所有标题位置
+	// find all header positions
 	matches := headerRegex.FindAllStringIndex(text, -1)
 	if len(matches) == 0 {
 		return []string{text}
@@ -90,12 +90,12 @@ func (idx *Indexer) splitByMarkdownHeaders(text string) []string {
 		lastPos = start
 	}
 
-	// 添加最后一部分
+	// add the last part
 	if lastPos < len(text) {
 		chunks = append(chunks, strings.TrimSpace(text[lastPos:]))
 	}
 
-	// 过滤空块
+	// filter empty chunks
 	result := make([]string, 0)
 	for _, chunk := range chunks {
 		if strings.TrimSpace(chunk) != "" {
@@ -110,7 +110,7 @@ func (idx *Indexer) splitByMarkdownHeaders(text string) []string {
 	return result
 }
 
-// splitByParagraphs 按段落分割
+// splitByParagraphs splits by paragraphs
 func (idx *Indexer) splitByParagraphs(text string) []string {
 	paragraphs := strings.Split(text, "\n\n")
 	result := make([]string, 0)
@@ -122,9 +122,9 @@ func (idx *Indexer) splitByParagraphs(text string) []string {
 	return result
 }
 
-// splitBySentences 按句子分割（用于内部，不包含重叠逻辑）
+// splitBySentences splits by sentences (for internal use, without overlap logic)
 func (idx *Indexer) splitBySentences(text string) []string {
-	// 简单的句子分割（按句号、问号、感叹号）
+	// simple sentence splitting (by period, question mark, exclamation mark)
 	sentenceRegex := regexp.MustCompile(`[.!?]+\s+`)
 	sentences := sentenceRegex.Split(text, -1)
 	result := make([]string, 0)
@@ -136,10 +136,10 @@ func (idx *Indexer) splitBySentences(text string) []string {
 	return result
 }
 
-// splitBySentencesWithOverlap 按句子分割并应用重叠策略
+// splitBySentencesWithOverlap splits by sentences and applies an overlap strategy
 func (idx *Indexer) splitBySentencesWithOverlap(text string) []string {
 	if idx.overlap <= 0 {
-		// 如果没有重叠，使用简单分割
+		// if no overlap, use simple splitting
 		return idx.splitBySentencesSimple(text)
 	}
 
@@ -161,16 +161,16 @@ func (idx *Indexer) splitBySentencesWithOverlap(text string) []string {
 		testTokens := idx.estimateTokens(testChunk)
 
 		if testTokens > idx.chunkSize && currentChunk != "" {
-			// 当前块已达到大小限制，保存它
+			// current chunk has reached the size limit, save it
 			result = append(result, currentChunk)
 
-			// 从当前块的末尾提取重叠部分
+			// extract overlap from the end of the current chunk
 			overlapText := idx.extractLastTokens(currentChunk, idx.overlap)
 			if overlapText != "" {
-				// 如果有重叠内容，作为下一个块的起始
+				// if there is overlap content, use it as the start of the next chunk
 				currentChunk = overlapText + "\n" + sentence
 			} else {
-				// 如果无法提取足够的重叠内容，直接使用当前句子
+				// if not enough overlap content can be extracted, use the current sentence directly
 				currentChunk = sentence
 			}
 		} else {
@@ -178,12 +178,12 @@ func (idx *Indexer) splitBySentencesWithOverlap(text string) []string {
 		}
 	}
 
-	// 添加最后一个块
+	// add the last chunk
 	if strings.TrimSpace(currentChunk) != "" {
 		result = append(result, currentChunk)
 	}
 
-	// 过滤空块
+	// filter empty chunks
 	filtered := make([]string, 0)
 	for _, chunk := range result {
 		if strings.TrimSpace(chunk) != "" {
@@ -194,7 +194,7 @@ func (idx *Indexer) splitBySentencesWithOverlap(text string) []string {
 	return filtered
 }
 
-// splitBySentencesSimple 按句子分割（简单版本，无重叠）
+// splitBySentencesSimple splits by sentences (simple version, no overlap)
 func (idx *Indexer) splitBySentencesSimple(text string) []string {
 	sentences := idx.splitBySentences(text)
 	result := make([]string, 0)
@@ -221,13 +221,13 @@ func (idx *Indexer) splitBySentencesSimple(text string) []string {
 	return result
 }
 
-// extractLastTokens 从文本末尾提取指定token数量的内容
+// extractLastTokens extracts the specified number of tokens from the end of the text
 func (idx *Indexer) extractLastTokens(text string, tokenCount int) string {
 	if tokenCount <= 0 || text == "" {
 		return ""
 	}
 
-	// 估算字符数（1 token ≈ 4字符）
+	// estimate character count (1 token ~= 4 characters)
 	charCount := tokenCount * 4
 	runes := []rune(text)
 
@@ -235,57 +235,57 @@ func (idx *Indexer) extractLastTokens(text string, tokenCount int) string {
 		return text
 	}
 
-	// 从末尾提取指定数量的字符
-	// 尝试在句子边界处截断，避免截断句子中间
+	// extract the specified number of characters from the end
+	// try to cut at a sentence boundary to avoid splitting mid-sentence
 	startPos := len(runes) - charCount
 	extracted := string(runes[startPos:])
 
-	// 尝试找到第一个句子边界（句号、问号、感叹号后的空格）
+	// try to find the first sentence boundary (period, question mark, or exclamation mark followed by a space)
 	sentenceBoundary := regexp.MustCompile(`[.!?]+\s+`)
 	matches := sentenceBoundary.FindStringIndex(extracted)
 	if len(matches) > 0 && matches[0] > 0 {
-		// 在句子边界处截断，保留完整句子
+		// cut at sentence boundary to preserve complete sentences
 		extracted = extracted[matches[0]:]
 	}
 
 	return strings.TrimSpace(extracted)
 }
 
-// estimateTokens 估算token数（简单估算：1 token ≈ 4字符）
+// estimateTokens estimates token count (simple estimate: 1 token ~= 4 characters)
 func (idx *Indexer) estimateTokens(text string) int {
 	return len([]rune(text)) / 4
 }
 
-// IndexItem 索引知识项（分块并向量化）
+// IndexItem indexes a knowledge item (chunks and vectorizes it)
 func (idx *Indexer) IndexItem(ctx context.Context, itemID string) error {
-	// 获取知识项（包含category和title，用于向量化）
+	// get knowledge item (including category and title, used for vectorization)
 	var content, category, title string
 	err := idx.db.QueryRow("SELECT content, category, title FROM knowledge_base_items WHERE id = ?", itemID).Scan(&content, &category, &title)
 	if err != nil {
-		return fmt.Errorf("获取知识项失败: %w", err)
+		return fmt.Errorf("failed to get knowledge item: %w", err)
 	}
 
-	// 删除旧的向量（在 RebuildIndex 中已经统一清空，这里保留是为了单独调用 IndexItem 时的兼容性）
+	// delete old vectors (already cleared uniformly in RebuildIndex; kept here for compatibility when IndexItem is called individually)
 	_, err = idx.db.Exec("DELETE FROM knowledge_embeddings WHERE item_id = ?", itemID)
 	if err != nil {
-		return fmt.Errorf("删除旧向量失败: %w", err)
+		return fmt.Errorf("failed to delete old vectors: %w", err)
 	}
 
-	// 分块
+	// chunk
 	chunks := idx.ChunkText(content)
-	idx.logger.Info("知识项分块完成", zap.String("itemId", itemID), zap.Int("chunks", len(chunks)))
+	idx.logger.Info("knowledge item chunking complete", zap.String("itemId", itemID), zap.Int("chunks", len(chunks)))
 
-	// 跟踪该知识项的错误
+	// track errors for this knowledge item
 	itemErrorCount := 0
 	var firstError error
 	firstErrorChunkIndex := -1
-	
-	// 向量化每个块（包含category和title信息，以便向量检索时能匹配到风险类型）
+
+	// vectorize each chunk (include category and title info so that risk type can be matched during vector retrieval)
 	for i, chunk := range chunks {
-		// 将category和title信息包含到向量化的文本中
-		// 格式："[风险类型: {category}] [标题: {title}]\n{chunk内容}"
-		// 这样向量嵌入就会包含风险类型信息，即使SQL过滤失败，向量相似度也能帮助匹配
-		textForEmbedding := fmt.Sprintf("[风险类型: %s] [标题: %s]\n%s", category, title, chunk)
+		// include category and title info in the text to be vectorized
+		// format: "[Risk Type: {category}] [Title: {title}]\n{chunk content}"
+		// this way the vector embedding includes risk type info; even if SQL filtering fails, vector similarity can still help match
+		textForEmbedding := fmt.Sprintf("[Risk Type: %s] [Title: %s]\n%s", category, title, chunk)
 
 		embedding, err := idx.embedder.EmbedText(ctx, textForEmbedding)
 		if err != nil {
@@ -293,43 +293,43 @@ func (idx *Indexer) IndexItem(ctx context.Context, itemID string) error {
 			if firstError == nil {
 				firstError = err
 				firstErrorChunkIndex = i
-				// 只在第一个块失败时记录详细日志
+				// only log detailed information on the first chunk failure
 				chunkPreview := chunk
 				if len(chunkPreview) > 200 {
 					chunkPreview = chunkPreview[:200] + "..."
 				}
-				idx.logger.Warn("向量化失败",
+				idx.logger.Warn("vectorization failed",
 					zap.String("itemId", itemID),
 					zap.Int("chunkIndex", i),
 					zap.Int("totalChunks", len(chunks)),
 					zap.String("chunkPreview", chunkPreview),
 					zap.Error(err),
 				)
-				
-				// 更新全局错误跟踪
-				errorMsg := fmt.Sprintf("向量化失败 (知识项: %s): %v", itemID, err)
+
+				// update global error tracking
+				errorMsg := fmt.Sprintf("vectorization failed (knowledge item: %s): %v", itemID, err)
 				idx.mu.Lock()
 				idx.lastError = errorMsg
 				idx.lastErrorTime = time.Now()
 				idx.mu.Unlock()
 			}
-			
-			// 如果连续失败2个块，立即停止处理该知识项（降低阈值，更快停止）
-			// 这样可以避免继续浪费API调用，同时也能更快地检测到配置问题
+
+			// if 2 consecutive chunks fail, stop processing this knowledge item immediately (lower threshold, stop faster)
+			// this avoids wasting API calls and detects configuration issues more quickly
 			if itemErrorCount >= 2 {
-				idx.logger.Error("知识项连续向量化失败，停止处理",
+				idx.logger.Error("knowledge item consecutive vectorization failed, stopping processing",
 					zap.String("itemId", itemID),
 					zap.Int("totalChunks", len(chunks)),
 					zap.Int("failedChunks", itemErrorCount),
 					zap.Int("firstErrorChunkIndex", firstErrorChunkIndex),
 					zap.Error(firstError),
 				)
-				return fmt.Errorf("知识项连续向量化失败 (%d个块失败): %v", itemErrorCount, firstError)
+				return fmt.Errorf("knowledge item consecutive vectorization failed (%d chunks failed): %v", itemErrorCount, firstError)
 			}
 			continue
 		}
 
-		// 保存向量
+		// save vector
 		chunkID := uuid.New().String()
 		embeddingJSON, _ := json.Marshal(embedding)
 
@@ -338,37 +338,37 @@ func (idx *Indexer) IndexItem(ctx context.Context, itemID string) error {
 			chunkID, itemID, i, chunk, string(embeddingJSON),
 		)
 		if err != nil {
-			idx.logger.Warn("保存向量失败", zap.String("itemId", itemID), zap.Int("chunkIndex", i), zap.Error(err))
+			idx.logger.Warn("failed to save vector", zap.String("itemId", itemID), zap.Int("chunkIndex", i), zap.Error(err))
 			continue
 		}
 	}
 
-	idx.logger.Info("知识项索引完成", zap.String("itemId", itemID), zap.Int("chunks", len(chunks)))
+	idx.logger.Info("knowledge item indexing complete", zap.String("itemId", itemID), zap.Int("chunks", len(chunks)))
 	return nil
 }
 
-// HasIndex 检查是否存在索引
+// HasIndex checks whether an index exists
 func (idx *Indexer) HasIndex() (bool, error) {
 	var count int
 	err := idx.db.QueryRow("SELECT COUNT(*) FROM knowledge_embeddings").Scan(&count)
 	if err != nil {
-		return false, fmt.Errorf("检查索引失败: %w", err)
+		return false, fmt.Errorf("failed to check index: %w", err)
 	}
 	return count > 0, nil
 }
 
-// RebuildIndex 重建所有索引
+// RebuildIndex rebuilds all indexes
 func (idx *Indexer) RebuildIndex(ctx context.Context) error {
-	// 重置错误跟踪
+	// reset error tracking
 	idx.mu.Lock()
 	idx.lastError = ""
 	idx.lastErrorTime = time.Time{}
 	idx.errorCount = 0
 	idx.mu.Unlock()
-	
+
 	rows, err := idx.db.Query("SELECT id FROM knowledge_base_items")
 	if err != nil {
-		return fmt.Errorf("查询知识项失败: %w", err)
+		return fmt.Errorf("failed to query knowledge items: %w", err)
 	}
 	defer rows.Close()
 
@@ -376,72 +376,72 @@ func (idx *Indexer) RebuildIndex(ctx context.Context) error {
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
-			return fmt.Errorf("扫描知识项ID失败: %w", err)
+			return fmt.Errorf("failed to scan knowledge item ID: %w", err)
 		}
 		itemIDs = append(itemIDs, id)
 	}
 
-	idx.logger.Info("开始重建索引", zap.Int("totalItems", len(itemIDs)))
+	idx.logger.Info("starting index rebuild", zap.Int("totalItems", len(itemIDs)))
 
-	// 在开始重建前，先清空所有旧的向量，确保进度从0开始
-	// 这样 GetIndexStatus 可以准确反映重建进度
+	// clear all old vectors before starting rebuild to ensure progress starts from 0
+	// this allows GetIndexStatus to accurately reflect rebuild progress
 	_, err = idx.db.Exec("DELETE FROM knowledge_embeddings")
 	if err != nil {
-		idx.logger.Warn("清空旧索引失败", zap.Error(err))
-		// 继续执行，即使清空失败也尝试重建
+		idx.logger.Warn("failed to clear old index", zap.Error(err))
+		// continue even if clearing fails
 	} else {
-		idx.logger.Info("已清空旧索引，开始重建")
+		idx.logger.Info("old index cleared, starting rebuild")
 	}
 
 	failedCount := 0
 	consecutiveFailures := 0
-	maxConsecutiveFailures := 2 // 连续失败2次后立即停止（降低阈值，更快停止）
+	maxConsecutiveFailures := 2 // stop immediately after 2 consecutive failures (lower threshold, stop faster)
 	firstFailureItemID := ""
 	var firstFailureError error
-	
+
 	for i, itemID := range itemIDs {
 		if err := idx.IndexItem(ctx, itemID); err != nil {
 			failedCount++
 			consecutiveFailures++
-			
-			// 只在第一个失败时记录详细日志
+
+			// only log details on the first failure
 			if consecutiveFailures == 1 {
 				firstFailureItemID = itemID
 				firstFailureError = err
-				idx.logger.Warn("索引知识项失败",
+				idx.logger.Warn("failed to index knowledge item",
 					zap.String("itemId", itemID),
 					zap.Int("totalItems", len(itemIDs)),
 					zap.Error(err),
 				)
 			}
-			
-			// 如果连续失败过多，可能是配置问题，立即停止索引
+
+			// if too many consecutive failures, likely a configuration issue; stop indexing immediately
 			if consecutiveFailures >= maxConsecutiveFailures {
-				errorMsg := fmt.Sprintf("连续 %d 个知识项索引失败，可能存在配置问题（如嵌入模型配置错误、API密钥无效、余额不足等）。第一个失败项: %s, 错误: %v", consecutiveFailures, firstFailureItemID, firstFailureError)
+				errorMsg := fmt.Sprintf("%d consecutive knowledge item indexing failures, possibly a configuration issue (e.g. embedding model misconfiguration, invalid API key, insufficient balance). First failure item: %s, error: %v", consecutiveFailures, firstFailureItemID, firstFailureError)
 				idx.mu.Lock()
 				idx.lastError = errorMsg
 				idx.lastErrorTime = time.Now()
 				idx.mu.Unlock()
-				
-				idx.logger.Error("连续索引失败次数过多，立即停止索引",
+
+				idx.logger.Error("too many consecutive indexing failures, stopping indexing immediately",
 					zap.Int("consecutiveFailures", consecutiveFailures),
 					zap.Int("totalItems", len(itemIDs)),
 					zap.Int("processedItems", i+1),
 					zap.String("firstFailureItemId", firstFailureItemID),
 					zap.Error(firstFailureError),
 				)
-				return fmt.Errorf("连续索引失败次数过多: %v", firstFailureError)
+				return fmt.Errorf("too many consecutive indexing failures: %v", firstFailureError)
 			}
-			
-			// 如果失败的知识项过多，记录警告但继续处理（降低阈值到30%）
+
+			// if too many failed knowledge items, log a warning but continue (lower threshold to 30%)
 			if failedCount > len(itemIDs)*3/10 && failedCount == len(itemIDs)*3/10+1 {
-				errorMsg := fmt.Sprintf("索引失败的知识项过多 (%d/%d)，可能存在配置问题。第一个失败项: %s, 错误: %v", failedCount, len(itemIDs), firstFailureItemID, firstFailureError)
+				errorMsg := fmt.Sprintf("too many failed knowledge items (%d/%d), possibly a configuration issue. First failure item: %s, error: %v", failedCount, len(itemIDs), firstFailureItemID, firstFailureError)
 				idx.mu.Lock()
 				idx.lastError = errorMsg
 				idx.lastErrorTime = time.Now()
 				idx.mu.Unlock()
-				
-				idx.logger.Error("索引失败的知识项过多，可能存在配置问题",
+
+				idx.logger.Error("too many failed knowledge items, possibly a configuration issue",
 					zap.Int("failedCount", failedCount),
 					zap.Int("totalItems", len(itemIDs)),
 					zap.String("firstFailureItemId", firstFailureItemID),
@@ -450,25 +450,25 @@ func (idx *Indexer) RebuildIndex(ctx context.Context) error {
 			}
 			continue
 		}
-		
-		// 成功时重置连续失败计数和第一个失败信息
+
+		// reset consecutive failure count and first failure info on success
 		if consecutiveFailures > 0 {
 			consecutiveFailures = 0
 			firstFailureItemID = ""
 			firstFailureError = nil
 		}
-		
-		// 减少进度日志频率（每10个或每10%记录一次）
+
+		// reduce progress log frequency (log every 10 items or every 10%)
 		if (i+1)%10 == 0 || (len(itemIDs) > 0 && (i+1)*100/len(itemIDs)%10 == 0 && (i+1)*100/len(itemIDs) > 0) {
-			idx.logger.Info("索引进度", zap.Int("current", i+1), zap.Int("total", len(itemIDs)), zap.Int("failed", failedCount))
+			idx.logger.Info("indexing progress", zap.Int("current", i+1), zap.Int("total", len(itemIDs)), zap.Int("failed", failedCount))
 		}
 	}
 
-	idx.logger.Info("索引重建完成", zap.Int("totalItems", len(itemIDs)), zap.Int("failedCount", failedCount))
+	idx.logger.Info("index rebuild complete", zap.Int("totalItems", len(itemIDs)), zap.Int("failedCount", failedCount))
 	return nil
 }
 
-// GetLastError 获取最近一次错误信息
+// GetLastError returns the most recent error message
 func (idx *Indexer) GetLastError() (string, time.Time) {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()

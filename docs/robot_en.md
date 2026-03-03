@@ -1,6 +1,6 @@
 # CyberStrikeAI Robot / Chatbot Guide
 
-[中文](robot.md)
+[Chinese](robot.md)
 
 This document explains how to chat with CyberStrikeAI from **DingTalk** and **Lark (Feishu)** using long-lived connections—no need to open a browser on the server. Following the steps below helps avoid common mistakes.
 
@@ -62,7 +62,7 @@ If you only have a **custom bot** Webhook URL (`oapi.dingtalk.com/robot/send?acc
    - Left menu: **Application capabilities** → **Robot**.  
    - Turn on “Robot configuration”.  
    - Fill in robot name, description, etc. as required.  
-   - **Critical**: set message reception to **“Stream mode”** (流式接入). If you only enable “HTTP callback” or do not select Stream, CyberStrikeAI will not receive messages.  
+   - **Critical**: set message reception to **”Stream mode”** (streaming access). If you only enable “HTTP callback” or do not select Stream, CyberStrikeAI will not receive messages.  
    - Save.
 
 5. **Permissions and release**  
@@ -106,17 +106,17 @@ Send these **text commands** to the bot in DingTalk or Lark (text only):
 
 | Command | Description |
 |---------|-------------|
-| **帮助** (help) | Show command help |
-| **列表** or **对话列表** (list) | List all conversation titles and IDs |
-| **切换 \<conversationID\>** or **继续 \<conversationID\>** | Continue in the given conversation |
-| **新对话** (new) | Start a new conversation |
-| **清空** (clear) | Clear current context (same effect as new conversation) |
-| **当前** (current) | Show current conversation ID and title |
-| **停止** (stop) | Abort the currently running task |
-| **角色** or **角色列表** (roles) | List all available roles (penetration testing, CTF, Web scan, etc.) |
-| **角色 \<roleName\>** or **切换角色 \<roleName\>** | Switch to the specified role |
-| **删除 \<conversationID\>** | Delete the specified conversation |
-| **版本** (version) | Show current CyberStrikeAI version |
+| **help** | Show command help |
+| **list** or **conversations** | List all conversation titles and IDs |
+| **switch \<conversationID\>** or **continue \<conversationID\>** | Continue in the given conversation |
+| **new** | Start a new conversation |
+| **clear** | Clear current context (same effect as new conversation) |
+| **current** | Show current conversation ID and title |
+| **stop** | Abort the currently running task |
+| **roles** or **role list** | List all available roles (penetration testing, CTF, Web scan, etc.) |
+| **role \<roleName\>** or **switch role \<roleName\>** | Switch to the specified role |
+| **delete \<conversationID\>** | Delete the specified conversation |
+| **version** | Show current CyberStrikeAI version |
 
 Any other text is sent to the AI as a user message, same as in the web UI (e.g. penetration testing, security analysis).
 
@@ -124,7 +124,7 @@ Any other text is sent to the AI as a user message, same as in the web UI (e.g. 
 
 ## 5. How to use (do I need to @ the bot?)
 
-- **Direct chat (recommended)**: In DingTalk or Lark, **search for the bot and open a direct chat**. Type “帮助” or any message; **no @ needed**.  
+- **Direct chat (recommended)**: In DingTalk or Lark, **search for the bot and open a direct chat**. Type “help” or any message; **no @ needed**.  
 - **Group chat**: If the bot is in a group, only messages that **@ the bot** are received and answered; other group messages are ignored.
 
 Summary: **Direct chat** — just send; **in a group** — @ the bot first, then send.
@@ -136,7 +136,7 @@ Summary: **Direct chat** — just send; **in a group** — @ the bot first, then
 1. **In the open platform**: Complete app creation, copy credentials, enable the bot (DingTalk: **Stream mode**), set permissions, and publish (Section 3).  
 2. **In CyberStrikeAI**: System settings → Robot settings → Enable the platform, paste Client ID/App ID and Client Secret/App Secret → **Apply configuration**.  
 3. **Restart the CyberStrikeAI process** (otherwise the long-lived connection is not established).  
-4. **On your phone**: Open DingTalk or Lark, find the bot (direct chat or @ in a group), send “帮助” or any message to test.
+4. **On your phone**: Open DingTalk or Lark, find the bot (direct chat or @ in a group), send “help” or any message to test.
 
 If the bot does not respond, see **Section 9 (troubleshooting)** and **Section 10 (common pitfalls)**.
 
@@ -175,10 +175,10 @@ You can verify bot logic with the **test API** (no DingTalk/Lark client needed):
 curl -X POST "http://localhost:8080/api/robot/test" \
   -H "Content-Type: application/json" \
   -H "Cookie: YOUR_COOKIE" \
-  -d '{"platform":"dingtalk","user_id":"test_user","text":"帮助"}'
+  -d '{"platform":"dingtalk","user_id":"test_user","text":"help"}'
 ```
 
-If the JSON response contains `"reply":"【CyberStrikeAI 机器人命令】..."`, command handling works. You can also try `"text":"列表"` or `"text":"当前"`.
+If the JSON response contains `"reply":"[CyberStrikeAI Bot Commands]..."`, command handling works. You can also try `"text":"list"` or `"text":"current"`.
 
 API: `POST /api/robot/test` (requires login). Body: `{"platform":"optional","user_id":"optional","text":"required"}`. Response: `{"reply":"..."}`.
 
@@ -197,10 +197,10 @@ Check in this order:
 2. **Did you restart after saving?**  
    The long-lived connection is created at **startup**. “Apply configuration” only updates the config file; you **must restart the CyberStrikeAI process** for the DingTalk connection to start.
 
-3. **Application logs**  
-   - On startup you should see: `钉钉 Stream 正在连接…`, `钉钉 Stream 已启动（无需公网），等待收消息`.  
-   - If you see `钉钉 Stream 长连接退出` with an error, it’s usually wrong **Client ID / Client Secret** or **Stream not enabled** in the open platform.  
-   - After sending a message in DingTalk, you should see `钉钉收到消息` in the logs; if not, the platform is not pushing to this app (check that the bot is enabled and **Stream mode** is selected).
+3. **Application logs**
+   - On startup you should see: `DingTalk Stream connecting...`, `DingTalk Stream started (no public IP required), waiting for messages`.
+   - If you see `DingTalk Stream long-lived connection exited` with an error, it’s usually wrong **Client ID / Client Secret** or **Stream not enabled** in the open platform.
+   - After sending a message in DingTalk, you should see `DingTalk message received` in the logs; if not, the platform is not pushing to this app (check that the bot is enabled and **Stream mode** is selected).
 
 4. **Open platform**  
    The app must be **published**. Under “Robot” you must enable **Stream** for receiving messages (HTTP callback only is not enough). Permission management must include robot receive/send message permissions.

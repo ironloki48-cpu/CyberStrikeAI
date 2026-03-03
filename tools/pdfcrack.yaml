@@ -1,62 +1,62 @@
 name: "pdfcrack"
 command: "pdfcrack"
 enabled: true
-short_description: "PDF 文件密码破解工具，支持暴力破解和字典攻击"
+short_description: "PDF file password cracking tool supporting brute force and dictionary attacks"
 description: |
-  pdfcrack 是一个用于破解受密码保护的 PDF 文件密码的工具。
+  pdfcrack is a tool for cracking passwords on password-protected PDF files.
 
-  **主要功能：**
-  - 暴力破解
-  - 字典攻击
-  - 用户密码和所有者密码破解
-  - 支持多种加密算法
+  **Key Features:**
+  - Brute force attack
+  - Dictionary attack
+  - User password and owner password cracking
+  - Support for multiple encryption algorithms
 
-  **使用场景：**
-  - CTF 竞赛
-  - PDF 文件密码恢复
-  - 安全测试
-  - 数字取证
+  **Use Cases:**
+  - CTF competitions
+  - PDF file password recovery
+  - Security testing
+  - Digital forensics
 
-  **注意事项：**
-  - 破解时间取决于密码复杂度
-  - 建议使用字典文件提高效率
-  - 仅用于授权的安全测试
+  **Notes:**
+  - Cracking time depends on password complexity
+  - Recommended to use dictionary files to improve efficiency
+  - For authorized security testing only
 parameters:
   - name: "file"
     type: "string"
-    description: "要破解的 PDF 文件路径"
+    description: "Path to the PDF file to crack"
     required: true
     position: 0
     format: "positional"
   - name: "wordlist"
     type: "string"
-    description: "字典文件路径"
+    description: "Dictionary file path"
     required: false
     flag: "-w"
     format: "flag"
   - name: "min_length"
     type: "int"
-    description: "最小密码长度"
+    description: "Minimum password length"
     required: false
     flag: "-n"
     format: "flag"
   - name: "max_length"
     type: "int"
-    description: "最大密码长度"
+    description: "Maximum password length"
     required: false
     flag: "-m"
     format: "flag"
   - name: "additional_args"
     type: "string"
     description: |
-      额外的pdfcrack参数。用于传递未在参数列表中定义的pdfcrack选项。
+      Additional pdfcrack parameters. Used to pass pdfcrack options not defined in the parameter list.
 
-      **示例值：**
-      - 根据工具特性添加常用参数示例
+      **Example values:**
+      - Add common parameter examples based on tool characteristics
 
-      **注意事项：**
-      - 多个参数用空格分隔
-      - 确保参数格式正确，避免命令注入
-      - 此参数会直接追加到命令末尾
+      **Notes:**
+      - Multiple parameters separated by spaces
+      - Ensure parameter format is correct to avoid command injection
+      - This parameter will be appended directly to the end of the command
     required: false
     format: "positional"

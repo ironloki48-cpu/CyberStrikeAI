@@ -1,31 +1,31 @@
 name: "enum4linux"
 command: "enum4linux"
 enabled: true
-short_description: "SMB枚举工具，用于Windows/Samba系统信息收集"
+short_description: "SMB enumeration tool for Windows/Samba system information gathering"
 description: |
-  Enum4linux是一个用于枚举SMB共享和Windows系统信息的工具。
+  Enum4linux is a tool for enumerating SMB shares and Windows system information.
 
-  **主要功能：**
-  - SMB共享枚举
-  - 用户和组枚举
-  - 密码策略信息
-  - 系统信息收集
+  **Key Features:**
+  - SMB share enumeration
+  - User and group enumeration
+  - Password policy information
+  - System information gathering
 
-  **使用场景：**
-  - Windows系统渗透测试
-  - SMB安全评估
-  - 网络信息收集
-  - 域环境侦察
+  **Use Cases:**
+  - Windows system penetration testing
+  - SMB security assessment
+  - Network information gathering
+  - Domain environment reconnaissance
 parameters:
   - name: "target"
     type: "string"
-    description: "目标IP地址"
+    description: "Target IP address"
     required: true
     position: 0
     format: "positional"
   - name: "additional_args"
     type: "string"
-    description: "额外的Enum4linux参数（默认：-a）"
+    description: "Additional Enum4linux parameters (default: -a)"
     required: false
     default: "-a"
     format: "positional"

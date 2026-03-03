@@ -14,15 +14,15 @@ import (
 	"go.uber.org/zap"
 )
 
-// Embedder 文本嵌入器
+// Embedder is the text embedder
 type Embedder struct {
 	openAIClient *openai.Client
 	config       *config.KnowledgeConfig
-	openAIConfig *config.OpenAIConfig // 用于获取API Key
+	openAIConfig *config.OpenAIConfig // used to retrieve the API Key
 	logger       *zap.Logger
 }
 
-// NewEmbedder 创建新的嵌入器
+// NewEmbedder creates a new embedder
 func NewEmbedder(cfg *config.KnowledgeConfig, openAIConfig *config.OpenAIConfig, openAIClient *openai.Client, logger *zap.Logger) *Embedder {
 	return &Embedder{
 		openAIClient: openAIClient,
@@ -32,37 +32,37 @@ func NewEmbedder(cfg *config.KnowledgeConfig, openAIConfig *config.OpenAIConfig,
 	}
 }
 
-// EmbeddingRequest OpenAI嵌入请求
+// EmbeddingRequest is the OpenAI embedding request
 type EmbeddingRequest struct {
 	Model string   `json:"model"`
 	Input []string `json:"input"`
 }
 
-// EmbeddingResponse OpenAI嵌入响应
+// EmbeddingResponse is the OpenAI embedding response
 type EmbeddingResponse struct {
 	Data []EmbeddingData `json:"data"`
 	Error *EmbeddingError `json:"error,omitempty"`
 }
 
-// EmbeddingData 嵌入数据
+// EmbeddingData contains embedding data
 type EmbeddingData struct {
 	Embedding []float64 `json:"embedding"`
 	Index     int       `json:"index"`
 }
 
-// EmbeddingError 嵌入错误
+// EmbeddingError contains an embedding error
 type EmbeddingError struct {
 	Message string `json:"message"`
 	Type    string `json:"type"`
 }
 
-// EmbedText 对文本进行嵌入
+// EmbedText embeds the given text
 func (e *Embedder) EmbedText(ctx context.Context, text string) ([]float32, error) {
 	if e.openAIClient == nil {
-		return nil, fmt.Errorf("OpenAI客户端未初始化")
+		return nil, fmt.Errorf("OpenAI client not initialized")
 	}
 
-	// 使用配置的嵌入模型
+	// use the configured embedding model
 	model := e.config.Embedding.Model
 	if model == "" {
 		model = "text-embedding-3-small"
@@ -73,48 +73,48 @@ func (e *Embedder) EmbedText(ctx context.Context, text string) ([]float32, error
 		Input: []string{text},
 	}
 
-	// 清理baseURL：去除前后空格和尾部斜杠
+	// clean baseURL: trim whitespace and trailing slash
 	baseURL := strings.TrimSpace(e.config.Embedding.BaseURL)
 	baseURL = strings.TrimSuffix(baseURL, "/")
 	if baseURL == "" {
 		baseURL = "https://api.openai.com/v1"
 	}
 
-	// 构建请求
+	// build request
 	body, err := json.Marshal(req)
 	if err != nil {
-		return nil, fmt.Errorf("序列化请求失败: %w", err)
+		return nil, fmt.Errorf("failed to serialize request: %w", err)
 	}
 
 	requestURL := baseURL + "/embeddings"
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, strings.NewReader(string(body)))
 	if err != nil {
-		return nil, fmt.Errorf("创建请求失败: %w", err)
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
-	
-	// 使用配置的API Key，如果没有则使用OpenAI配置的
+
+	// use configured API Key, fall back to OpenAI config if not set
 	apiKey := strings.TrimSpace(e.config.Embedding.APIKey)
 	if apiKey == "" && e.openAIConfig != nil {
 		apiKey = e.openAIConfig.APIKey
 	}
 	if apiKey == "" {
-		return nil, fmt.Errorf("API Key未配置")
+		return nil, fmt.Errorf("API Key not configured")
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 
-	// 发送请求
+	// send request
 	httpClient := &http.Client{
 		Timeout: 30 * time.Second,
 	}
 	resp, err := httpClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("发送请求失败: %w", err)
+		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
 
-	// 读取响应体以便在错误时输出详细信息
+	// read response body for detailed error output
 	bodyBytes := make([]byte, 0)
 	buf := make([]byte, 4096)
 	for {
@@ -127,12 +127,12 @@ func (e *Embedder) EmbedText(ctx context.Context, text string) ([]float32, error
 		}
 	}
 
-	// 记录请求和响应信息（用于调试）
+	// log request and response information (for debugging)
 	requestBodyPreview := string(body)
 	if len(requestBodyPreview) > 200 {
 		requestBodyPreview = requestBodyPreview[:200] + "..."
 	}
-	e.logger.Debug("嵌入API请求",
+	e.logger.Debug("embedding API request",
 		zap.String("url", httpReq.URL.String()),
 		zap.String("model", model),
 		zap.String("requestBody", requestBodyPreview),
@@ -143,17 +143,17 @@ func (e *Embedder) EmbedText(ctx context.Context, text string) ([]float32, error
 
 	var embeddingResp EmbeddingResponse
 	if err := json.Unmarshal(bodyBytes, &embeddingResp); err != nil {
-		// 输出详细的错误信息
+		// output detailed error information
 		bodyPreview := string(bodyBytes)
 		if len(bodyPreview) > 500 {
 			bodyPreview = bodyPreview[:500] + "..."
 		}
-		return nil, fmt.Errorf("解析响应失败 (URL: %s, 状态码: %d, 响应长度: %d字节): %w\n请求体: %s\n响应内容预览: %s",
+		return nil, fmt.Errorf("failed to parse response (URL: %s, status: %d, response length: %d bytes): %w\nrequest body: %s\nresponse content preview: %s",
 			requestURL, resp.StatusCode, len(bodyBytes), err, requestBodyPreview, bodyPreview)
 	}
 
 	if embeddingResp.Error != nil {
-		return nil, fmt.Errorf("OpenAI API错误 (状态码: %d): 类型=%s, 消息=%s",
+		return nil, fmt.Errorf("OpenAI API error (status: %d): type=%s, message=%s",
 			resp.StatusCode, embeddingResp.Error.Type, embeddingResp.Error.Message)
 	}
 
@@ -162,7 +162,7 @@ func (e *Embedder) EmbedText(ctx context.Context, text string) ([]float32, error
 		if len(bodyPreview) > 500 {
 			bodyPreview = bodyPreview[:500] + "..."
 		}
-		return nil, fmt.Errorf("HTTP请求失败 (URL: %s, 状态码: %d): 响应内容=%s", requestURL, resp.StatusCode, bodyPreview)
+		return nil, fmt.Errorf("HTTP request failed (URL: %s, status: %d): response=%s", requestURL, resp.StatusCode, bodyPreview)
 	}
 
 	if len(embeddingResp.Data) == 0 {
@@ -170,11 +170,11 @@ func (e *Embedder) EmbedText(ctx context.Context, text string) ([]float32, error
 		if len(bodyPreview) > 500 {
 			bodyPreview = bodyPreview[:500] + "..."
 		}
-		return nil, fmt.Errorf("未收到嵌入数据 (状态码: %d, 响应长度: %d字节)\n响应内容: %s",
+		return nil, fmt.Errorf("no embedding data received (status: %d, response length: %d bytes)\nresponse: %s",
 			resp.StatusCode, len(bodyBytes), bodyPreview)
 	}
 
-	// 转换为float32
+	// convert to float32
 	embedding := make([]float32, len(embeddingResp.Data[0].Embedding))
 	for i, v := range embeddingResp.Data[0].Embedding {
 		embedding[i] = float32(v)
@@ -183,23 +183,22 @@ func (e *Embedder) EmbedText(ctx context.Context, text string) ([]float32, error
 	return embedding, nil
 }
 
-// EmbedTexts 批量嵌入文本
+// EmbedTexts embeds multiple texts in batch
 func (e *Embedder) EmbedTexts(ctx context.Context, texts []string) ([][]float32, error) {
 	if len(texts) == 0 {
 		return nil, nil
 	}
 
-	// OpenAI API支持批量，但为了简单起见，我们逐个处理
-	// 实际可以使用批量API以提高效率
+	// OpenAI API supports batching, but for simplicity we process individually
+	// in practice, the batch API can be used for better efficiency
 	embeddings := make([][]float32, len(texts))
 	for i, text := range texts {
 		embedding, err := e.EmbedText(ctx, text)
 		if err != nil {
-			return nil, fmt.Errorf("嵌入文本[%d]失败: %w", i, err)
+			return nil, fmt.Errorf("failed to embed text[%d]: %w", i, err)
 		}
 		embeddings[i] = embedding
 	}
 
 	return embeddings, nil
 }
-

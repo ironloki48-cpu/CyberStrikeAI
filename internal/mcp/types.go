@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// ExternalMCPClient 外部 MCP 客户端接口（由 client_sdk.go 基于官方 SDK 实现）
+// ExternalMCPClient is the external MCP client interface (implemented in client_sdk.go based on the official SDK)
 type ExternalMCPClient interface {
 	Initialize(ctx context.Context) error
 	ListTools(ctx context.Context) ([]Tool, error)
@@ -17,7 +17,7 @@ type ExternalMCPClient interface {
 	GetStatus() string
 }
 
-// MCP消息类型
+// MCP message types
 const (
 	MessageTypeRequest  = "request"
 	MessageTypeResponse = "response"
@@ -25,30 +25,30 @@ const (
 	MessageTypeNotify   = "notify"
 )
 
-// MCP协议版本
+// MCP protocol version
 const ProtocolVersion = "2024-11-05"
 
-// MessageID 表示JSON-RPC 2.0的id字段，可以是字符串、数字或null
+// MessageID represents the id field in JSON-RPC 2.0, which can be a string, number, or null
 type MessageID struct {
 	value interface{}
 }
 
-// UnmarshalJSON 自定义反序列化，支持字符串、数字和null
+// UnmarshalJSON custom deserialization, supports strings, numbers, and null
 func (m *MessageID) UnmarshalJSON(data []byte) error {
-	// 尝试解析为null
+	// try to parse as null
 	if string(data) == "null" {
 		m.value = nil
 		return nil
 	}
 
-	// 尝试解析为字符串
+	// try to parse as string
 	var str string
 	if err := json.Unmarshal(data, &str); err == nil {
 		m.value = str
 		return nil
 	}
 
-	// 尝试解析为数字
+	// try to parse as number
 	var num json.Number
 	if err := json.Unmarshal(data, &num); err == nil {
 		m.value = num
@@ -58,7 +58,7 @@ func (m *MessageID) UnmarshalJSON(data []byte) error {
 	return fmt.Errorf("invalid id type")
 }
 
-// MarshalJSON 自定义序列化
+// MarshalJSON custom serialization
 func (m MessageID) MarshalJSON() ([]byte, error) {
 	if m.value == nil {
 		return []byte("null"), nil
@@ -66,7 +66,7 @@ func (m MessageID) MarshalJSON() ([]byte, error) {
 	return json.Marshal(m.value)
 }
 
-// String 返回字符串表示
+// String returns the string representation
 func (m MessageID) String() string {
 	if m.value == nil {
 		return ""
@@ -74,76 +74,76 @@ func (m MessageID) String() string {
 	return fmt.Sprintf("%v", m.value)
 }
 
-// Value 返回原始值
+// Value returns the raw value
 func (m MessageID) Value() interface{} {
 	return m.value
 }
 
-// Message 表示MCP消息（符合JSON-RPC 2.0规范）
+// Message represents an MCP message (compliant with JSON-RPC 2.0 specification)
 type Message struct {
 	ID      MessageID       `json:"id,omitempty"`
-	Type    string          `json:"-"` // 内部使用，不序列化到JSON
+	Type    string          `json:"-"` // internal use only, not serialized to JSON
 	Method  string          `json:"method,omitempty"`
 	Params  json.RawMessage `json:"params,omitempty"`
 	Result  json.RawMessage `json:"result,omitempty"`
 	Error   *Error          `json:"error,omitempty"`
-	Version string          `json:"jsonrpc,omitempty"` // JSON-RPC 2.0 版本标识
+	Version string          `json:"jsonrpc,omitempty"` // JSON-RPC 2.0 version identifier
 }
 
-// Error 表示MCP错误
+// Error represents an MCP error
 type Error struct {
 	Code    int         `json:"code"`
 	Message string      `json:"message"`
 	Data    interface{} `json:"data,omitempty"`
 }
 
-// Tool 表示MCP工具定义
+// Tool represents an MCP tool definition
 type Tool struct {
 	Name             string                 `json:"name"`
-	Description      string                 `json:"description"`                // 详细描述
-	ShortDescription string                 `json:"shortDescription,omitempty"` // 简短描述（用于工具列表，减少token消耗）
+	Description      string                 `json:"description"`                // detailed description
+	ShortDescription string                 `json:"shortDescription,omitempty"` // short description (for tool lists, reduces token usage)
 	InputSchema      map[string]interface{} `json:"inputSchema"`
 }
 
-// ToolCall 表示工具调用
+// ToolCall represents a tool call
 type ToolCall struct {
 	Name      string                 `json:"name"`
 	Arguments map[string]interface{} `json:"arguments"`
 }
 
-// ToolResult 表示工具执行结果
+// ToolResult represents the result of a tool execution
 type ToolResult struct {
 	Content []Content `json:"content"`
 	IsError bool      `json:"isError,omitempty"`
 }
 
-// Content 表示内容
+// Content represents content
 type Content struct {
 	Type string `json:"type"`
 	Text string `json:"text"`
 }
 
-// InitializeRequest 初始化请求
+// InitializeRequest is the initialization request
 type InitializeRequest struct {
 	ProtocolVersion string                 `json:"protocolVersion"`
 	Capabilities    map[string]interface{} `json:"capabilities"`
 	ClientInfo      ClientInfo             `json:"clientInfo"`
 }
 
-// ClientInfo 客户端信息
+// ClientInfo contains client information
 type ClientInfo struct {
 	Name    string `json:"name"`
 	Version string `json:"version"`
 }
 
-// InitializeResponse 初始化响应
+// InitializeResponse is the initialization response
 type InitializeResponse struct {
 	ProtocolVersion string             `json:"protocolVersion"`
 	Capabilities    ServerCapabilities `json:"capabilities"`
 	ServerInfo      ServerInfo         `json:"serverInfo"`
 }
 
-// ServerCapabilities 服务器能力
+// ServerCapabilities represents server capabilities
 type ServerCapabilities struct {
 	Tools     map[string]interface{} `json:"tools,omitempty"`
 	Prompts   map[string]interface{} `json:"prompts,omitempty"`
@@ -151,43 +151,43 @@ type ServerCapabilities struct {
 	Sampling  map[string]interface{} `json:"sampling,omitempty"`
 }
 
-// ServerInfo 服务器信息
+// ServerInfo contains server information
 type ServerInfo struct {
 	Name    string `json:"name"`
 	Version string `json:"version"`
 }
 
-// ListToolsRequest 列出工具请求
+// ListToolsRequest is the list tools request
 type ListToolsRequest struct{}
 
-// ListToolsResponse 列出工具响应
+// ListToolsResponse is the list tools response
 type ListToolsResponse struct {
 	Tools []Tool `json:"tools"`
 }
 
-// ListPromptsResponse 列出提示词响应
+// ListPromptsResponse is the list prompts response
 type ListPromptsResponse struct {
 	Prompts []Prompt `json:"prompts"`
 }
 
-// ListResourcesResponse 列出资源响应
+// ListResourcesResponse is the list resources response
 type ListResourcesResponse struct {
 	Resources []Resource `json:"resources"`
 }
 
-// CallToolRequest 调用工具请求
+// CallToolRequest is the call tool request
 type CallToolRequest struct {
 	Name      string                 `json:"name"`
 	Arguments map[string]interface{} `json:"arguments"`
 }
 
-// CallToolResponse 调用工具响应
+// CallToolResponse is the call tool response
 type CallToolResponse struct {
 	Content []Content `json:"content"`
 	IsError bool      `json:"isError,omitempty"`
 }
 
-// ToolExecution 工具执行记录
+// ToolExecution is a tool execution record
 type ToolExecution struct {
 	ID        string                 `json:"id"`
 	ToolName  string                 `json:"toolName"`
@@ -200,7 +200,7 @@ type ToolExecution struct {
 	Duration  time.Duration          `json:"duration,omitempty"`
 }
 
-// ToolStats 工具统计信息
+// ToolStats contains tool statistics
 type ToolStats struct {
 	ToolName     string     `json:"toolName"`
 	TotalCalls   int        `json:"totalCalls"`
@@ -209,38 +209,38 @@ type ToolStats struct {
 	LastCallTime *time.Time `json:"lastCallTime,omitempty"`
 }
 
-// Prompt 提示词模板
+// Prompt is a prompt template
 type Prompt struct {
 	Name        string           `json:"name"`
 	Description string           `json:"description,omitempty"`
 	Arguments   []PromptArgument `json:"arguments,omitempty"`
 }
 
-// PromptArgument 提示词参数
+// PromptArgument is a prompt argument
 type PromptArgument struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	Required    bool   `json:"required,omitempty"`
 }
 
-// GetPromptRequest 获取提示词请求
+// GetPromptRequest is the get prompt request
 type GetPromptRequest struct {
 	Name      string                 `json:"name"`
 	Arguments map[string]interface{} `json:"arguments,omitempty"`
 }
 
-// GetPromptResponse 获取提示词响应
+// GetPromptResponse is the get prompt response
 type GetPromptResponse struct {
 	Messages []PromptMessage `json:"messages"`
 }
 
-// PromptMessage 提示词消息
+// PromptMessage is a prompt message
 type PromptMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
 }
 
-// Resource 资源
+// Resource represents a resource
 type Resource struct {
 	URI         string `json:"uri"`
 	Name        string `json:"name"`
@@ -248,17 +248,17 @@ type Resource struct {
 	MimeType    string `json:"mimeType,omitempty"`
 }
 
-// ReadResourceRequest 读取资源请求
+// ReadResourceRequest is the read resource request
 type ReadResourceRequest struct {
 	URI string `json:"uri"`
 }
 
-// ReadResourceResponse 读取资源响应
+// ReadResourceResponse is the read resource response
 type ReadResourceResponse struct {
 	Contents []ResourceContent `json:"contents"`
 }
 
-// ResourceContent 资源内容
+// ResourceContent is resource content
 type ResourceContent struct {
 	URI      string `json:"uri"`
 	MimeType string `json:"mimeType,omitempty"`
@@ -266,7 +266,7 @@ type ResourceContent struct {
 	Blob     string `json:"blob,omitempty"`
 }
 
-// SamplingRequest 采样请求
+// SamplingRequest is the sampling request
 type SamplingRequest struct {
 	Messages    []SamplingMessage `json:"messages"`
 	Model       string            `json:"model,omitempty"`
@@ -275,20 +275,20 @@ type SamplingRequest struct {
 	TopP        float64           `json:"topP,omitempty"`
 }
 
-// SamplingMessage 采样消息
+// SamplingMessage is a sampling message
 type SamplingMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
 }
 
-// SamplingResponse 采样响应
+// SamplingResponse is the sampling response
 type SamplingResponse struct {
 	Content    []SamplingContent `json:"content"`
 	Model      string            `json:"model,omitempty"`
 	StopReason string            `json:"stopReason,omitempty"`
 }
 
-// SamplingContent 采样内容
+// SamplingContent is sampling content
 type SamplingContent struct {
 	Type string `json:"type"`
 	Text string `json:"text,omitempty"`

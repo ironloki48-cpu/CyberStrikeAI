@@ -1,4 +1,4 @@
-// Package mcp 外部 MCP 客户端 - 基于官方 go-sdk 实现，保证协议兼容性
+// Package mcp provides the external MCP client - implemented based on the official go-sdk to ensure protocol compatibility
 package mcp
 
 import (
@@ -26,7 +26,7 @@ const (
 	clientVersion = "1.0.0"
 )
 
-// sdkClient 基于官方 MCP Go SDK 的外部 MCP 客户端，实现 ExternalMCPClient 接口
+// sdkClient is the external MCP client based on the official MCP Go SDK, implementing the ExternalMCPClient interface
 type sdkClient struct {
 	session *mcp.ClientSession
 	client  *mcp.Client
@@ -35,7 +35,7 @@ type sdkClient struct {
 	status  string // "disconnected", "connecting", "connected", "error"
 }
 
-// newSDKClientFromSession 用已连接成功的 session 构造（供 createSDKClient 内部使用）
+// newSDKClientFromSession constructs from an already-connected session (used internally by createSDKClient)
 func newSDKClientFromSession(session *mcp.ClientSession, client *mcp.Client, logger *zap.Logger) *sdkClient {
 	return &sdkClient{
 		session: session,
@@ -45,11 +45,12 @@ func newSDKClientFromSession(session *mcp.ClientSession, client *mcp.Client, log
 	}
 }
 
-// lazySDKClient 延迟连接：Initialize() 时才调用官方 SDK 建立连接，对外实现 ExternalMCPClient
+// lazySDKClient defers connection: calls the official SDK to establish connection only during Initialize(),
+// implements ExternalMCPClient externally
 type lazySDKClient struct {
 	serverCfg config.ExternalMCPServerConfig
 	logger    *zap.Logger
-	inner     ExternalMCPClient // 连接成功后为 *sdkClient
+	inner     ExternalMCPClient // *sdkClient after successful connection
 	mu        sync.RWMutex
 	status    string
 }
@@ -113,7 +114,7 @@ func (c *lazySDKClient) ListTools(ctx context.Context) ([]Tool, error) {
 	inner := c.inner
 	c.mu.RUnlock()
 	if inner == nil {
-		return nil, fmt.Errorf("未连接")
+		return nil, fmt.Errorf("not connected")
 	}
 	return inner.ListTools(ctx)
 }
@@ -123,7 +124,7 @@ func (c *lazySDKClient) CallTool(ctx context.Context, name string, args map[stri
 	inner := c.inner
 	c.mu.RUnlock()
 	if inner == nil {
-		return nil, fmt.Errorf("未连接")
+		return nil, fmt.Errorf("not connected")
 	}
 	return inner.CallTool(ctx, name, args)
 }
@@ -157,14 +158,14 @@ func (c *sdkClient) IsConnected() bool {
 }
 
 func (c *sdkClient) Initialize(ctx context.Context) error {
-	// sdkClient 由 createSDKClient 在 Connect 成功后才创建，因此 Initialize 时已经连接
-	// 此方法仅用于满足 ExternalMCPClient 接口，实际连接在 createSDKClient 中完成
+	// sdkClient is created only after a successful Connect in createSDKClient, so it is already connected at Initialize time
+	// this method only exists to satisfy the ExternalMCPClient interface; actual connection is done in createSDKClient
 	return nil
 }
 
 func (c *sdkClient) ListTools(ctx context.Context) ([]Tool, error) {
 	if c.session == nil {
-		return nil, fmt.Errorf("未连接")
+		return nil, fmt.Errorf("not connected")
 	}
 	res, err := c.session.ListTools(ctx, nil)
 	if err != nil {
@@ -178,7 +179,7 @@ func (c *sdkClient) ListTools(ctx context.Context) ([]Tool, error) {
 
 func (c *sdkClient) CallTool(ctx context.Context, name string, args map[string]interface{}) (*ToolResult, error) {
 	if c.session == nil {
-		return nil, fmt.Errorf("未连接")
+		return nil, fmt.Errorf("not connected")
 	}
 	params := &mcp.CallToolParams{
 		Name:      name,
@@ -201,7 +202,7 @@ func (c *sdkClient) Close() error {
 	return nil
 }
 
-// sdkToolsToOur 将 SDK 的 []*mcp.Tool 转为我们的 []Tool
+// sdkToolsToOur converts SDK []*mcp.Tool to our []Tool
 func sdkToolsToOur(tools []*mcp.Tool) []Tool {
 	if len(tools) == 0 {
 		return nil
@@ -213,7 +214,7 @@ func sdkToolsToOur(tools []*mcp.Tool) []Tool {
 		}
 		schema := make(map[string]interface{})
 		if t.InputSchema != nil {
-			// SDK InputSchema 可能为 *jsonschema.Schema 或 map，统一转为 map
+			// SDK InputSchema may be *jsonschema.Schema or map, normalize to map
 			if m, ok := t.InputSchema.(map[string]interface{}); ok {
 				schema = m
 			} else {
@@ -235,7 +236,7 @@ func sdkToolsToOur(tools []*mcp.Tool) []Tool {
 	return out
 }
 
-// sdkCallToolResultToOurs 将 SDK 的 *mcp.CallToolResult 转为我们的 *ToolResult
+// sdkCallToolResultToOurs converts SDK *mcp.CallToolResult to our *ToolResult
 func sdkCallToolResultToOurs(res *mcp.CallToolResult) *ToolResult {
 	if res == nil {
 		return &ToolResult{Content: []Content{}}
@@ -268,8 +269,8 @@ func mustJSON(v interface{}) []byte {
 	return b
 }
 
-// simpleHTTPClient 简单 JSON-RPC over HTTP：每次请求一次 POST、响应在 body。实现 ExternalMCPClient。
-// 用于自建 MCP（如 http://127.0.0.1:8081/mcp）或其它仅支持简单 POST 的端点。
+// simpleHTTPClient is a simple JSON-RPC over HTTP client: each request is a single POST, response is in the body. Implements ExternalMCPClient.
+// Used for self-hosted MCP (e.g. http://127.0.0.1:8081/mcp) or other endpoints that only support simple POST.
 type simpleHTTPClient struct {
 	url    string
 	client *http.Client
@@ -311,7 +312,7 @@ func (c *simpleHTTPClient) IsConnected() bool {
 }
 
 func (c *simpleHTTPClient) Initialize(context.Context) error {
-	return nil // 已在 newSimpleHTTPClient 中完成
+	return nil // already completed in newSimpleHTTPClient
 }
 
 func (c *simpleHTTPClient) initialize(ctx context.Context) error {
@@ -334,7 +335,7 @@ func (c *simpleHTTPClient) initialize(ctx context.Context) error {
 	if resp.Error != nil {
 		return fmt.Errorf("initialize: %s (code %d)", resp.Error.Message, resp.Error.Code)
 	}
-	// 发送 notifications/initialized（协议要求）
+	// send notifications/initialized (required by protocol)
 	notify := &Message{
 		ID:      MessageID{value: nil},
 		Method:  "notifications/initialized",
@@ -434,8 +435,9 @@ func (c *simpleHTTPClient) Close() error {
 	return nil
 }
 
-// createSDKClient 根据配置创建并连接外部 MCP 客户端（使用官方 SDK），返回实现 ExternalMCPClient 的 *sdkClient
-// 若连接失败返回 (nil, error)。ctx 用于连接超时与取消。
+// createSDKClient creates and connects an external MCP client (using the official SDK) based on configuration,
+// returning a *sdkClient implementing ExternalMCPClient.
+// Returns (nil, error) on connection failure. ctx is used for connection timeout and cancellation.
 func createSDKClient(ctx context.Context, serverCfg config.ExternalMCPServerConfig, logger *zap.Logger) (ExternalMCPClient, error) {
 	timeout := time.Duration(serverCfg.Timeout) * time.Second
 	if timeout <= 0 {
@@ -449,7 +451,7 @@ func createSDKClient(ctx context.Context, serverCfg config.ExternalMCPServerConf
 		} else if serverCfg.URL != "" {
 			transport = "http"
 		} else {
-			return nil, fmt.Errorf("配置缺少 command 或 url")
+			return nil, fmt.Errorf("configuration missing command or url")
 		}
 	}
 
@@ -462,10 +464,11 @@ func createSDKClient(ctx context.Context, serverCfg config.ExternalMCPServerConf
 	switch transport {
 	case "stdio":
 		if serverCfg.Command == "" {
-			return nil, fmt.Errorf("stdio 模式需要配置 command")
+			return nil, fmt.Errorf("stdio mode requires command to be configured")
 		}
-		// 必须用 exec.Command 而非 CommandContext：doConnect 返回后 ctx 会被 cancel，
-		// 若用 CommandContext(ctx) 会立刻杀掉子进程，导致 ListTools 等后续请求失败、显示 0 工具
+		// must use exec.Command instead of CommandContext: ctx is cancelled after doConnect returns,
+		// using CommandContext(ctx) would immediately kill the child process, causing ListTools and other
+		// subsequent requests to fail and show 0 tools
 		cmd := exec.Command(serverCfg.Command, serverCfg.Args...)
 		if len(serverCfg.Env) > 0 {
 			cmd.Env = append(cmd.Env, envMapToSlice(serverCfg.Env)...)
@@ -473,7 +476,7 @@ func createSDKClient(ctx context.Context, serverCfg config.ExternalMCPServerConf
 		t = &mcp.CommandTransport{Command: cmd}
 	case "sse":
 		if serverCfg.URL == "" {
-			return nil, fmt.Errorf("sse 模式需要配置 url")
+			return nil, fmt.Errorf("sse mode requires url to be configured")
 		}
 		httpClient := httpClientWithTimeoutAndHeaders(timeout, serverCfg.Headers)
 		t = &mcp.SSEClientTransport{
@@ -482,7 +485,7 @@ func createSDKClient(ctx context.Context, serverCfg config.ExternalMCPServerConf
 		}
 	case "http":
 		if serverCfg.URL == "" {
-			return nil, fmt.Errorf("http 模式需要配置 url")
+			return nil, fmt.Errorf("http mode requires url to be configured")
 		}
 		httpClient := httpClientWithTimeoutAndHeaders(timeout, serverCfg.Headers)
 		t = &mcp.StreamableClientTransport{
@@ -490,18 +493,18 @@ func createSDKClient(ctx context.Context, serverCfg config.ExternalMCPServerConf
 			HTTPClient: httpClient,
 		}
 	case "simple_http":
-		// 简单 JSON-RPC HTTP：每次请求一次 POST、响应在 body。用于自建 MCP 或兼容旧端点（如 http://127.0.0.1:8081/mcp）
+		// simple JSON-RPC HTTP: each request is a single POST, response is in the body. For self-hosted MCP or legacy endpoints (e.g. http://127.0.0.1:8081/mcp)
 		if serverCfg.URL == "" {
-			return nil, fmt.Errorf("simple_http 模式需要配置 url")
+			return nil, fmt.Errorf("simple_http mode requires url to be configured")
 		}
 		return newSimpleHTTPClient(ctx, serverCfg.URL, timeout, serverCfg.Headers, logger)
 	default:
-		return nil, fmt.Errorf("不支持的传输模式: %s", transport)
+		return nil, fmt.Errorf("unsupported transport mode: %s", transport)
 	}
 
 	session, err := client.Connect(ctx, t, nil)
 	if err != nil {
-		return nil, fmt.Errorf("连接失败: %w", err)
+		return nil, fmt.Errorf("connection failed: %w", err)
 	}
 
 	return newSDKClientFromSession(session, client, logger), nil

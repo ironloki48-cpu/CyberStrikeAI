@@ -10,13 +10,13 @@ import (
 	"go.uber.org/zap"
 )
 
-// GroupHandler 分组处理器
+// GroupHandler is the group handler
 type GroupHandler struct {
 	db     *database.DB
 	logger *zap.Logger
 }
 
-// NewGroupHandler 创建新的分组处理器
+// NewGroupHandler creates a new group handler
 func NewGroupHandler(db *database.DB, logger *zap.Logger) *GroupHandler {
 	return &GroupHandler{
 		db:     db,
@@ -24,13 +24,13 @@ func NewGroupHandler(db *database.DB, logger *zap.Logger) *GroupHandler {
 	}
 }
 
-// CreateGroupRequest 创建分组请求
+// CreateGroupRequest is the create group request
 type CreateGroupRequest struct {
 	Name string `json:"name"`
 	Icon string `json:"icon"`
 }
 
-// CreateGroup 创建分组
+// CreateGroup creates a group
 func (h *GroupHandler) CreateGroup(c *gin.Context) {
 	var req CreateGroupRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -39,16 +39,16 @@ func (h *GroupHandler) CreateGroup(c *gin.Context) {
 	}
 
 	if req.Name == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "分组名称不能为空"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "group name cannot be empty"})
 		return
 	}
 
 	group, err := h.db.CreateGroup(req.Name, req.Icon)
 	if err != nil {
-		h.logger.Error("创建分组失败", zap.Error(err))
-		// 如果是名称重复错误，返回400状态码
-		if err.Error() == "分组名称已存在" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "分组名称已存在"})
+		h.logger.Error("failed to create group", zap.Error(err))
+		// if the name already exists, return 400
+		if err.Error() == "group name already exists" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "group name already exists"})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -58,11 +58,11 @@ func (h *GroupHandler) CreateGroup(c *gin.Context) {
 	c.JSON(http.StatusOK, group)
 }
 
-// ListGroups 列出所有分组
+// ListGroups lists all groups
 func (h *GroupHandler) ListGroups(c *gin.Context) {
 	groups, err := h.db.ListGroups()
 	if err != nil {
-		h.logger.Error("获取分组列表失败", zap.Error(err))
+		h.logger.Error("failed to get group list", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -70,27 +70,27 @@ func (h *GroupHandler) ListGroups(c *gin.Context) {
 	c.JSON(http.StatusOK, groups)
 }
 
-// GetGroup 获取分组
+// GetGroup gets a group
 func (h *GroupHandler) GetGroup(c *gin.Context) {
 	id := c.Param("id")
 
 	group, err := h.db.GetGroup(id)
 	if err != nil {
-		h.logger.Error("获取分组失败", zap.Error(err))
-		c.JSON(http.StatusNotFound, gin.H{"error": "分组不存在"})
+		h.logger.Error("failed to get group", zap.Error(err))
+		c.JSON(http.StatusNotFound, gin.H{"error": "group not found"})
 		return
 	}
 
 	c.JSON(http.StatusOK, group)
 }
 
-// UpdateGroupRequest 更新分组请求
+// UpdateGroupRequest is the update group request
 type UpdateGroupRequest struct {
 	Name string `json:"name"`
 	Icon string `json:"icon"`
 }
 
-// UpdateGroup 更新分组
+// UpdateGroup updates a group
 func (h *GroupHandler) UpdateGroup(c *gin.Context) {
 	id := c.Param("id")
 
@@ -101,15 +101,15 @@ func (h *GroupHandler) UpdateGroup(c *gin.Context) {
 	}
 
 	if req.Name == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "分组名称不能为空"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "group name cannot be empty"})
 		return
 	}
 
 	if err := h.db.UpdateGroup(id, req.Name, req.Icon); err != nil {
-		h.logger.Error("更新分组失败", zap.Error(err))
-		// 如果是名称重复错误，返回400状态码
-		if err.Error() == "分组名称已存在" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "分组名称已存在"})
+		h.logger.Error("failed to update group", zap.Error(err))
+		// if the name already exists, return 400
+		if err.Error() == "group name already exists" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "group name already exists"})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -118,7 +118,7 @@ func (h *GroupHandler) UpdateGroup(c *gin.Context) {
 
 	group, err := h.db.GetGroup(id)
 	if err != nil {
-		h.logger.Error("获取更新后的分组失败", zap.Error(err))
+		h.logger.Error("failed to get updated group", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -126,26 +126,26 @@ func (h *GroupHandler) UpdateGroup(c *gin.Context) {
 	c.JSON(http.StatusOK, group)
 }
 
-// DeleteGroup 删除分组
+// DeleteGroup deletes a group
 func (h *GroupHandler) DeleteGroup(c *gin.Context) {
 	id := c.Param("id")
 
 	if err := h.db.DeleteGroup(id); err != nil {
-		h.logger.Error("删除分组失败", zap.Error(err))
+		h.logger.Error("failed to delete group", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "删除成功"})
+	c.JSON(http.StatusOK, gin.H{"message": "deleted successfully"})
 }
 
-// AddConversationToGroupRequest 添加对话到分组请求
+// AddConversationToGroupRequest is the request to add a conversation to a group
 type AddConversationToGroupRequest struct {
 	ConversationID string `json:"conversationId"`
 	GroupID        string `json:"groupId"`
 }
 
-// AddConversationToGroup 将对话添加到分组
+// AddConversationToGroup adds a conversation to a group
 func (h *GroupHandler) AddConversationToGroup(c *gin.Context) {
 	var req AddConversationToGroupRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -154,29 +154,29 @@ func (h *GroupHandler) AddConversationToGroup(c *gin.Context) {
 	}
 
 	if err := h.db.AddConversationToGroup(req.ConversationID, req.GroupID); err != nil {
-		h.logger.Error("添加对话到分组失败", zap.Error(err))
+		h.logger.Error("failed to add conversation to group", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "添加成功"})
+	c.JSON(http.StatusOK, gin.H{"message": "added successfully"})
 }
 
-// RemoveConversationFromGroup 从分组中移除对话
+// RemoveConversationFromGroup removes a conversation from a group
 func (h *GroupHandler) RemoveConversationFromGroup(c *gin.Context) {
 	conversationID := c.Param("conversationId")
 	groupID := c.Param("id")
 
 	if err := h.db.RemoveConversationFromGroup(conversationID, groupID); err != nil {
-		h.logger.Error("从分组中移除对话失败", zap.Error(err))
+		h.logger.Error("failed to remove conversation from group", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "移除成功"})
+	c.JSON(http.StatusOK, gin.H{"message": "removed successfully"})
 }
 
-// GroupConversation 分组对话响应结构
+// GroupConversation is the group conversation response structure
 type GroupConversation struct {
 	ID          string    `json:"id"`
 	Title       string    `json:"title"`
@@ -186,15 +186,15 @@ type GroupConversation struct {
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
-// GetGroupConversations 获取分组中的所有对话
+// GetGroupConversations gets all conversations in a group
 func (h *GroupHandler) GetGroupConversations(c *gin.Context) {
 	groupID := c.Param("id")
-	searchQuery := c.Query("search") // 获取搜索参数
+	searchQuery := c.Query("search") // get search parameter
 
 	var conversations []*database.Conversation
 	var err error
 
-	// 如果有搜索关键词，使用搜索方法；否则使用普通方法
+	// if search keyword provided, use search method; otherwise use regular method
 	if searchQuery != "" {
 		conversations, err = h.db.SearchConversationsByGroup(groupID, searchQuery)
 	} else {
@@ -202,22 +202,22 @@ func (h *GroupHandler) GetGroupConversations(c *gin.Context) {
 	}
 
 	if err != nil {
-		h.logger.Error("获取分组对话失败", zap.Error(err))
+		h.logger.Error("failed to get group conversations", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	// 获取每个对话在分组中的置顶状态
+	// get the pinned status of each conversation within the group
 	groupConvs := make([]GroupConversation, 0, len(conversations))
 	for _, conv := range conversations {
-		// 查询分组内置顶状态
+		// query pinned status within the group
 		var groupPinned int
 		err := h.db.QueryRow(
 			"SELECT COALESCE(pinned, 0) FROM conversation_group_mappings WHERE conversation_id = ? AND group_id = ?",
 			conv.ID, groupID,
 		).Scan(&groupPinned)
 		if err != nil {
-			h.logger.Warn("查询分组内置顶状态失败", zap.String("conversationId", conv.ID), zap.Error(err))
+			h.logger.Warn("failed to query group pinned status", zap.String("conversationId", conv.ID), zap.Error(err))
 			groupPinned = 0
 		}
 
@@ -234,12 +234,12 @@ func (h *GroupHandler) GetGroupConversations(c *gin.Context) {
 	c.JSON(http.StatusOK, groupConvs)
 }
 
-// UpdateConversationPinnedRequest 更新对话置顶状态请求
+// UpdateConversationPinnedRequest is the update conversation pinned status request
 type UpdateConversationPinnedRequest struct {
 	Pinned bool `json:"pinned"`
 }
 
-// UpdateConversationPinned 更新对话置顶状态
+// UpdateConversationPinned updates the pinned status of a conversation
 func (h *GroupHandler) UpdateConversationPinned(c *gin.Context) {
 	conversationID := c.Param("id")
 
@@ -250,20 +250,20 @@ func (h *GroupHandler) UpdateConversationPinned(c *gin.Context) {
 	}
 
 	if err := h.db.UpdateConversationPinned(conversationID, req.Pinned); err != nil {
-		h.logger.Error("更新对话置顶状态失败", zap.Error(err))
+		h.logger.Error("failed to update conversation pinned status", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "更新成功"})
+	c.JSON(http.StatusOK, gin.H{"message": "updated successfully"})
 }
 
-// UpdateGroupPinnedRequest 更新分组置顶状态请求
+// UpdateGroupPinnedRequest is the update group pinned status request
 type UpdateGroupPinnedRequest struct {
 	Pinned bool `json:"pinned"`
 }
 
-// UpdateGroupPinned 更新分组置顶状态
+// UpdateGroupPinned updates the pinned status of a group
 func (h *GroupHandler) UpdateGroupPinned(c *gin.Context) {
 	groupID := c.Param("id")
 
@@ -274,20 +274,20 @@ func (h *GroupHandler) UpdateGroupPinned(c *gin.Context) {
 	}
 
 	if err := h.db.UpdateGroupPinned(groupID, req.Pinned); err != nil {
-		h.logger.Error("更新分组置顶状态失败", zap.Error(err))
+		h.logger.Error("failed to update group pinned status", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "更新成功"})
+	c.JSON(http.StatusOK, gin.H{"message": "updated successfully"})
 }
 
-// UpdateConversationPinnedInGroupRequest 更新分组对话置顶状态请求
+// UpdateConversationPinnedInGroupRequest is the update conversation pinned status in group request
 type UpdateConversationPinnedInGroupRequest struct {
 	Pinned bool `json:"pinned"`
 }
 
-// UpdateConversationPinnedInGroup 更新对话在分组中的置顶状态
+// UpdateConversationPinnedInGroup updates the pinned status of a conversation within a group
 func (h *GroupHandler) UpdateConversationPinnedInGroup(c *gin.Context) {
 	groupID := c.Param("id")
 	conversationID := c.Param("conversationId")
@@ -299,10 +299,10 @@ func (h *GroupHandler) UpdateConversationPinnedInGroup(c *gin.Context) {
 	}
 
 	if err := h.db.UpdateConversationPinnedInGroup(conversationID, groupID, req.Pinned); err != nil {
-		h.logger.Error("更新分组对话置顶状态失败", zap.Error(err))
+		h.logger.Error("failed to update group conversation pinned status", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "更新成功"})
+	c.JSON(http.StatusOK, gin.H{"message": "updated successfully"})
 }

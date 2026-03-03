@@ -15,14 +15,14 @@ import (
 	"go.uber.org/zap"
 )
 
-// Client 统一封装与OpenAI兼容模型交互的HTTP客户端。
+// Client is a unified HTTP client for interacting with OpenAI-compatible models.
 type Client struct {
 	httpClient *http.Client
 	config     *config.OpenAIConfig
 	logger     *zap.Logger
 }
 
-// APIError 表示OpenAI接口返回的非200错误。
+// APIError represents a non-200 error returned by the OpenAI API.
 type APIError struct {
 	StatusCode int
 	Body       string
@@ -32,7 +32,7 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("openai api error: status=%d body=%s", e.StatusCode, e.Body)
 }
 
-// NewClient 创建一个新的OpenAI客户端。
+// NewClient creates a new OpenAI client.
 func NewClient(cfg *config.OpenAIConfig, httpClient *http.Client, logger *zap.Logger) *Client {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
@@ -47,12 +47,12 @@ func NewClient(cfg *config.OpenAIConfig, httpClient *http.Client, logger *zap.Lo
 	}
 }
 
-// UpdateConfig 动态更新OpenAI配置。
+// UpdateConfig dynamically updates the OpenAI configuration.
 func (c *Client) UpdateConfig(cfg *config.OpenAIConfig) {
 	c.config = cfg
 }
 
-// ChatCompletion 调用 /chat/completions 接口。
+// ChatCompletion calls the /chat/completions endpoint.
 func (c *Client) ChatCompletion(ctx context.Context, payload interface{}, out interface{}) error {
 	if c == nil {
 		return fmt.Errorf("openai client is not initialized")

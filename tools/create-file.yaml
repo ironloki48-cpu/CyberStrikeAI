@@ -27,37 +27,37 @@ args:
     else:
         path.write_text(content, encoding="utf-8")
 
-    print(f"文件已创建: {path}")
+    print(f"File created: {path}")
 enabled: true
-short_description: "创建文件工具"
+short_description: "File creation tool"
 description: |
-  在服务器上创建指定内容的文件。
+  Create files with specified content on the server.
 
-  **主要功能：**
-  - 创建文件
-  - 写入内容
-  - 支持二进制文件
+  **Key Features:**
+  - Create files
+  - Write content
+  - Support for binary files
 
-  **使用场景：**
-  - 文件创建
-  - 脚本生成
-  - 数据保存
+  **Use Cases:**
+  - File creation
+  - Script generation
+  - Data saving
 parameters:
   - name: "filename"
     type: "string"
-    description: "要创建的文件名"
+    description: "Filename to create"
     required: true
     position: 0
     format: "positional"
   - name: "content"
     type: "string"
-    description: "文件内容"
+    description: "File content"
     required: true
     position: 1
     format: "positional"
   - name: "binary"
     type: "bool"
-    description: "内容是否为Base64编码的二进制"
+    description: "Whether content is Base64-encoded binary"
     required: false
     position: 2
     format: "positional"
@@ -65,14 +65,14 @@ parameters:
   - name: "additional_args"
     type: "string"
     description: |
-      额外的create-file参数。用于传递未在参数列表中定义的create-file选项。
+      Additional create-file parameters. Used to pass create-file options not defined in the parameter list.
 
-      **示例值：**
-      - 根据工具特性添加常用参数示例
+      **Example values:**
+      - Add common parameter examples based on tool characteristics
 
-      **注意事项：**
-      - 多个参数用空格分隔
-      - 确保参数格式正确，避免命令注入
-      - 此参数会直接追加到命令末尾
+      **Notes:**
+      - Multiple parameters separated by spaces
+      - Ensure parameter format is correct to avoid command injection
+      - This parameter will be appended directly to the end of the command
     required: false
     format: "positional"

@@ -19,7 +19,7 @@ function saveAuth(token, expiresAt) {
             expiresAt: expiry.toISOString(),
         }));
     } catch (error) {
-        console.warn('无法持久化认证信息:', error);
+        console.warn('Unable to persist authentication info:', error);
     }
 }
 
@@ -29,7 +29,7 @@ function clearAuthStorage() {
     try {
         localStorage.removeItem(AUTH_STORAGE_KEY);
     } catch (error) {
-        console.warn('无法清除认证信息:', error);
+        console.warn('Unable to clear authentication info:', error);
     }
 }
 
@@ -53,7 +53,7 @@ function loadAuthFromStorage() {
         authTokenExpiry = expiry;
         return isTokenValid();
     } catch (error) {
-        console.error('读取认证信息失败:', error);
+        console.error('Failed to read authentication info:', error);
         clearAuthStorage();
         return false;
     }
@@ -123,7 +123,7 @@ async function ensureAuthenticated() {
     return true;
 }
 
-function handleUnauthorized({ message = '认证已过期，请重新登录', silent = false } = {}) {
+function handleUnauthorized({ message = 'Session expired, please log in again', silent = false } = {}) {
     clearAuthStorage();
     authPromise = null;
     authPromiseResolvers = [];
@@ -147,7 +147,7 @@ async function apiFetch(url, options = {}) {
     const response = await fetch(url, opts);
     if (response.status === 401) {
         handleUnauthorized();
-        throw new Error('未授权访问');
+        throw new Error('Unauthorized access');
     }
     return response;
 }
@@ -165,7 +165,7 @@ async function submitLogin(event) {
     const password = passwordInput.value.trim();
     if (!password) {
         if (errorBox) {
-            errorBox.textContent = '请输入密码';
+            errorBox.textContent = 'Please enter your password';
             errorBox.style.display = 'block';
         }
         return;
@@ -186,7 +186,7 @@ async function submitLogin(event) {
         const result = await response.json().catch(() => ({}));
         if (!response.ok || !result.token) {
             if (errorBox) {
-                errorBox.textContent = result.error || '登录失败，请检查密码';
+                errorBox.textContent = result.error || 'Login failed, please check your password';
                 errorBox.style.display = 'block';
             }
             return;
@@ -201,9 +201,9 @@ async function submitLogin(event) {
             await refreshAppData();
         }
     } catch (error) {
-        console.error('登录失败:', error);
+        console.error('Login failed:', error);
         if (errorBox) {
-            errorBox.textContent = '登录失败，请稍后重试';
+            errorBox.textContent = 'Login failed, please try again later';
             errorBox.style.display = 'block';
         }
     } finally {
@@ -228,13 +228,13 @@ async function bootstrapApp() {
     await refreshAppData();
 }
 
-// 通用工具函数
+// General utility functions
 function getStatusText(status) {
     const statusMap = {
-        'pending': '等待中',
-        'running': '执行中',
-        'completed': '已完成',
-        'failed': '失败'
+        'pending': 'Pending',
+        'running': 'Running',
+        'completed': 'Completed',
+        'failed': 'Failed'
     };
     return statusMap[status] || status;
 }
@@ -245,11 +245,11 @@ function formatDuration(ms) {
     const hours = Math.floor(minutes / 60);
     
     if (hours > 0) {
-        return `${hours}小时${minutes % 60}分钟`;
+        return `${hours}h ${minutes % 60}m`;
     } else if (minutes > 0) {
-        return `${minutes}分钟${seconds % 60}秒`;
+        return `${minutes}m ${seconds % 60}s`;
     } else {
-        return `${seconds}秒`;
+        return `${seconds}s`;
     }
 }
 
@@ -276,7 +276,7 @@ function formatMarkdown(text) {
                 let parsedContent = marked.parse(text);
                 return DOMPurify.sanitize(parsedContent, sanitizeConfig);
             } catch (e) {
-                console.error('Markdown 解析失败:', e);
+                console.error('Markdown parsing failed:', e);
                 return DOMPurify.sanitize(text, sanitizeConfig);
             }
         } else {
@@ -290,7 +290,7 @@ function formatMarkdown(text) {
             });
             return marked.parse(text);
         } catch (e) {
-            console.error('Markdown 解析失败:', e);
+            console.error('Markdown parsing failed:', e);
             return escapeHtml(text).replace(/\n/g, '<br>');
         }
     } else {
@@ -320,7 +320,7 @@ async function initializeApp() {
                 return;
             }
         } catch (error) {
-            console.warn('本地会话已失效，需重新登录');
+            console.warn('Local session has expired, please log in again');
         }
     }
 
@@ -328,7 +328,7 @@ async function initializeApp() {
     showLoginOverlay();
 }
 
-// 用户菜单控制
+// User menu control
 function toggleUserMenu() {
     const dropdown = document.getElementById('user-menu-dropdown');
     if (!dropdown) return;
@@ -337,7 +337,7 @@ function toggleUserMenu() {
     dropdown.style.display = isVisible ? 'none' : 'block';
 }
 
-// 点击页面其他地方时关闭下拉菜单
+// Close the dropdown menu when clicking elsewhere on the page
 document.addEventListener('click', function(event) {
     const dropdown = document.getElementById('user-menu-dropdown');
     const avatarBtn = document.querySelector('.user-avatar-btn');
@@ -349,16 +349,16 @@ document.addEventListener('click', function(event) {
     }
 });
 
-// 退出登录
+// Logout
 async function logout() {
-    // 关闭下拉菜单
+    // Close the dropdown menu
     const dropdown = document.getElementById('user-menu-dropdown');
     if (dropdown) {
         dropdown.style.display = 'none';
     }
     
     try {
-        // 先尝试调用退出API（如果token有效）
+        // First attempt to call the logout API (if token is valid)
         if (authToken) {
             const headers = new Headers();
             headers.set('Authorization', `Bearer ${authToken}`);
@@ -366,20 +366,20 @@ async function logout() {
                 method: 'POST',
                 headers: headers,
             }).catch(() => {
-                // 忽略错误，继续清除本地认证信息
+                // Ignore errors and continue clearing local auth info
             });
         }
     } catch (error) {
-        console.error('退出登录API调用失败:', error);
+        console.error('Logout API call failed:', error);
     } finally {
-        // 无论如何都清除本地认证信息
+        // Always clear local authentication info
         clearAuthStorage();
         hideLoginOverlay();
-        showLoginOverlay('已退出登录');
+        showLoginOverlay('Logged out successfully');
     }
 }
 
-// 导出函数供HTML使用
+// Export functions for HTML use
 window.toggleUserMenu = toggleUserMenu;
 window.logout = logout;
 

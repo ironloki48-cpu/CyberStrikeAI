@@ -12,7 +12,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// RegisterSkillsTool 注册Skills工具到MCP服务器
+// RegisterSkillsTool registers Skills tools with the MCP server
 func RegisterSkillsTool(
 	mcpServer *mcp.Server,
 	manager *Manager,
@@ -21,18 +21,18 @@ func RegisterSkillsTool(
 	RegisterSkillsToolWithStorage(mcpServer, manager, nil, logger)
 }
 
-// RegisterSkillsToolWithStorage 注册Skills工具到MCP服务器（带存储支持）
+// RegisterSkillsToolWithStorage registers Skills tools with the MCP server (with storage support)
 func RegisterSkillsToolWithStorage(
 	mcpServer *mcp.Server,
 	manager *Manager,
 	storage SkillStatsStorage,
 	logger *zap.Logger,
 ) {
-	// 注册第一个工具：获取所有可用的skills列表
+	// register first tool: list all available skills
 	listSkillsTool := mcp.Tool{
 		Name:             builtin.ToolListSkills,
-		Description:      "获取所有可用的skills列表。Skills是专业知识文档，可以在执行任务前阅读以获取相关专业知识。使用此工具可以查看系统中所有可用的skills，然后使用read_skill工具读取特定skill的内容。",
-		ShortDescription: "获取所有可用的skills列表",
+		Description:      "Get a list of all available skills. Skills are professional knowledge documents that can be read before executing tasks to obtain relevant expertise. Use this tool to view all available skills in the system, then use the read_skill tool to read the content of a specific skill.",
+		ShortDescription: "Get a list of all available skills",
 		InputSchema: map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -43,12 +43,12 @@ func RegisterSkillsToolWithStorage(
 	listSkillsHandler := func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
 		skills, err := manager.ListSkills()
 		if err != nil {
-			logger.Error("获取skills列表失败", zap.Error(err))
+			logger.Error("failed to get skills list", zap.Error(err))
 			return &mcp.ToolResult{
 				Content: []mcp.Content{
 					{
 						Type: "text",
-						Text: fmt.Sprintf("获取skills列表失败: %v", err),
+						Text: fmt.Sprintf("failed to get skills list: %v", err),
 					},
 				},
 				IsError: true,
@@ -60,7 +60,7 @@ func RegisterSkillsToolWithStorage(
 				Content: []mcp.Content{
 					{
 						Type: "text",
-						Text: "当前没有可用的skills。\n\nSkills是专业知识文档，可以在执行任务前阅读以获取相关专业知识。你可以在skills目录下创建新的skill。",
+						Text: "No skills are currently available.\n\nSkills are professional knowledge documents that can be read before executing tasks to obtain relevant expertise. You can create new skills in the skills directory.",
 					},
 				},
 				IsError: false,
@@ -68,12 +68,12 @@ func RegisterSkillsToolWithStorage(
 		}
 
 		var result strings.Builder
-		result.WriteString(fmt.Sprintf("共有 %d 个可用的skills：\n\n", len(skills)))
+		result.WriteString(fmt.Sprintf("There are %d available skills:\n\n", len(skills)))
 		for i, skill := range skills {
 			result.WriteString(fmt.Sprintf("%d. %s\n", i+1, skill))
 		}
-		result.WriteString("\n使用 read_skill 工具可以读取特定skill的详细内容。\n")
-		result.WriteString("例如：read_skill(skill_name=\"sql-injection-testing\")")
+		result.WriteString("\nUse the read_skill tool to read the detailed content of a specific skill.\n")
+		result.WriteString("Example: read_skill(skill_name=\"sql-injection-testing\")")
 
 		return &mcp.ToolResult{
 			Content: []mcp.Content{
@@ -87,19 +87,19 @@ func RegisterSkillsToolWithStorage(
 	}
 
 	mcpServer.RegisterTool(listSkillsTool, listSkillsHandler)
-	logger.Info("注册skills列表工具成功")
+	logger.Info("registered skills list tool successfully")
 
-	// 注册第二个工具：读取特定skill的内容
+	// register second tool: read the content of a specific skill
 	readSkillTool := mcp.Tool{
 		Name:             builtin.ToolReadSkill,
-		Description:      "读取指定skill的详细内容。Skills是专业知识文档，包含测试方法、工具使用、最佳实践等。在执行相关任务前，可以调用此工具读取相关skill的内容，以获取专业知识和指导。",
-		ShortDescription: "读取指定skill的详细内容",
+		Description:      "Read the detailed content of a specified skill. Skills are professional knowledge documents containing testing methods, tool usage, best practices, etc. Before executing related tasks, you can call this tool to read the relevant skill content to obtain professional knowledge and guidance.",
+		ShortDescription: "Read the detailed content of a specified skill",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"skill_name": map[string]interface{}{
 					"type":        "string",
-					"description": "要读取的skill名称（必需）。可以使用list_skills工具获取所有可用的skill名称。",
+					"description": "The name of the skill to read (required). You can use the list_skills tool to get all available skill names.",
 				},
 			},
 			"required": []string{"skill_name"},
@@ -113,7 +113,7 @@ func RegisterSkillsToolWithStorage(
 				Content: []mcp.Content{
 					{
 						Type: "text",
-						Text: "错误: skill_name 参数必需且不能为空。请使用list_skills工具获取所有可用的skill名称。",
+						Text: "Error: skill_name parameter is required and cannot be empty. Please use the list_skills tool to get all available skill names.",
 					},
 				},
 				IsError: true,
@@ -124,7 +124,7 @@ func RegisterSkillsToolWithStorage(
 		failed := err != nil
 		now := time.Now()
 
-		// 记录调用统计
+		// record call statistics
 		if storage != nil {
 			totalCalls := 1
 			successCalls := 0
@@ -135,25 +135,25 @@ func RegisterSkillsToolWithStorage(
 				successCalls = 1
 			}
 			if err := storage.UpdateSkillStats(skillName, totalCalls, successCalls, failedCalls, &now); err != nil {
-				logger.Warn("保存Skills统计信息失败", zap.String("skill", skillName), zap.Error(err))
+				logger.Warn("failed to save skills statistics", zap.String("skill", skillName), zap.Error(err))
 			} else {
-				logger.Info("Skills统计信息已更新",
+				logger.Info("skills statistics updated",
 					zap.String("skill", skillName),
 					zap.Int("totalCalls", totalCalls),
 					zap.Int("successCalls", successCalls),
 					zap.Int("failedCalls", failedCalls))
 			}
 		} else {
-			logger.Warn("Skills统计存储未配置，无法记录调用统计", zap.String("skill", skillName))
+			logger.Warn("skills stats storage not configured, cannot record call statistics", zap.String("skill", skillName))
 		}
 
 		if err != nil {
-			logger.Warn("读取skill失败", zap.String("skill", skillName), zap.Error(err))
+			logger.Warn("failed to read skill", zap.String("skill", skillName), zap.Error(err))
 			return &mcp.ToolResult{
 				Content: []mcp.Content{
 					{
 						Type: "text",
-						Text: fmt.Sprintf("读取skill失败: %v\n\n请使用list_skills工具确认skill名称是否正确。", err),
+						Text: fmt.Sprintf("failed to read skill: %v\n\nPlease use the list_skills tool to verify the skill name is correct.", err),
 					},
 				},
 				IsError: true,
@@ -163,12 +163,12 @@ func RegisterSkillsToolWithStorage(
 		var result strings.Builder
 		result.WriteString(fmt.Sprintf("## Skill: %s\n\n", skill.Name))
 		if skill.Description != "" {
-			result.WriteString(fmt.Sprintf("**描述**: %s\n\n", skill.Description))
+			result.WriteString(fmt.Sprintf("**Description**: %s\n\n", skill.Description))
 		}
 		result.WriteString("---\n\n")
 		result.WriteString(skill.Content)
 		result.WriteString("\n\n---\n\n")
-		result.WriteString(fmt.Sprintf("*Skill路径: %s*", skill.Path))
+		result.WriteString(fmt.Sprintf("*Skill path: %s*", skill.Path))
 
 		return &mcp.ToolResult{
 			Content: []mcp.Content{
@@ -182,16 +182,16 @@ func RegisterSkillsToolWithStorage(
 	}
 
 	mcpServer.RegisterTool(readSkillTool, readSkillHandler)
-	logger.Info("注册skill读取工具成功")
+	logger.Info("registered skill read tool successfully")
 }
 
-// SkillStatsStorage Skills统计存储接口
+// SkillStatsStorage is the skills stats storage interface
 type SkillStatsStorage interface {
 	UpdateSkillStats(skillName string, totalCalls, successCalls, failedCalls int, lastCallTime *time.Time) error
 	LoadSkillStats() (map[string]*SkillStats, error)
 }
 
-// SkillStats Skills统计信息
+// SkillStats contains skills statistics information
 type SkillStats struct {
 	SkillName    string
 	TotalCalls   int

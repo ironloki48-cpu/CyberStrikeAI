@@ -13,7 +13,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// KnowledgeHandler 知识库处理器
+// KnowledgeHandler handles knowledge base operations
 type KnowledgeHandler struct {
 	manager   *knowledge.Manager
 	retriever *knowledge.Retriever
@@ -22,7 +22,7 @@ type KnowledgeHandler struct {
 	logger    *zap.Logger
 }
 
-// NewKnowledgeHandler 创建新的知识库处理器
+// NewKnowledgeHandler creates a new knowledge base handler
 func NewKnowledgeHandler(
 	manager *knowledge.Manager,
 	retriever *knowledge.Retriever,
@@ -39,11 +39,11 @@ func NewKnowledgeHandler(
 	}
 }
 
-// GetCategories 获取所有分类
+// GetCategories retrieves all categories
 func (h *KnowledgeHandler) GetCategories(c *gin.Context) {
 	categories, err := h.manager.GetCategories()
 	if err != nil {
-		h.logger.Error("获取分类失败", zap.Error(err))
+		h.logger.Error("failed to get categories", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -51,31 +51,31 @@ func (h *KnowledgeHandler) GetCategories(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"categories": categories})
 }
 
-// GetItems 获取知识项列表（支持按分类分页和关键字搜索，默认不返回完整内容）
+// GetItems retrieves the knowledge item list (supports category-based pagination and keyword search, does not return full content by default)
 func (h *KnowledgeHandler) GetItems(c *gin.Context) {
 	category := c.Query("category")
-	searchKeyword := c.Query("search") // 搜索关键字
+	searchKeyword := c.Query("search") // search keyword
 
-	// 如果提供了搜索关键字，执行关键字搜索（在所有数据中搜索）
+	// if a search keyword is provided, perform keyword search (across all data)
 	if searchKeyword != "" {
 		items, err := h.manager.SearchItemsByKeyword(searchKeyword, category)
 		if err != nil {
-			h.logger.Error("搜索知识项失败", zap.Error(err))
+			h.logger.Error("failed to search knowledge items", zap.Error(err))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
 
-		// 按分类分组结果
+		// group results by category
 		groupedByCategory := make(map[string][]*knowledge.KnowledgeItemSummary)
 		for _, item := range items {
 			cat := item.Category
 			if cat == "" {
-				cat = "未分类"
+				cat = "Uncategorized"
 			}
 			groupedByCategory[cat] = append(groupedByCategory[cat], item)
 		}
 
-		// 转换为CategoryWithItems格式
+		// convert to CategoryWithItems format
 		categoriesWithItems := make([]*knowledge.CategoryWithItems, 0, len(groupedByCategory))
 		for cat, catItems := range groupedByCategory {
 			categoriesWithItems = append(categoriesWithItems, &knowledge.CategoryWithItems{
@@ -85,7 +85,7 @@ func (h *KnowledgeHandler) GetItems(c *gin.Context) {
 			})
 		}
 
-		// 按分类名称排序
+		// sort by category name
 		for i := 0; i < len(categoriesWithItems)-1; i++ {
 			for j := i + 1; j < len(categoriesWithItems); j++ {
 				if categoriesWithItems[i].Category > categoriesWithItems[j].Category {
@@ -103,11 +103,11 @@ func (h *KnowledgeHandler) GetItems(c *gin.Context) {
 		return
 	}
 
-	// 分页模式：categoryPage=true 表示按分类分页，否则按项分页（向后兼容）
-	categoryPageMode := c.Query("categoryPage") != "false" // 默认使用分类分页
+	// pagination mode: categoryPage=true means category-based pagination, otherwise item-based pagination (backward compatible)
+	categoryPageMode := c.Query("categoryPage") != "false" // default: use category pagination
 
-	// 分页参数
-	limit := 50 // 默认每页50条（分类分页时为分类数，项分页时为项数）
+	// pagination parameters
+	limit := 50 // default 50 items per page (categories when in category pagination mode, items when in item pagination mode)
 	offset := 0
 	if limitStr := c.Query("limit"); limitStr != "" {
 		if parsed, err := parseInt(limitStr); err == nil && parsed > 0 && parsed <= 500 {
@@ -120,17 +120,17 @@ func (h *KnowledgeHandler) GetItems(c *gin.Context) {
 		}
 	}
 
-	// 如果指定了category参数，且使用分类分页模式，则只返回该分类
+	// if a category parameter is specified and category pagination mode is on, return only that category
 	if category != "" && categoryPageMode {
-		// 单分类模式：返回该分类的所有知识项（不分页）
+		// single category mode: return all knowledge items in that category (no pagination)
 		items, total, err := h.manager.GetItemsSummary(category, 0, 0)
 		if err != nil {
-			h.logger.Error("获取知识项失败", zap.Error(err))
+			h.logger.Error("failed to get knowledge items", zap.Error(err))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
 
-		// 包装成分类结构
+		// wrap in category structure
 		categoriesWithItems := []*knowledge.CategoryWithItems{
 			{
 				Category:  category,
@@ -141,7 +141,7 @@ func (h *KnowledgeHandler) GetItems(c *gin.Context) {
 
 		c.JSON(http.StatusOK, gin.H{
 			"categories": categoriesWithItems,
-			"total":      1, // 只有一个分类
+			"total":      1, // only one category
 			"limit":      limit,
 			"offset":     offset,
 		})
@@ -149,15 +149,15 @@ func (h *KnowledgeHandler) GetItems(c *gin.Context) {
 	}
 
 	if categoryPageMode {
-		// 按分类分页模式（默认）
-		// limit表示每页分类数，推荐5-10个分类
+		// category pagination mode (default)
+		// limit represents the number of categories per page, recommended 5-10 categories
 		if limit <= 0 || limit > 100 {
-			limit = 10 // 默认每页10个分类
+			limit = 10 // default 10 categories per page
 		}
 
 		categoriesWithItems, totalCategories, err := h.manager.GetCategoriesWithItems(limit, offset)
 		if err != nil {
-			h.logger.Error("获取分类知识项失败", zap.Error(err))
+			h.logger.Error("failed to get categories with items", zap.Error(err))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
@@ -171,23 +171,23 @@ func (h *KnowledgeHandler) GetItems(c *gin.Context) {
 		return
 	}
 
-	// 按项分页模式（向后兼容）
-	// 是否包含完整内容（默认false，只返回摘要）
+	// item pagination mode (backward compatible)
+	// whether to include full content (default false, return summary only)
 	includeContent := c.Query("includeContent") == "true"
 
 	if includeContent {
-		// 返回完整内容（向后兼容）
+		// return full content (backward compatible)
 		items, err := h.manager.GetItemsWithOptions(category, limit, offset, true)
 		if err != nil {
-			h.logger.Error("获取知识项失败", zap.Error(err))
+			h.logger.Error("failed to get knowledge items", zap.Error(err))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
 
-		// 获取总数
+		// get total count
 		total, err := h.manager.GetItemsCount(category)
 		if err != nil {
-			h.logger.Warn("获取知识项总数失败", zap.Error(err))
+			h.logger.Warn("failed to get total knowledge item count", zap.Error(err))
 			total = len(items)
 		}
 
@@ -198,10 +198,10 @@ func (h *KnowledgeHandler) GetItems(c *gin.Context) {
 			"offset": offset,
 		})
 	} else {
-		// 返回摘要（不包含完整内容，推荐方式）
+		// return summary (without full content, recommended approach)
 		items, total, err := h.manager.GetItemsSummary(category, limit, offset)
 		if err != nil {
-			h.logger.Error("获取知识项失败", zap.Error(err))
+			h.logger.Error("failed to get knowledge items", zap.Error(err))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
@@ -215,13 +215,13 @@ func (h *KnowledgeHandler) GetItems(c *gin.Context) {
 	}
 }
 
-// GetItem 获取单个知识项
+// GetItem retrieves a single knowledge item
 func (h *KnowledgeHandler) GetItem(c *gin.Context) {
 	id := c.Param("id")
 
 	item, err := h.manager.GetItem(id)
 	if err != nil {
-		h.logger.Error("获取知识项失败", zap.Error(err))
+		h.logger.Error("failed to get knowledge item", zap.Error(err))
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
 	}
@@ -229,7 +229,7 @@ func (h *KnowledgeHandler) GetItem(c *gin.Context) {
 	c.JSON(http.StatusOK, item)
 }
 
-// CreateItem 创建知识项
+// CreateItem creates a knowledge item
 func (h *KnowledgeHandler) CreateItem(c *gin.Context) {
 	var req struct {
 		Category string `json:"category" binding:"required"`
@@ -244,23 +244,23 @@ func (h *KnowledgeHandler) CreateItem(c *gin.Context) {
 
 	item, err := h.manager.CreateItem(req.Category, req.Title, req.Content)
 	if err != nil {
-		h.logger.Error("创建知识项失败", zap.Error(err))
+		h.logger.Error("failed to create knowledge item", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	// 异步索引
+	// async indexing
 	go func() {
 		ctx := context.Background()
 		if err := h.indexer.IndexItem(ctx, item.ID); err != nil {
-			h.logger.Warn("索引知识项失败", zap.String("itemId", item.ID), zap.Error(err))
+			h.logger.Warn("failed to index knowledge item", zap.String("itemId", item.ID), zap.Error(err))
 		}
 	}()
 
 	c.JSON(http.StatusOK, item)
 }
 
-// UpdateItem 更新知识项
+// UpdateItem updates a knowledge item
 func (h *KnowledgeHandler) UpdateItem(c *gin.Context) {
 	id := c.Param("id")
 
@@ -277,66 +277,66 @@ func (h *KnowledgeHandler) UpdateItem(c *gin.Context) {
 
 	item, err := h.manager.UpdateItem(id, req.Category, req.Title, req.Content)
 	if err != nil {
-		h.logger.Error("更新知识项失败", zap.Error(err))
+		h.logger.Error("failed to update knowledge item", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	// 异步重新索引
+	// async re-indexing
 	go func() {
 		ctx := context.Background()
 		if err := h.indexer.IndexItem(ctx, item.ID); err != nil {
-			h.logger.Warn("重新索引知识项失败", zap.String("itemId", item.ID), zap.Error(err))
+			h.logger.Warn("failed to re-index knowledge item", zap.String("itemId", item.ID), zap.Error(err))
 		}
 	}()
 
 	c.JSON(http.StatusOK, item)
 }
 
-// DeleteItem 删除知识项
+// DeleteItem deletes a knowledge item
 func (h *KnowledgeHandler) DeleteItem(c *gin.Context) {
 	id := c.Param("id")
 
 	if err := h.manager.DeleteItem(id); err != nil {
-		h.logger.Error("删除知识项失败", zap.Error(err))
+		h.logger.Error("failed to delete knowledge item", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "删除成功"})
+	c.JSON(http.StatusOK, gin.H{"message": "deleted successfully"})
 }
 
-// RebuildIndex 重建索引
+// RebuildIndex rebuilds the index
 func (h *KnowledgeHandler) RebuildIndex(c *gin.Context) {
-	// 异步重建索引
+	// async index rebuild
 	go func() {
 		ctx := context.Background()
 		if err := h.indexer.RebuildIndex(ctx); err != nil {
-			h.logger.Error("重建索引失败", zap.Error(err))
+			h.logger.Error("failed to rebuild index", zap.Error(err))
 		}
 	}()
 
-	c.JSON(http.StatusOK, gin.H{"message": "索引重建已开始，将在后台进行"})
+	c.JSON(http.StatusOK, gin.H{"message": "index rebuild started, running in the background"})
 }
 
-// ScanKnowledgeBase 扫描知识库
+// ScanKnowledgeBase scans the knowledge base
 func (h *KnowledgeHandler) ScanKnowledgeBase(c *gin.Context) {
 	itemsToIndex, err := h.manager.ScanKnowledgeBase()
 	if err != nil {
-		h.logger.Error("扫描知识库失败", zap.Error(err))
+		h.logger.Error("failed to scan knowledge base", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	if len(itemsToIndex) == 0 {
-		c.JSON(http.StatusOK, gin.H{"message": "扫描完成，没有需要索引的新项或更新项"})
+		c.JSON(http.StatusOK, gin.H{"message": "scan complete, no new or updated items to index"})
 		return
 	}
 
-	// 异步索引新添加或更新的项（增量索引）
+	// async index newly added or updated items (incremental indexing)
 	go func() {
 		ctx := context.Background()
-		h.logger.Info("开始增量索引", zap.Int("count", len(itemsToIndex)))
+		h.logger.Info("starting incremental indexing", zap.Int("count", len(itemsToIndex)))
 		failedCount := 0
 		consecutiveFailures := 0
 		var firstFailureItemID string
@@ -347,20 +347,20 @@ func (h *KnowledgeHandler) ScanKnowledgeBase(c *gin.Context) {
 				failedCount++
 				consecutiveFailures++
 
-				// 只在第一个失败时记录详细日志
+				// only log details on first failure
 				if consecutiveFailures == 1 {
 					firstFailureItemID = itemID
 					firstFailureError = err
-					h.logger.Warn("索引知识项失败",
+					h.logger.Warn("failed to index knowledge item",
 						zap.String("itemId", itemID),
 						zap.Int("totalItems", len(itemsToIndex)),
 						zap.Error(err),
 					)
 				}
 
-				// 如果连续失败2次，立即停止增量索引
+				// if there are 2 consecutive failures, stop incremental indexing immediately
 				if consecutiveFailures >= 2 {
-					h.logger.Error("连续索引失败次数过多，立即停止增量索引",
+					h.logger.Error("too many consecutive indexing failures, stopping incremental indexing immediately",
 						zap.Int("consecutiveFailures", consecutiveFailures),
 						zap.Int("totalItems", len(itemsToIndex)),
 						zap.Int("processedItems", i+1),
@@ -372,32 +372,32 @@ func (h *KnowledgeHandler) ScanKnowledgeBase(c *gin.Context) {
 				continue
 			}
 
-			// 成功时重置连续失败计数
+			// reset consecutive failure count on success
 			if consecutiveFailures > 0 {
 				consecutiveFailures = 0
 				firstFailureItemID = ""
 				firstFailureError = nil
 			}
 
-			// 减少进度日志频率
+			// reduce progress log frequency
 			if (i+1)%10 == 0 || i+1 == len(itemsToIndex) {
-				h.logger.Info("索引进度", zap.Int("current", i+1), zap.Int("total", len(itemsToIndex)), zap.Int("failed", failedCount))
+				h.logger.Info("indexing progress", zap.Int("current", i+1), zap.Int("total", len(itemsToIndex)), zap.Int("failed", failedCount))
 			}
 		}
-		h.logger.Info("增量索引完成", zap.Int("totalItems", len(itemsToIndex)), zap.Int("failedCount", failedCount))
+		h.logger.Info("incremental indexing complete", zap.Int("totalItems", len(itemsToIndex)), zap.Int("failedCount", failedCount))
 	}()
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":        fmt.Sprintf("扫描完成，开始索引 %d 个新添加或更新的知识项", len(itemsToIndex)),
+		"message":        fmt.Sprintf("scan complete, starting to index %d new or updated knowledge items", len(itemsToIndex)),
 		"items_to_index": len(itemsToIndex),
 	})
 }
 
-// GetRetrievalLogs 获取检索日志
+// GetRetrievalLogs retrieves retrieval logs
 func (h *KnowledgeHandler) GetRetrievalLogs(c *gin.Context) {
 	conversationID := c.Query("conversationId")
 	messageID := c.Query("messageId")
-	limit := 50 // 默认50条
+	limit := 50 // default 50 entries
 
 	if limitStr := c.Query("limit"); limitStr != "" {
 		if parsed, err := parseInt(limitStr); err == nil && parsed > 0 {
@@ -407,7 +407,7 @@ func (h *KnowledgeHandler) GetRetrievalLogs(c *gin.Context) {
 
 	logs, err := h.manager.GetRetrievalLogs(conversationID, messageID, limit)
 	if err != nil {
-		h.logger.Error("获取检索日志失败", zap.Error(err))
+		h.logger.Error("failed to get retrieval logs", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -415,33 +415,33 @@ func (h *KnowledgeHandler) GetRetrievalLogs(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"logs": logs})
 }
 
-// DeleteRetrievalLog 删除检索日志
+// DeleteRetrievalLog deletes a retrieval log
 func (h *KnowledgeHandler) DeleteRetrievalLog(c *gin.Context) {
 	id := c.Param("id")
 
 	if err := h.manager.DeleteRetrievalLog(id); err != nil {
-		h.logger.Error("删除检索日志失败", zap.Error(err))
+		h.logger.Error("failed to delete retrieval log", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "删除成功"})
+	c.JSON(http.StatusOK, gin.H{"message": "deleted successfully"})
 }
 
-// GetIndexStatus 获取索引状态
+// GetIndexStatus retrieves the index status
 func (h *KnowledgeHandler) GetIndexStatus(c *gin.Context) {
 	status, err := h.manager.GetIndexStatus()
 	if err != nil {
-		h.logger.Error("获取索引状态失败", zap.Error(err))
+		h.logger.Error("failed to get index status", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	// 获取索引器的错误信息
+	// get indexer error information
 	if h.indexer != nil {
 		lastError, lastErrorTime := h.indexer.GetLastError()
 		if lastError != "" {
-			// 如果错误是最近发生的（5分钟内），则返回错误信息
+			// if error occurred recently (within 5 minutes), return the error info
 			if time.Since(lastErrorTime) < 5*time.Minute {
 				status["last_error"] = lastError
 				status["last_error_time"] = lastErrorTime.Format(time.RFC3339)
@@ -452,7 +452,7 @@ func (h *KnowledgeHandler) GetIndexStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, status)
 }
 
-// Search 搜索知识库（用于API调用，Agent内部使用Retriever）
+// Search searches the knowledge base (for API calls; agents use Retriever internally)
 func (h *KnowledgeHandler) Search(c *gin.Context) {
 	var req knowledge.SearchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -462,7 +462,7 @@ func (h *KnowledgeHandler) Search(c *gin.Context) {
 
 	results, err := h.retriever.Search(c.Request.Context(), &req)
 	if err != nil {
-		h.logger.Error("搜索知识库失败", zap.Error(err))
+		h.logger.Error("failed to search knowledge base", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -470,11 +470,11 @@ func (h *KnowledgeHandler) Search(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"results": results})
 }
 
-// GetStats 获取知识库统计信息
+// GetStats retrieves knowledge base statistics
 func (h *KnowledgeHandler) GetStats(c *gin.Context) {
 	totalCategories, totalItems, err := h.manager.GetStats()
 	if err != nil {
-		h.logger.Error("获取知识库统计信息失败", zap.Error(err))
+		h.logger.Error("failed to get knowledge base statistics", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -486,7 +486,7 @@ func (h *KnowledgeHandler) GetStats(c *gin.Context) {
 	})
 }
 
-// 辅助函数：解析整数
+// parseInt is a helper function to parse an integer
 func parseInt(s string) (int, error) {
 	var result int
 	_, err := fmt.Sscanf(s, "%d", &result)

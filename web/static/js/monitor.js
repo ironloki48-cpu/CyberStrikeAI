@@ -1,9 +1,9 @@
 const progressTaskState = new Map();
 let activeTaskInterval = null;
-const ACTIVE_TASK_REFRESH_INTERVAL = 10000; // 10秒检查一次
+const ACTIVE_TASK_REFRESH_INTERVAL = 10000; // Check every 10 seconds
 const TASK_FINAL_STATUSES = new Set(['failed', 'timeout', 'cancelled', 'completed']);
 
-// 存储工具调用ID到DOM元素的映射，用于更新执行状态
+// Map from tool call ID to DOM element, used to update execution status
 const toolCallStatusMap = new Map();
 
 const conversationExecutionTracker = {
@@ -57,7 +57,7 @@ function markProgressCancelling(progressId) {
     }
 }
 
-function finalizeProgressTask(progressId, finalLabel = '已完成') {
+function finalizeProgressTask(progressId, finalLabel = 'Done') {
     const stopBtn = document.getElementById(`${progressId}-stop-btn`);
     if (stopBtn) {
         stopBtn.disabled = true;
@@ -76,7 +76,7 @@ async function requestCancel(conversationId) {
     });
     const result = await response.json().catch(() => ({}));
     if (!response.ok) {
-        throw new Error(result.error || '取消失败');
+        throw new Error(result.error || 'CancelFailed');
     }
     return result;
 }
@@ -96,10 +96,10 @@ function addProgressMessage() {
     bubble.className = 'message-bubble progress-container';
     bubble.innerHTML = `
         <div class="progress-header">
-            <span class="progress-title">🔍 渗透测试进行中...</span>
+            <span class="progress-title">🔍 Penetration testing in progress...</span>
             <div class="progress-actions">
-                <button class="progress-stop" id="${id}-stop-btn" onclick="cancelProgressTask('${id}')">停止任务</button>
-                <button class="progress-toggle" onclick="toggleProgressDetails('${id}')">收起详情</button>
+                <button class="progress-stop" id="${id}-stop-btn" onclick="cancelProgressTask('${id}')">Stop Task</button>
+                <button class="progress-toggle" onclick="toggleProgressDetails('${id}')">Collapse Details</button>
             </div>
         </div>
         <div class="progress-timeline expanded" id="${id}-timeline"></div>
@@ -114,7 +114,7 @@ function addProgressMessage() {
     return id;
 }
 
-// 切换进度详情显示
+// Toggle progress details display
 function toggleProgressDetails(progressId) {
     const timeline = document.getElementById(progressId + '-timeline');
     const toggleBtn = document.querySelector(`#${progressId} .progress-toggle`);
@@ -123,34 +123,34 @@ function toggleProgressDetails(progressId) {
     
     if (timeline.classList.contains('expanded')) {
         timeline.classList.remove('expanded');
-        toggleBtn.textContent = '展开详情';
+        toggleBtn.textContent = 'Expand Details';
     } else {
         timeline.classList.add('expanded');
-        toggleBtn.textContent = '收起详情';
+        toggleBtn.textContent = 'Collapse Details';
     }
 }
 
-// 折叠所有进度详情
+// Collapse all progress details
 function collapseAllProgressDetails(assistantMessageId, progressId) {
-    // 折叠集成到MCP区域的详情
+    // Collapse details integrated into MCP area
     if (assistantMessageId) {
         const detailsId = 'process-details-' + assistantMessageId;
         const detailsContainer = document.getElementById(detailsId);
         if (detailsContainer) {
             const timeline = detailsContainer.querySelector('.progress-timeline');
             if (timeline) {
-                // 确保移除expanded类（无论是否包含）
+                // Ensure expanded class is removed (regardless)
                 timeline.classList.remove('expanded');
                 const btn = document.querySelector(`#${assistantMessageId} .process-detail-btn`);
                 if (btn) {
-                    btn.innerHTML = '<span>展开详情</span>';
+                    btn.innerHTML = '<span>Expand Details</span>';
                 }
             }
         }
     }
     
-    // 折叠独立的详情组件（通过convertProgressToDetails创建的）
-    // 查找所有以details-开头的详情组件
+    // Collapse standalone details components (created by convertProgressToDetails)
+    // Find all details components starting with "details-"
     const allDetails = document.querySelectorAll('[id^="details-"]');
     allDetails.forEach(detail => {
         const timeline = detail.querySelector('.progress-timeline');
@@ -158,27 +158,27 @@ function collapseAllProgressDetails(assistantMessageId, progressId) {
         if (timeline) {
             timeline.classList.remove('expanded');
             if (toggleBtn) {
-                toggleBtn.textContent = '展开详情';
+                toggleBtn.textContent = 'Expand Details';
             }
         }
     });
     
-    // 折叠原始的进度消息（如果还存在）
+    // Collapse original progress message (if it still exists)
     if (progressId) {
         const progressTimeline = document.getElementById(progressId + '-timeline');
         const progressToggleBtn = document.querySelector(`#${progressId} .progress-toggle`);
         if (progressTimeline) {
             progressTimeline.classList.remove('expanded');
             if (progressToggleBtn) {
-                progressToggleBtn.textContent = '展开详情';
+                progressToggleBtn.textContent = 'Expand Details';
             }
         }
     }
 }
 
-// 获取当前助手消息ID（用于done事件）
+// Get current assistant message ID (used for done event)
 function getAssistantId() {
-    // 从最近的助手消息中获取ID
+    // Get ID from the most recent assistant message
     const messages = document.querySelectorAll('.message.assistant');
     if (messages.length > 0) {
         return messages[messages.length - 1].id;
@@ -186,40 +186,40 @@ function getAssistantId() {
     return null;
 }
 
-// 将进度详情集成到工具调用区域
+// Integrate progress details into the tool call area
 function integrateProgressToMCPSection(progressId, assistantMessageId) {
     const progressElement = document.getElementById(progressId);
     if (!progressElement) return;
     
-    // 获取时间线内容
+    // Get timeline content
     const timeline = document.getElementById(progressId + '-timeline');
     let timelineHTML = '';
     if (timeline) {
         timelineHTML = timeline.innerHTML;
     }
     
-    // 获取助手消息元素
+    // Get assistant message element
     const assistantElement = document.getElementById(assistantMessageId);
     if (!assistantElement) {
         removeMessage(progressId);
         return;
     }
     
-    // 查找MCP调用区域
+    // Find MCP call area
     const mcpSection = assistantElement.querySelector('.mcp-call-section');
     if (!mcpSection) {
-        // 如果没有MCP区域，创建详情组件放在消息下方
+        // If no MCP area, place details component below message
         convertProgressToDetails(progressId, assistantMessageId);
         return;
     }
     
-    // 获取时间线内容
+    // Get timeline content
     const hasContent = timelineHTML.trim().length > 0;
     
-    // 检查时间线中是否有错误项
+    // Check if timeline has error items
     const hasError = timeline && timeline.querySelector('.timeline-item-error');
     
-    // 确保按钮容器存在
+    // Ensure button container exists
     let buttonsContainer = mcpSection.querySelector('.mcp-call-buttons');
     if (!buttonsContainer) {
         buttonsContainer = document.createElement('div');
@@ -227,7 +227,7 @@ function integrateProgressToMCPSection(progressId, assistantMessageId) {
         mcpSection.appendChild(buttonsContainer);
     }
     
-    // 创建详情容器，放在MCP按钮区域下方（统一结构）
+    // Create details container, place below MCP button area (unified structure)
     const detailsId = 'process-details-' + assistantMessageId;
     let detailsContainer = document.getElementById(detailsId);
     
@@ -235,7 +235,7 @@ function integrateProgressToMCPSection(progressId, assistantMessageId) {
         detailsContainer = document.createElement('div');
         detailsContainer.id = detailsId;
         detailsContainer.className = 'process-details-container';
-        // 确保容器在按钮容器之后
+        // Ensure container is after the button container
         if (buttonsContainer.nextSibling) {
             mcpSection.insertBefore(detailsContainer, buttonsContainer.nextSibling);
         } else {
@@ -243,33 +243,33 @@ function integrateProgressToMCPSection(progressId, assistantMessageId) {
         }
     }
     
-    // 设置详情内容（如果有错误，默认折叠；否则默认折叠）
+    // Set details content (if error, default collapsed; otherwise also default collapsed)
     detailsContainer.innerHTML = `
         <div class="process-details-content">
-            ${hasContent ? `<div class="progress-timeline" id="${detailsId}-timeline">${timelineHTML}</div>` : '<div class="progress-timeline-empty">暂无过程详情</div>'}
+            ${hasContent ? `<div class="progress-timeline" id="${detailsId}-timeline">${timelineHTML}</div>` : '<div class="progress-timeline-empty">No process details</div>'}
         </div>
     `;
     
-    // 确保初始状态是折叠的（默认折叠，特别是错误时）
+    // Ensure initial state is collapsed (default collapsed, especially when there is an error)
     if (hasContent) {
         const timeline = document.getElementById(detailsId + '-timeline');
         if (timeline) {
-            // 如果有错误，确保折叠；否则也默认折叠
+            // If error, ensure collapsed; otherwise also default collapsed
             timeline.classList.remove('expanded');
         }
         
-        // 更新按钮文本为"展开详情"（因为默认折叠）
+        // Update button text to "Expand Details" (because default is collapsed)
         const processDetailBtn = buttonsContainer.querySelector('.process-detail-btn');
         if (processDetailBtn) {
-            processDetailBtn.innerHTML = '<span>展开详情</span>';
+            processDetailBtn.innerHTML = '<span>Expand Details</span>';
         }
     }
     
-    // 移除原来的进度消息
+    // Remove the original progress message
     removeMessage(progressId);
 }
 
-// 切换过程详情显示
+// Toggle process details display
 function toggleProcessDetails(progressId, assistantMessageId) {
     const detailsId = 'process-details-' + assistantMessageId;
     const detailsContainer = document.getElementById(detailsId);
@@ -282,32 +282,32 @@ function toggleProcessDetails(progressId, assistantMessageId) {
     if (content && timeline) {
         if (timeline.classList.contains('expanded')) {
             timeline.classList.remove('expanded');
-            if (btn) btn.innerHTML = '<span>展开详情</span>';
+            if (btn) btn.innerHTML = '<span>Expand Details</span>';
         } else {
             timeline.classList.add('expanded');
-            if (btn) btn.innerHTML = '<span>收起详情</span>';
+            if (btn) btn.innerHTML = '<span>Collapse Details</span>';
         }
     } else if (timeline) {
-        // 如果只有timeline，直接切换
+        // If only timeline, toggle directly
         if (timeline.classList.contains('expanded')) {
             timeline.classList.remove('expanded');
-            if (btn) btn.innerHTML = '<span>展开详情</span>';
+            if (btn) btn.innerHTML = '<span>Expand Details</span>';
         } else {
             timeline.classList.add('expanded');
-            if (btn) btn.innerHTML = '<span>收起详情</span>';
+            if (btn) btn.innerHTML = '<span>Collapse Details</span>';
         }
     }
     
-    // 滚动到展开的详情位置，而不是滚动到底部
+    // Scroll to expanded details position, not to the bottom
     if (timeline && timeline.classList.contains('expanded')) {
         setTimeout(() => {
-            // 使用 scrollIntoView 滚动到详情容器位置
+            // Use scrollIntoView to scroll to details container
             detailsContainer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }, 100);
     }
 }
 
-// 停止当前进度对应的任务
+// Stop the task corresponding to the current progress
 async function cancelProgressTask(progressId) {
     const state = progressTaskState.get(progressId);
     const stopBtn = document.getElementById(`${progressId}-stop-btn`);
@@ -319,7 +319,7 @@ async function cancelProgressTask(progressId) {
                 stopBtn.disabled = false;
             }, 1500);
         }
-        alert('任务信息尚未同步，请稍后再试。');
+        alert('Task info has not synced yet. Please try again later.');
         return;
     }
 
@@ -330,18 +330,18 @@ async function cancelProgressTask(progressId) {
     markProgressCancelling(progressId);
     if (stopBtn) {
         stopBtn.disabled = true;
-        stopBtn.textContent = '取消中...';
+        stopBtn.textContent = 'Cancelling...';
     }
 
     try {
         await requestCancel(state.conversationId);
         loadActiveTasks();
     } catch (error) {
-        console.error('取消任务失败:', error);
-        alert('取消任务失败: ' + error.message);
+        console.error('Failed to cancel task:', error);
+        alert('Failed to cancel task: ' + error.message);
         if (stopBtn) {
             stopBtn.disabled = false;
-            stopBtn.textContent = '停止任务';
+            stopBtn.textContent = 'Stop Task';
         }
         const currentState = progressTaskState.get(progressId);
         if (currentState) {
@@ -350,27 +350,27 @@ async function cancelProgressTask(progressId) {
     }
 }
 
-// 将进度消息转换为可折叠的详情组件
+// Convert progress message to collapsible details component
 function convertProgressToDetails(progressId, assistantMessageId) {
     const progressElement = document.getElementById(progressId);
     if (!progressElement) return;
     
-    // 获取时间线内容
+    // Get timeline content
     const timeline = document.getElementById(progressId + '-timeline');
-    // 即使时间线不存在，也创建详情组件（显示空状态）
+    // Create details component even if timeline does not exist (display empty status)
     let timelineHTML = '';
     if (timeline) {
         timelineHTML = timeline.innerHTML;
     }
     
-    // 获取助手消息元素
+    // Get assistant message element
     const assistantElement = document.getElementById(assistantMessageId);
     if (!assistantElement) {
         removeMessage(progressId);
         return;
     }
     
-    // 创建详情组件
+    // Create details component
     const detailsId = 'details-' + Date.now() + '-' + messageCounter++;
     const detailsDiv = document.createElement('div');
     detailsDiv.id = detailsId;
@@ -382,47 +382,47 @@ function convertProgressToDetails(progressId, assistantMessageId) {
     const bubble = document.createElement('div');
     bubble.className = 'message-bubble progress-container completed';
     
-    // 获取时间线HTML内容
+    // Get timeline HTML content
     const hasContent = timelineHTML.trim().length > 0;
     
-    // 检查时间线中是否有错误项
+    // Check if timeline has error items
     const hasError = timeline && timeline.querySelector('.timeline-item-error');
     
-    // 如果有错误，默认折叠；否则默认展开
+    // If error, default collapsed; otherwise default expanded
     const shouldExpand = !hasError;
     const expandedClass = shouldExpand ? 'expanded' : '';
-    const toggleText = shouldExpand ? '收起详情' : '展开详情';
+    const toggleText = shouldExpand ? 'Collapse Details' : 'Expand Details';
     
-    // 总是显示详情组件，即使没有内容也显示
+    // Always show details component, even if empty
     bubble.innerHTML = `
         <div class="progress-header">
-            <span class="progress-title">📋 渗透测试详情</span>
+            <span class="progress-title">📋 Penetration Test Details</span>
             ${hasContent ? `<button class="progress-toggle" onclick="toggleProgressDetails('${detailsId}')">${toggleText}</button>` : ''}
         </div>
-        ${hasContent ? `<div class="progress-timeline ${expandedClass}" id="${detailsId}-timeline">${timelineHTML}</div>` : '<div class="progress-timeline-empty">暂无过程详情（可能执行过快或未触发详细事件）</div>'}
+        ${hasContent ? `<div class="progress-timeline ${expandedClass}" id="${detailsId}-timeline">${timelineHTML}</div>` : '<div class="progress-timeline-empty">No process details（possibly executed too fast or no detailed events triggered）</div>'}
     `;
     
     contentWrapper.appendChild(bubble);
     detailsDiv.appendChild(contentWrapper);
     
-    // 将详情组件插入到助手消息之后
+    // Insert details component after assistant message
     const messagesDiv = document.getElementById('chat-messages');
-    // assistantElement 是消息div，需要插入到它的下一个兄弟节点之前
+    // assistantElement is the message div; insert before its next sibling
     if (assistantElement.nextSibling) {
         messagesDiv.insertBefore(detailsDiv, assistantElement.nextSibling);
     } else {
-        // 如果没有下一个兄弟节点，直接追加
+        // If no next sibling, append directly
         messagesDiv.appendChild(detailsDiv);
     }
     
-    // 移除原来的进度消息
+    // Remove the original progress message
     removeMessage(progressId);
     
-    // 滚动到底部
+    // Scroll to bottom
     messagesDiv.scrollTop = messagesDiv.scrollHeight;
 }
 
-// 处理流式事件
+// Handle streaming events
 function handleStreamEvent(event, progressElement, progressId, 
                           getAssistantId, setAssistantId, getMcpIds, setMcpIds) {
     const timeline = document.getElementById(progressId + '-timeline');
@@ -431,29 +431,29 @@ function handleStreamEvent(event, progressElement, progressId,
     switch (event.type) {
         case 'conversation':
             if (event.data && event.data.conversationId) {
-                // 在更新之前，先获取任务对应的原始对话ID
+                // Before updating, get the original conversation ID for the task
                 const taskState = progressTaskState.get(progressId);
                 const originalConversationId = taskState?.conversationId;
                 
-                // 更新任务状态
+                // Update task status
                 updateProgressConversation(progressId, event.data.conversationId);
                 
-                // 如果用户已经开始了新对话（currentConversationId 为 null），
-                // 且这个 conversation 事件来自旧对话，就不更新 currentConversationId
+                // If the user has started a new conversation (currentConversationId is null),
+                // and this conversation event is from the old conversation, do not update currentConversationId
                 if (currentConversationId === null && originalConversationId !== null) {
-                    // 用户已经开始了新对话，忽略旧对话的 conversation 事件
-                    // 但仍然更新任务状态，以便正确显示任务信息
+                    // User has started a new conversation; ignore conversation events from the old one
+                    // But still update task status so task info is displayed correctly
                     break;
                 }
                 
-                // 更新当前对话ID
+                // Update current conversation ID
                 currentConversationId = event.data.conversationId;
                 updateActiveConversation();
                 addAttackChainButton(currentConversationId);
                 loadActiveTasks();
-                // 延迟刷新对话列表，确保用户消息已保存，updated_at已更新
-                // 这样新对话才能正确显示在最近对话列表的顶部
-                // 使用loadConversationsWithGroups确保分组映射缓存正确加载，无论是否有分组都能立即显示
+                // Delay refreshing conversation list to ensure user message is saved and updated_at is updated
+                // This way the new conversation will correctly appear at the top of the recent conversations list
+                // Use loadConversationsWithGroups to ensure group mapping cache is correctly loaded; groups appear immediately
                 setTimeout(() => {
                     if (typeof loadConversationsWithGroups === 'function') {
                         loadConversationsWithGroups();
@@ -464,77 +464,77 @@ function handleStreamEvent(event, progressElement, progressId,
             }
             break;
         case 'iteration':
-            // 添加迭代标记
+            // Add iteration marker
             addTimelineItem(timeline, 'iteration', {
-                title: `第 ${event.data?.iteration || 1} 轮迭代`,
+                title: `Iteration ${event.data?.iteration || 1}`,
                 message: event.message,
                 data: event.data
             });
             break;
             
         case 'thinking':
-            // 显示AI思考内容
+            // Show AI thinking content
             addTimelineItem(timeline, 'thinking', {
-                title: '🤔 AI思考',
+                title: '🤔 AI Thinking',
                 message: event.message,
                 data: event.data
             });
             break;
             
         case 'tool_calls_detected':
-            // 工具调用检测
+            // Tool call detection
             addTimelineItem(timeline, 'tool_calls_detected', {
-                title: `🔧 检测到 ${event.data?.count || 0} 个工具调用`,
+                title: `🔧 ${event.data?.count || 0} tool call(s) detected`,
                 message: event.message,
                 data: event.data
             });
             break;
             
         case 'tool_call':
-            // 显示工具调用信息
+            // Show tool call info
             const toolInfo = event.data || {};
-            const toolName = toolInfo.toolName || '未知工具';
+            const toolName = toolInfo.toolName || 'Unknown Tool';
             const index = toolInfo.index || 0;
             const total = toolInfo.total || 0;
             const toolCallId = toolInfo.toolCallId || null;
             
-            // 添加工具调用项，并标记为执行中
+            // Add tool call item and mark as running
             const toolCallItemId = addTimelineItem(timeline, 'tool_call', {
-                title: `🔧 调用工具: ${escapeHtml(toolName)} (${index}/${total})`,
+                title: `🔧 Calling tool: ${escapeHtml(toolName)} (${index}/${total})`,
                 message: event.message,
                 data: toolInfo,
                 expanded: false
             });
             
-            // 如果有toolCallId，存储映射关系以便后续更新状态
+            // If there is a toolCallId, store the mapping for subsequent status updates
             if (toolCallId && toolCallItemId) {
                 toolCallStatusMap.set(toolCallId, {
                     itemId: toolCallItemId,
                     timeline: timeline
                 });
                 
-                // 添加执行中状态指示器
+                // Add running status indicator
                 updateToolCallStatus(toolCallId, 'running');
             }
             break;
             
         case 'tool_result':
-            // 显示工具执行结果
+            // Show tool execution result
             const resultInfo = event.data || {};
-            const resultToolName = resultInfo.toolName || '未知工具';
+            const resultToolName = resultInfo.toolName || 'Unknown Tool';
             const success = resultInfo.success !== false;
             const statusIcon = success ? '✅' : '❌';
             const resultToolCallId = resultInfo.toolCallId || null;
             
-            // 如果有关联的toolCallId，更新工具调用项的状态
+            // If there is an associated toolCallId, update the tool call item status
             if (resultToolCallId && toolCallStatusMap.has(resultToolCallId)) {
                 updateToolCallStatus(resultToolCallId, success ? 'completed' : 'failed');
-                // 从映射中移除（已完成）
+                // Remove from mapping (already done)
                 toolCallStatusMap.delete(resultToolCallId);
             }
             
             addTimelineItem(timeline, 'tool_result', {
-                title: `${statusIcon} 工具 ${escapeHtml(resultToolName)} 执行${success ? '完成' : '失败'}`,
+                title: `${statusIcon} Tool ${escapeHtml(resultToolName)} ${success ? 'succeeded' : 'failed'}`,
                 message: event.message,
                 data: resultInfo,
                 expanded: false
@@ -542,7 +542,7 @@ function handleStreamEvent(event, progressElement, progressId,
             break;
             
         case 'progress':
-            // 更新进度状态
+            // Update progress status
             const progressTitle = document.querySelector(`#${progressId} .progress-title`);
             if (progressTitle) {
                 progressTitle.textContent = '🔍 ' + event.message;
@@ -550,94 +550,94 @@ function handleStreamEvent(event, progressElement, progressId,
             break;
         
         case 'cancelled':
-            // 显示错误
+            // ShowError
             addTimelineItem(timeline, 'cancelled', {
-                title: '⛔ 任务已取消',
+                title: '⛔ Task cancelled',
                 message: event.message,
                 data: event.data
             });
             
-            // 更新进度标题为取消状态
+            // Update progress title to cancelled status
             const cancelTitle = document.querySelector(`#${progressId} .progress-title`);
             if (cancelTitle) {
-                cancelTitle.textContent = '⛔ 任务已取消';
+                cancelTitle.textContent = '⛔ Task cancelled';
             }
             
-            // 更新进度容器为已完成状态（添加completed类）
+            // Update progress container to completed status (add completed class)
             const cancelProgressContainer = document.querySelector(`#${progressId} .progress-container`);
             if (cancelProgressContainer) {
                 cancelProgressContainer.classList.add('completed');
             }
             
-            // 完成进度任务（标记为已取消）
+            // Finalize progress task (marked as cancelled)
             if (progressTaskState.has(progressId)) {
-                finalizeProgressTask(progressId, '已取消');
+                finalizeProgressTask(progressId, 'Cancelled');
             }
             
-            // 如果取消事件包含messageId，说明有助手消息，需要显示取消内容
+            // If the cancel event contains a messageId, there is an assistant message; show cancel content
             if (event.data && event.data.messageId) {
-                // 检查助手消息是否已存在
+                // Check if the assistant message already exists
                 let assistantId = event.data.messageId;
                 let assistantElement = document.getElementById(assistantId);
                 
-                // 如果助手消息不存在，创建它
+                // If assistant message does not exist, create it
                 if (!assistantElement) {
                     assistantId = addMessage('assistant', event.message, null, progressId);
                     setAssistantId(assistantId);
                     assistantElement = document.getElementById(assistantId);
                 } else {
-                    // 如果已存在，更新内容
+                    // If already exists, update content
                     const bubble = assistantElement.querySelector('.message-bubble');
                     if (bubble) {
                         bubble.innerHTML = escapeHtml(event.message).replace(/\n/g, '<br>');
                     }
                 }
                 
-                // 将进度详情集成到工具调用区域（如果还没有）
+                // Integrate progress details into the tool call area (if not already done)
                 if (assistantElement) {
                     const detailsId = 'process-details-' + assistantId;
                     if (!document.getElementById(detailsId)) {
                         integrateProgressToMCPSection(progressId, assistantId);
                     }
-                    // 立即折叠详情（取消时应该默认折叠）
+                    // Immediately collapse details (should be collapsed by default when cancelled)
                     setTimeout(() => {
                         collapseAllProgressDetails(assistantId, progressId);
                     }, 100);
                 }
             } else {
-                // 如果没有messageId，创建助手消息并集成详情
+                // If no messageId, create assistant message and integrate details
                 const assistantId = addMessage('assistant', event.message, null, progressId);
                 setAssistantId(assistantId);
                 
-                // 将进度详情集成到工具调用区域
+                // Integrate progress details into the tool call area
                 setTimeout(() => {
                     integrateProgressToMCPSection(progressId, assistantId);
-                    // 确保详情默认折叠
+                    // Ensure details are collapsed by default
                     collapseAllProgressDetails(assistantId, progressId);
                 }, 100);
             }
             
-            // 立即刷新任务状态
+            // Immediately refresh task status
             loadActiveTasks();
             break;
             
         case 'response':
-            // 在更新之前，先获取任务对应的原始对话ID
+            // Before updating, get the original conversation ID for the task
             const responseTaskState = progressTaskState.get(progressId);
             const responseOriginalConversationId = responseTaskState?.conversationId;
             
-            // 先添加助手回复
+            // First add assistant reply
             const responseData = event.data || {};
             const mcpIds = responseData.mcpExecutionIds || [];
             setMcpIds(mcpIds);
             
-            // 更新对话ID
+            // Update conversation ID
             if (responseData.conversationId) {
-                // 如果用户已经开始了新对话（currentConversationId 为 null），
-                // 且这个 response 事件来自旧对话，就不更新 currentConversationId 也不添加消息
+                // If the user has started a new conversation (currentConversationId is null),
+                // and this response event is from the old conversation, do not update currentConversationId or add message
                 if (currentConversationId === null && responseOriginalConversationId !== null) {
-                    // 用户已经开始了新对话，忽略旧对话的 response 事件
-                    // 但仍然更新任务状态，以便正确显示任务信息
+                    // User has started a new conversation; ignore response events from the old one
+                    // But still update task status so task info is displayed correctly
                     updateProgressConversation(progressId, responseData.conversationId);
                     break;
                 }
@@ -649,103 +649,103 @@ function handleStreamEvent(event, progressElement, progressId,
                 loadActiveTasks();
             }
             
-            // 添加助手回复，并传入进度ID以便集成详情
+            // Add assistant reply and pass progress ID to integrate details
             const assistantId = addMessage('assistant', event.message, mcpIds, progressId);
             setAssistantId(assistantId);
             
-            // 将进度详情集成到工具调用区域
+            // Integrate progress details into the tool call area
             integrateProgressToMCPSection(progressId, assistantId);
             
-            // 延迟自动折叠详情（3秒后）
+            // Auto-collapse details after a delay (3 seconds)
             setTimeout(() => {
                 collapseAllProgressDetails(assistantId, progressId);
             }, 3000);
             
-            // 延迟刷新对话列表，确保助手消息已保存，updated_at已更新
+            // Delay refreshing conversation list to ensure assistant message is saved and updated_at is updated
             setTimeout(() => {
                 loadConversations();
             }, 200);
             break;
             
         case 'error':
-            // 显示错误
+            // ShowError
             addTimelineItem(timeline, 'error', {
-                title: '❌ 错误',
+                title: '❌ Error',
                 message: event.message,
                 data: event.data
             });
             
-            // 更新进度标题为错误状态
+            // Update progress title to error status
             const errorTitle = document.querySelector(`#${progressId} .progress-title`);
             if (errorTitle) {
-                errorTitle.textContent = '❌ 执行失败';
+                errorTitle.textContent = '❌ Execution failed';
             }
             
-            // 更新进度容器为已完成状态（添加completed类）
+            // Update progress container to completed status (add completed class)
             const progressContainer = document.querySelector(`#${progressId} .progress-container`);
             if (progressContainer) {
                 progressContainer.classList.add('completed');
             }
             
-            // 完成进度任务（标记为失败）
+            // Finalize progress task (marked as failed)
             if (progressTaskState.has(progressId)) {
-                finalizeProgressTask(progressId, '已失败');
+                finalizeProgressTask(progressId, 'Failed');
             }
             
-            // 如果错误事件包含messageId，说明有助手消息，需要显示错误内容
+            // If the error event contains a messageId, there is an assistant message; show error content
             if (event.data && event.data.messageId) {
-                // 检查助手消息是否已存在
+                // Check if the assistant message already exists
                 let assistantId = event.data.messageId;
                 let assistantElement = document.getElementById(assistantId);
                 
-                // 如果助手消息不存在，创建它
+                // If assistant message does not exist, create it
                 if (!assistantElement) {
                     assistantId = addMessage('assistant', event.message, null, progressId);
                     setAssistantId(assistantId);
                     assistantElement = document.getElementById(assistantId);
                 } else {
-                    // 如果已存在，更新内容
+                    // If already exists, update content
                     const bubble = assistantElement.querySelector('.message-bubble');
                     if (bubble) {
                         bubble.innerHTML = escapeHtml(event.message).replace(/\n/g, '<br>');
                     }
                 }
                 
-                // 将进度详情集成到工具调用区域（如果还没有）
+                // Integrate progress details into the tool call area (if not already done)
                 if (assistantElement) {
                     const detailsId = 'process-details-' + assistantId;
                     if (!document.getElementById(detailsId)) {
                         integrateProgressToMCPSection(progressId, assistantId);
                     }
-                    // 立即折叠详情（错误时应该默认折叠）
+                    // Immediately collapse details (should be collapsed by default on error)
                     setTimeout(() => {
                         collapseAllProgressDetails(assistantId, progressId);
                     }, 100);
                 }
             } else {
-                // 如果没有messageId（比如任务已运行时的错误），创建助手消息并集成详情
+                // If no messageId (e.g. error while task is running), create assistant message and integrate details
                 const assistantId = addMessage('assistant', event.message, null, progressId);
                 setAssistantId(assistantId);
                 
-                // 将进度详情集成到工具调用区域
+                // Integrate progress details into the tool call area
                 setTimeout(() => {
                     integrateProgressToMCPSection(progressId, assistantId);
-                    // 确保详情默认折叠
+                    // Ensure details are collapsed by default
                     collapseAllProgressDetails(assistantId, progressId);
                 }, 100);
             }
             
-            // 立即刷新任务状态（执行失败时任务状态会更新）
+            // Immediately refresh task status（task status will update when execution fails）
             loadActiveTasks();
             break;
             
         case 'done':
-            // 完成，更新进度标题（如果进度消息还存在）
+            // Done, update progress title (if progress message still exists)
             const doneTitle = document.querySelector(`#${progressId} .progress-title`);
             if (doneTitle) {
-                doneTitle.textContent = '✅ 渗透测试完成';
+                doneTitle.textContent = '✅ Penetration test done';
             }
-            // 更新对话ID
+            // Update conversation ID
             if (event.data && event.data.conversationId) {
                 currentConversationId = event.data.conversationId;
                 updateActiveConversation();
@@ -753,33 +753,33 @@ function handleStreamEvent(event, progressElement, progressId,
                 updateProgressConversation(progressId, event.data.conversationId);
             }
             if (progressTaskState.has(progressId)) {
-                finalizeProgressTask(progressId, '已完成');
+                finalizeProgressTask(progressId, 'Done');
             }
             
-            // 检查时间线中是否有错误项
+            // Check if timeline has error items
             const hasError = timeline && timeline.querySelector('.timeline-item-error');
             
-            // 立即刷新任务状态（确保任务状态同步）
+            // Immediately refresh task status（ensure task status is synchronized）
             loadActiveTasks();
             
-            // 延迟再次刷新任务状态（确保后端已完成状态更新）
+            // Delay re-refreshing task status (ensure backend status is updated)
             setTimeout(() => {
                 loadActiveTasks();
             }, 200);
             
-            // 完成时自动折叠所有详情（延迟一下确保response事件已处理）
+            // Auto-collapse all details when done (delay to ensure response event is processed)
             setTimeout(() => {
                 const assistantIdFromDone = getAssistantId();
                 if (assistantIdFromDone) {
                     collapseAllProgressDetails(assistantIdFromDone, progressId);
                 } else {
-                    // 如果无法获取助手ID，尝试折叠所有详情
+                    // If assistant ID cannot be obtained, try to collapse all details
                     collapseAllProgressDetails(null, progressId);
                 }
                 
-                // 如果有错误，确保详情是折叠的（错误时应该默认折叠）
+                // If there is an error, ensure details are collapsed (should be collapsed by default on error)
                 if (hasError) {
-                    // 再次确保折叠（延迟一点确保DOM已更新）
+                    // Ensure collapsed again (small delay to ensure DOM has updated)
                     setTimeout(() => {
                         collapseAllProgressDetails(assistantIdFromDone || null, progressId);
                     }, 200);
@@ -788,12 +788,12 @@ function handleStreamEvent(event, progressElement, progressId,
             break;
     }
     
-    // 自动滚动到底部
+    // Auto-scroll to bottom
     const messagesDiv = document.getElementById('chat-messages');
     messagesDiv.scrollTop = messagesDiv.scrollHeight;
 }
 
-// 更新工具调用状态
+// Update tool call status
 function updateToolCallStatus(toolCallId, status) {
     const mapping = toolCallStatusMap.get(toolCallId);
     if (!mapping) return;
@@ -804,41 +804,41 @@ function updateToolCallStatus(toolCallId, status) {
     const titleElement = item.querySelector('.timeline-item-title');
     if (!titleElement) return;
     
-    // 移除之前的状态类
+    // Remove previous status class
     item.classList.remove('tool-call-running', 'tool-call-completed', 'tool-call-failed');
     
-    // 根据状态更新样式和文本
+    // Update style and text based on status
     let statusText = '';
     if (status === 'running') {
         item.classList.add('tool-call-running');
-        statusText = ' <span class="tool-status-badge tool-status-running">执行中...</span>';
+        statusText = ' <span class="tool-status-badge tool-status-running">Running...</span>';
     } else if (status === 'completed') {
         item.classList.add('tool-call-completed');
-        statusText = ' <span class="tool-status-badge tool-status-completed">✅ 已完成</span>';
+        statusText = ' <span class="tool-status-badge tool-status-completed">✅ Done</span>';
     } else if (status === 'failed') {
         item.classList.add('tool-call-failed');
-        statusText = ' <span class="tool-status-badge tool-status-failed">❌ 执行失败</span>';
+        statusText = ' <span class="tool-status-badge tool-status-failed">❌ Failed</span>';
     }
     
-    // 更新标题（保留原有文本，追加状态）
+    // Update title (retain existing text, append status)
     const originalText = titleElement.innerHTML;
-    // 移除之前可能存在的状态标记
+    // Remove any previously existing status marker
     const cleanText = originalText.replace(/\s*<span class="tool-status-badge[^>]*>.*?<\/span>/g, '');
     titleElement.innerHTML = cleanText + statusText;
 }
 
-// 添加时间线项目
+// Add timeline item
 function addTimelineItem(timeline, type, options) {
     const item = document.createElement('div');
-    // 生成唯一ID
+    // Generate unique ID
     const itemId = 'timeline-item-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
     item.id = itemId;
     item.className = `timeline-item timeline-item-${type}`;
     
-    // 使用传入的createdAt时间，如果没有则使用当前时间（向后兼容）
+    // Use the passed createdAtTime; if not provided, use current time (backward compatible)
     let eventTime;
     if (options.createdAt) {
-        // 处理字符串或Date对象
+        // Handle string or Date object
         if (typeof options.createdAt === 'string') {
             eventTime = new Date(options.createdAt);
         } else if (options.createdAt instanceof Date) {
@@ -846,7 +846,7 @@ function addTimelineItem(timeline, type, options) {
         } else {
             eventTime = new Date(options.createdAt);
         }
-        // 如果解析失败，使用当前时间
+        // If parsing fails, use current time
         if (isNaN(eventTime.getTime())) {
             eventTime = new Date();
         }
@@ -863,7 +863,7 @@ function addTimelineItem(timeline, type, options) {
         </div>
     `;
     
-    // 根据类型添加详细内容
+    // Add detail content based on type
     if (type === 'thinking' && options.message) {
         content += `<div class="timeline-item-content">${formatMarkdown(options.message)}</div>`;
     } else if (type === 'tool_call' && options.data) {
@@ -873,7 +873,7 @@ function addTimelineItem(timeline, type, options) {
             <div class="timeline-item-content">
                 <div class="tool-details">
                     <div class="tool-arg-section">
-                        <strong>参数:</strong>
+                        <strong>Parameters:</strong>
                         <pre class="tool-args">${escapeHtml(JSON.stringify(args, null, 2))}</pre>
                     </div>
                 </div>
@@ -882,22 +882,22 @@ function addTimelineItem(timeline, type, options) {
     } else if (type === 'tool_result' && options.data) {
         const data = options.data;
         const isError = data.isError || !data.success;
-        const result = data.result || data.error || '无结果';
-        // 确保 result 是字符串
+        const result = data.result || data.error || 'No result';
+        // Ensure result is a string
         const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
         content += `
             <div class="timeline-item-content">
                 <div class="tool-result-section ${isError ? 'error' : 'success'}">
-                    <strong>执行结果:</strong>
+                    <strong>Execution Result:</strong>
                     <pre class="tool-result">${escapeHtml(resultStr)}</pre>
-                    ${data.executionId ? `<div class="tool-execution-id">执行ID: <code>${escapeHtml(data.executionId)}</code></div>` : ''}
+                    ${data.executionId ? `<div class="tool-execution-id">Execution ID: <code>${escapeHtml(data.executionId)}</code></div>` : ''}
                 </div>
             </div>
         `;
     } else if (type === 'cancelled') {
         content += `
             <div class="timeline-item-content">
-                ${escapeHtml(options.message || '任务已取消')}
+                ${escapeHtml(options.message || 'Task cancelled')}
             </div>
         `;
     }
@@ -905,17 +905,17 @@ function addTimelineItem(timeline, type, options) {
     item.innerHTML = content;
     timeline.appendChild(item);
     
-    // 自动展开详情
+    // Auto-expand details
     const expanded = timeline.classList.contains('expanded');
     if (!expanded && (type === 'tool_call' || type === 'tool_result')) {
-        // 对于工具调用和结果，默认显示摘要
+        // For tool calls and results, show summary by default
     }
     
-    // 返回item ID以便后续更新
+    // Return item ID for subsequent updates
     return itemId;
 }
 
-// 加载活跃任务列表
+// Load active task list
 async function loadActiveTasks(showErrors = false) {
     const bar = document.getElementById('active-tasks-bar');
     try {
@@ -923,15 +923,15 @@ async function loadActiveTasks(showErrors = false) {
         const result = await response.json().catch(() => ({}));
 
         if (!response.ok) {
-            throw new Error(result.error || '获取活跃任务失败');
+            throw new Error(result.error || 'Failed to get active tasks');
         }
 
         renderActiveTasks(result.tasks || []);
     } catch (error) {
-        console.error('获取活跃任务失败:', error);
+        console.error('Failed to get active tasks:', error);
         if (showErrors && bar) {
             bar.style.display = 'block';
-            bar.innerHTML = `<div class="active-task-error">无法获取任务状态：${escapeHtml(error.message)}</div>`;
+            bar.innerHTML = `<div class="active-task-error">Failed to get task status: ${escapeHtml(error.message)}</div>`;
         }
     }
 }
@@ -964,37 +964,37 @@ function renderActiveTasks(tasks) {
             ? startedTime.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
             : '';
 
-        // 根据任务状态显示不同的文本
+        // Show different text based on task status
         const statusMap = {
-            'running': '执行中',
-            'cancelling': '取消中',
-            'failed': '执行失败',
-            'timeout': '执行超时',
-            'cancelled': '已取消',
-            'completed': '已完成'
+            'running': 'Running',
+            'cancelling': 'Cancelling',
+            'failed': 'Failed',
+            'timeout': 'Timed out',
+            'cancelled': 'Cancelled',
+            'completed': 'Completed'
         };
-        const statusText = statusMap[task.status] || '执行中';
+        const statusText = statusMap[task.status] || 'Running';
         const isFinalStatus = ['failed', 'timeout', 'cancelled', 'completed'].includes(task.status);
 
         item.innerHTML = `
             <div class="active-task-info">
                 <span class="active-task-status">${statusText}</span>
-                <span class="active-task-message">${escapeHtml(task.message || '未命名任务')}</span>
+                <span class="active-task-message">${escapeHtml(task.message || 'Unnamed task')}</span>
             </div>
             <div class="active-task-actions">
                 ${timeText ? `<span class="active-task-time">${timeText}</span>` : ''}
-                ${!isFinalStatus ? '<button class="active-task-cancel">停止任务</button>' : ''}
+                ${!isFinalStatus ? '<button class="active-task-cancel">Stop Task</button>' : ''}
             </div>
         `;
 
-        // 只有非最终状态的任务才显示停止按钮
+        // Only show stop button for non-final status tasks
         if (!isFinalStatus) {
             const cancelBtn = item.querySelector('.active-task-cancel');
             if (cancelBtn) {
                 cancelBtn.onclick = () => cancelActiveTask(task.conversationId, cancelBtn);
                 if (task.status === 'cancelling') {
                     cancelBtn.disabled = true;
-                    cancelBtn.textContent = '取消中...';
+                    cancelBtn.textContent = 'Cancelling...';
                 }
             }
         }
@@ -1007,20 +1007,20 @@ async function cancelActiveTask(conversationId, button) {
     if (!conversationId) return;
     const originalText = button.textContent;
     button.disabled = true;
-    button.textContent = '取消中...';
+    button.textContent = 'Cancelling...';
 
     try {
         await requestCancel(conversationId);
         loadActiveTasks();
     } catch (error) {
-        console.error('取消任务失败:', error);
-        alert('取消任务失败: ' + error.message);
+        console.error('Failed to cancel task:', error);
+        alert('Failed to cancel task: ' + error.message);
         button.disabled = false;
         button.textContent = originalText;
     }
 }
 
-// 监控面板状态
+// Monitor panel status
 const monitorState = {
     executions: [],
     stats: {},
@@ -1028,7 +1028,7 @@ const monitorState = {
     pagination: {
         page: 1,
         pageSize: (() => {
-            // 从 localStorage 读取保存的每页显示数量，默认为 20
+            // Read saved per-page count from localStorage, default is 20
             const saved = localStorage.getItem('monitorPageSize');
             return saved ? parseInt(saved, 10) : 20;
         })(),
@@ -1038,15 +1038,15 @@ const monitorState = {
 };
 
 function openMonitorPanel() {
-    // 切换到MCP监控页面
+    // Switch to MCP monitor page
     if (typeof switchPage === 'function') {
         switchPage('mcp-monitor');
     }
-    // 初始化每页显示数量选择器
+    // Initialize per-page count selector
     initializeMonitorPageSize();
 }
 
-// 初始化每页显示数量选择器
+// Initialize per-page count selector
 function initializeMonitorPageSize() {
     const pageSizeSelect = document.getElementById('monitor-page-size');
     if (pageSizeSelect) {
@@ -1054,7 +1054,7 @@ function initializeMonitorPageSize() {
     }
 }
 
-// 改变每页显示数量
+// Change per-page count
 function changeMonitorPageSize() {
     const pageSizeSelect = document.getElementById('monitor-page-size');
     if (!pageSizeSelect) {
@@ -1066,20 +1066,20 @@ function changeMonitorPageSize() {
         return;
     }
     
-    // 保存到 localStorage
+    // Save to localStorage
     localStorage.setItem('monitorPageSize', newPageSize.toString());
     
-    // 更新状态
+    // UpdateStatus
     monitorState.pagination.pageSize = newPageSize;
-    monitorState.pagination.page = 1; // 重置到第一页
+    monitorState.pagination.page = 1; // Reset to page 1
     
-    // 刷新数据
+    // Refresh data
     refreshMonitorPanel(1);
 }
 
 function closeMonitorPanel() {
-    // 不再需要关闭功能，因为现在是页面而不是模态框
-    // 如果需要，可以切换回对话页面
+    // Close is no longer needed since this is now a page, not a modal
+    // If needed, can switch back to conversations page
     if (typeof switchPage === 'function') {
         switchPage('chat');
     }
@@ -1090,17 +1090,17 @@ async function refreshMonitorPanel(page = null) {
     const execContainer = document.getElementById('monitor-executions');
 
     try {
-        // 如果指定了页码，使用指定页码，否则使用当前页码
+        // If page number is specified, use it; otherwise use current page number
         const currentPage = page !== null ? page : monitorState.pagination.page;
         const pageSize = monitorState.pagination.pageSize;
         
-        // 获取当前的筛选条件
+        // Get current filter conditions
         const statusFilter = document.getElementById('monitor-status-filter');
         const toolFilter = document.getElementById('monitor-tool-filter');
         const currentStatusFilter = statusFilter ? statusFilter.value : 'all';
         const currentToolFilter = toolFilter ? (toolFilter.value.trim() || 'all') : 'all';
         
-        // 构建请求 URL
+        // Build request URL
         let url = `/api/monitor?page=${currentPage}&page_size=${pageSize}`;
         if (currentStatusFilter && currentStatusFilter !== 'all') {
             url += `&status=${encodeURIComponent(currentStatusFilter)}`;
@@ -1112,14 +1112,14 @@ async function refreshMonitorPanel(page = null) {
         const response = await apiFetch(url, { method: 'GET' });
         const result = await response.json().catch(() => ({}));
         if (!response.ok) {
-            throw new Error(result.error || '获取监控数据失败');
+            throw new Error(result.error || 'Failed to get monitor data');
         }
 
         monitorState.executions = Array.isArray(result.executions) ? result.executions : [];
         monitorState.stats = result.stats || {};
         monitorState.lastFetchedAt = new Date();
         
-        // 更新分页信息
+        // Update pagination info
         if (result.total !== undefined) {
             monitorState.pagination = {
                 page: result.page || currentPage,
@@ -1133,28 +1133,28 @@ async function refreshMonitorPanel(page = null) {
         renderMonitorExecutions(monitorState.executions, currentStatusFilter);
         renderMonitorPagination();
         
-        // 初始化每页显示数量选择器
+        // Initialize per-page count selector
         initializeMonitorPageSize();
     } catch (error) {
-        console.error('刷新监控面板失败:', error);
+        console.error('Failed to refresh monitor panel:', error);
         if (statsContainer) {
-            statsContainer.innerHTML = `<div class="monitor-error">无法加载统计信息：${escapeHtml(error.message)}</div>`;
+            statsContainer.innerHTML = `<div class="monitor-error">Failed to load statistics: ${escapeHtml(error.message)}</div>`;
         }
         if (execContainer) {
-            execContainer.innerHTML = `<div class="monitor-error">无法加载执行记录：${escapeHtml(error.message)}</div>`;
+            execContainer.innerHTML = `<div class="monitor-error">Failed to load execution records: ${escapeHtml(error.message)}</div>`;
         }
     }
 }
 
-// 处理工具搜索输入（防抖）
+// Handle tool search input (debounced)
 let toolFilterDebounceTimer = null;
 function handleToolFilterInput() {
-    // 清除之前的定时器
+    // Clear existing timer
     if (toolFilterDebounceTimer) {
         clearTimeout(toolFilterDebounceTimer);
     }
     
-    // 设置新的定时器，500ms后执行筛选
+    // Set new timer, execute filter after 500ms
     toolFilterDebounceTimer = setTimeout(() => {
         applyMonitorFilters();
     }, 500);
@@ -1165,7 +1165,7 @@ async function applyMonitorFilters() {
     const toolFilter = document.getElementById('monitor-tool-filter');
     const status = statusFilter ? statusFilter.value : 'all';
     const tool = toolFilter ? (toolFilter.value.trim() || 'all') : 'all';
-    // 当筛选条件改变时，从后端重新获取数据
+    // When filter conditions change, re-fetch data from backend
     await refreshMonitorPanelWithFilter(status, tool);
 }
 
@@ -1174,10 +1174,10 @@ async function refreshMonitorPanelWithFilter(statusFilter = 'all', toolFilter = 
     const execContainer = document.getElementById('monitor-executions');
 
     try {
-        const currentPage = 1; // 筛选时重置到第一页
+        const currentPage = 1; // Reset to page 1 when filtering
         const pageSize = monitorState.pagination.pageSize;
         
-        // 构建请求 URL
+        // Build request URL
         let url = `/api/monitor?page=${currentPage}&page_size=${pageSize}`;
         if (statusFilter && statusFilter !== 'all') {
             url += `&status=${encodeURIComponent(statusFilter)}`;
@@ -1189,14 +1189,14 @@ async function refreshMonitorPanelWithFilter(statusFilter = 'all', toolFilter = 
         const response = await apiFetch(url, { method: 'GET' });
         const result = await response.json().catch(() => ({}));
         if (!response.ok) {
-            throw new Error(result.error || '获取监控数据失败');
+            throw new Error(result.error || 'Failed to get monitor data');
         }
 
         monitorState.executions = Array.isArray(result.executions) ? result.executions : [];
         monitorState.stats = result.stats || {};
         monitorState.lastFetchedAt = new Date();
         
-        // 更新分页信息
+        // Update pagination info
         if (result.total !== undefined) {
             monitorState.pagination = {
                 page: result.page || currentPage,
@@ -1210,15 +1210,15 @@ async function refreshMonitorPanelWithFilter(statusFilter = 'all', toolFilter = 
         renderMonitorExecutions(monitorState.executions, statusFilter);
         renderMonitorPagination();
         
-        // 初始化每页显示数量选择器
+        // Initialize per-page count selector
         initializeMonitorPageSize();
     } catch (error) {
-        console.error('刷新监控面板失败:', error);
+        console.error('Failed to refresh monitor panel:', error);
         if (statsContainer) {
-            statsContainer.innerHTML = `<div class="monitor-error">无法加载统计信息：${escapeHtml(error.message)}</div>`;
+            statsContainer.innerHTML = `<div class="monitor-error">Failed to load statistics: ${escapeHtml(error.message)}</div>`;
         }
         if (execContainer) {
-            execContainer.innerHTML = `<div class="monitor-error">无法加载执行记录：${escapeHtml(error.message)}</div>`;
+            execContainer.innerHTML = `<div class="monitor-error">Failed to load execution records: ${escapeHtml(error.message)}</div>`;
         }
     }
 }
@@ -1232,11 +1232,11 @@ function renderMonitorStats(statsMap = {}, lastFetchedAt = null) {
 
     const entries = Object.values(statsMap);
     if (entries.length === 0) {
-        container.innerHTML = '<div class="monitor-empty">暂无统计数据</div>';
+        container.innerHTML = '<div class="monitor-empty">No statistics data</div>';
         return;
     }
 
-    // 计算总体汇总
+    // Calculate overall summary
     const totals = entries.reduce(
         (acc, item) => {
             acc.total += item.totalCalls || 0;
@@ -1253,27 +1253,27 @@ function renderMonitorStats(statsMap = {}, lastFetchedAt = null) {
 
     const successRate = totals.total > 0 ? ((totals.success / totals.total) * 100).toFixed(1) : '0.0';
     const lastUpdatedText = lastFetchedAt ? lastFetchedAt.toLocaleString('zh-CN') : 'N/A';
-    const lastCallText = totals.lastCallTime ? totals.lastCallTime.toLocaleString('zh-CN') : '暂无调用';
+    const lastCallText = totals.lastCallTime ? totals.lastCallTime.toLocaleString('en-US') : 'No calls';
 
     let html = `
         <div class="monitor-stat-card">
-            <h4>总调用次数</h4>
+            <h4>Total Calls</h4>
             <div class="monitor-stat-value">${totals.total}</div>
-            <div class="monitor-stat-meta">成功 ${totals.success} / 失败 ${totals.failed}</div>
+            <div class="monitor-stat-meta">Success ${totals.success} / Failed ${totals.failed}</div>
         </div>
         <div class="monitor-stat-card">
-            <h4>成功率</h4>
+            <h4>Success Rate</h4>
             <div class="monitor-stat-value">${successRate}%</div>
-            <div class="monitor-stat-meta">统计自全部工具调用</div>
+            <div class="monitor-stat-meta">Across all tool calls</div>
         </div>
         <div class="monitor-stat-card">
-            <h4>最近一次调用</h4>
+            <h4>Last Call</h4>
             <div class="monitor-stat-value" style="font-size:1rem;">${lastCallText}</div>
-            <div class="monitor-stat-meta">最后刷新时间：${lastUpdatedText}</div>
+            <div class="monitor-stat-meta">Last refreshed: ${lastUpdatedText}</div>
         </div>
     `;
 
-    // 显示最多前4个工具的统计（过滤掉 totalCalls 为 0 的工具）
+    // Show statistics for at most the top 4 tools (filter out tools with totalCalls = 0)
     const topTools = entries
         .filter(tool => (tool.totalCalls || 0) > 0)
         .slice()
@@ -1284,10 +1284,10 @@ function renderMonitorStats(statsMap = {}, lastFetchedAt = null) {
         const toolSuccessRate = tool.totalCalls > 0 ? ((tool.successCalls || 0) / tool.totalCalls * 100).toFixed(1) : '0.0';
         html += `
             <div class="monitor-stat-card">
-                <h4>${escapeHtml(tool.toolName || '未知工具')}</h4>
+                <h4>${escapeHtml(tool.toolName || 'Unknown tool')}</h4>
                 <div class="monitor-stat-value">${tool.totalCalls || 0}</div>
                 <div class="monitor-stat-meta">
-                    成功 ${tool.successCalls || 0} / 失败 ${tool.failedCalls || 0} · 成功率 ${toolSuccessRate}%
+                    Success ${tool.successCalls || 0} / Failed ${tool.failedCalls || 0} · Success rate ${toolSuccessRate}%
                 </div>
             </div>
         `;
@@ -1303,16 +1303,16 @@ function renderMonitorExecutions(executions = [], statusFilter = 'all') {
     }
 
     if (!Array.isArray(executions) || executions.length === 0) {
-        // 根据是否有筛选条件显示不同的提示
+        // Show different messages based on whether filter conditions are present
         const toolFilter = document.getElementById('monitor-tool-filter');
         const currentToolFilter = toolFilter ? toolFilter.value : 'all';
         const hasFilter = (statusFilter && statusFilter !== 'all') || (currentToolFilter && currentToolFilter !== 'all');
         if (hasFilter) {
-            container.innerHTML = '<div class="monitor-empty">当前筛选条件下暂无记录</div>';
+            container.innerHTML = '<div class="monitor-empty">No records under current filter conditions</div>';
         } else {
-            container.innerHTML = '<div class="monitor-empty">暂无执行记录</div>';
+            container.innerHTML = '<div class="monitor-empty">No execution records</div>';
         }
-        // 隐藏批量操作栏
+        // Hide bulk actions bar
         const batchActions = document.getElementById('monitor-batch-actions');
         if (batchActions) {
             batchActions.style.display = 'none';
@@ -1320,16 +1320,16 @@ function renderMonitorExecutions(executions = [], statusFilter = 'all') {
         return;
     }
 
-    // 由于筛选已经在后端完成，这里直接使用所有传入的执行记录
-    // 不再需要前端再次筛选，因为后端已经返回了筛选后的数据
+    // Since filtering is done on the backend, directly use all passed execution records
+    // No need to filter on the frontend again since the backend has already returned filtered data
     const rows = executions
         .map(exec => {
             const status = (exec.status || 'unknown').toLowerCase();
             const statusClass = `monitor-status-chip ${status}`;
             const statusLabel = getStatusText(status);
-            const startTime = exec.startTime ? new Date(exec.startTime).toLocaleString('zh-CN') : '未知';
+            const startTime = exec.startTime ? new Date(exec.startTime).toLocaleString('zh-CN') : 'Unknown';
             const duration = formatExecutionDuration(exec.startTime, exec.endTime);
-            const toolName = escapeHtml(exec.toolName || '未知工具');
+            const toolName = escapeHtml(exec.toolName || 'Unknown Tool');
             const executionId = escapeHtml(exec.id || '');
             return `
                 <tr>
@@ -1342,8 +1342,8 @@ function renderMonitorExecutions(executions = [], statusFilter = 'all') {
                     <td>${duration}</td>
                     <td>
                         <div class="monitor-execution-actions">
-                            <button class="btn-secondary" onclick="showMCPDetail('${executionId}')">查看详情</button>
-                            <button class="btn-secondary btn-delete" onclick="deleteExecution('${executionId}')" title="删除此执行记录">删除</button>
+                            <button class="btn-secondary" onclick="showMCPDetail('${executionId}')">ViewDetails</button>
+                            <button class="btn-secondary btn-delete" onclick="deleteExecution('${executionId}')" title="Delete this execution record">Delete</button>
                         </div>
                     </td>
                 </tr>
@@ -1351,18 +1351,18 @@ function renderMonitorExecutions(executions = [], statusFilter = 'all') {
         })
         .join('');
 
-    // 先移除旧的表格容器和加载提示（保留分页控件）
+    // First remove old table container and loading message (keep pagination controls)
     const oldTableContainer = container.querySelector('.monitor-table-container');
     if (oldTableContainer) {
         oldTableContainer.remove();
     }
-    // 清除"加载中..."等提示信息
+    // Clear loading messages
     const oldEmpty = container.querySelector('.monitor-empty');
     if (oldEmpty) {
         oldEmpty.remove();
     }
     
-    // 创建表格容器
+    // Create table container
     const tableContainer = document.createElement('div');
     tableContainer.className = 'monitor-table-container';
     tableContainer.innerHTML = `
@@ -1372,18 +1372,18 @@ function renderMonitorExecutions(executions = [], statusFilter = 'all') {
                     <th style="width: 40px;">
                         <input type="checkbox" id="monitor-select-all" onchange="toggleSelectAll(this)" />
                     </th>
-                    <th>工具</th>
-                    <th>状态</th>
-                    <th>开始时间</th>
-                    <th>耗时</th>
-                    <th>操作</th>
+                    <th>Tool</th>
+                    <th>Status</th>
+                    <th>Start Time</th>
+                    <th>Duration</th>
+                    <th>Actions</th>
                 </tr>
             </thead>
             <tbody>${rows}</tbody>
         </table>
     `;
     
-    // 在分页控件之前插入表格（如果存在分页控件）
+    // Insert table before pagination controls (if they exist)
     const existingPagination = container.querySelector('.monitor-pagination');
     if (existingPagination) {
         container.insertBefore(tableContainer, existingPagination);
@@ -1391,16 +1391,16 @@ function renderMonitorExecutions(executions = [], statusFilter = 'all') {
         container.appendChild(tableContainer);
     }
     
-    // 更新批量操作状态
+    // Update bulk actions status
     updateBatchActionsState();
 }
 
-// 渲染监控面板分页控件
+// Render monitor panel pagination controls
 function renderMonitorPagination() {
     const container = document.getElementById('monitor-executions');
     if (!container) return;
     
-    // 移除旧的分页控件
+    // Remove old pagination controls
     const oldPagination = container.querySelector('.monitor-pagination');
     if (oldPagination) {
         oldPagination.remove();
@@ -1408,19 +1408,19 @@ function renderMonitorPagination() {
     
     const { page, totalPages, total, pageSize } = monitorState.pagination;
     
-    // 始终显示分页控件
+    // Always show pagination controls
     const pagination = document.createElement('div');
     pagination.className = 'monitor-pagination';
     
-    // 处理没有数据的情况
+    // Handle the no-data case
     const startItem = total === 0 ? 0 : (page - 1) * pageSize + 1;
     const endItem = total === 0 ? 0 : Math.min(page * pageSize, total);
     
     pagination.innerHTML = `
         <div class="pagination-info">
-            <span>显示 ${startItem}-${endItem} / 共 ${total} 条记录</span>
+            <span>Showing ${startItem}-${endItem} of ${total}</span>
             <label class="pagination-page-size">
-                每页显示
+                Per page:
                 <select id="monitor-page-size" onchange="changeMonitorPageSize()">
                     <option value="10" ${pageSize === 10 ? 'selected' : ''}>10</option>
                     <option value="20" ${pageSize === 20 ? 'selected' : ''}>20</option>
@@ -1430,28 +1430,28 @@ function renderMonitorPagination() {
             </label>
         </div>
         <div class="pagination-controls">
-            <button class="btn-secondary" onclick="refreshMonitorPanel(1)" ${page === 1 || total === 0 ? 'disabled' : ''}>首页</button>
-            <button class="btn-secondary" onclick="refreshMonitorPanel(${page - 1})" ${page === 1 || total === 0 ? 'disabled' : ''}>上一页</button>
-            <span class="pagination-page">第 ${page} / ${totalPages || 1} 页</span>
-            <button class="btn-secondary" onclick="refreshMonitorPanel(${page + 1})" ${page >= totalPages || total === 0 ? 'disabled' : ''}>下一页</button>
-            <button class="btn-secondary" onclick="refreshMonitorPanel(${totalPages || 1})" ${page >= totalPages || total === 0 ? 'disabled' : ''}>末页</button>
+            <button class="btn-secondary" onclick="refreshMonitorPanel(1)" ${page === 1 || total === 0 ? 'disabled' : ''}>First</button>
+            <button class="btn-secondary" onclick="refreshMonitorPanel(${page - 1})" ${page === 1 || total === 0 ? 'disabled' : ''}>Prev</button>
+            <span class="pagination-page">Page ${page} / ${totalPages || 1}</span>
+            <button class="btn-secondary" onclick="refreshMonitorPanel(${page + 1})" ${page >= totalPages || total === 0 ? 'disabled' : ''}>Next</button>
+            <button class="btn-secondary" onclick="refreshMonitorPanel(${totalPages || 1})" ${page >= totalPages || total === 0 ? 'disabled' : ''}>Last</button>
         </div>
     `;
     
     container.appendChild(pagination);
     
-    // 初始化每页显示数量选择器
+    // Initialize per-page count selector
     initializeMonitorPageSize();
 }
 
-// 删除执行记录
+// Delete execution record
 async function deleteExecution(executionId) {
     if (!executionId) {
         return;
     }
     
-    // 确认删除
-    if (!confirm('确定要删除此执行记录吗？此操作不可恢复。')) {
+    // ConfirmDelete
+    if (!confirm('Are you sure you want to delete this execution record? This action cannot be undone.')) {
         return;
     }
     
@@ -1462,21 +1462,21 @@ async function deleteExecution(executionId) {
         
         if (!response.ok) {
             const error = await response.json().catch(() => ({}));
-            throw new Error(error.error || '删除执行记录失败');
+            throw new Error(error.error || 'Failed to delete execution record');
         }
         
-        // 删除成功后刷新当前页面
+        // Refresh current page after successful deletion
         const currentPage = monitorState.pagination.page;
         await refreshMonitorPanel(currentPage);
         
-        alert('执行记录已删除');
+        alert('Execution record deleted');
     } catch (error) {
-        console.error('删除执行记录失败:', error);
-        alert('删除执行记录失败: ' + error.message);
+        console.error('Failed to delete execution record:', error);
+        alert('Failed to delete execution record: ' + error.message);
     }
 }
 
-// 更新批量操作状态
+// Update bulk actions status
 function updateBatchActionsState() {
     const checkboxes = document.querySelectorAll('.monitor-execution-checkbox:checked');
     const selectedCount = checkboxes.length;
@@ -1488,7 +1488,7 @@ function updateBatchActionsState() {
             batchActions.style.display = 'flex';
         }
         if (selectedCountSpan) {
-            selectedCountSpan.textContent = `已选择 ${selectedCount} 项`;
+            selectedCountSpan.textContent = `${selectedCount} selected`;
         }
     } else {
         if (batchActions) {
@@ -1496,7 +1496,7 @@ function updateBatchActionsState() {
         }
     }
     
-    // 更新全选复选框状态
+    // Update select-all checkbox status
     const selectAllCheckbox = document.getElementById('monitor-select-all');
     if (selectAllCheckbox) {
         const allCheckboxes = document.querySelectorAll('.monitor-execution-checkbox');
@@ -1506,7 +1506,7 @@ function updateBatchActionsState() {
     }
 }
 
-// 切换全选
+// Toggle select all
 function toggleSelectAll(checkbox) {
     const checkboxes = document.querySelectorAll('.monitor-execution-checkbox');
     checkboxes.forEach(cb => {
@@ -1515,7 +1515,7 @@ function toggleSelectAll(checkbox) {
     updateBatchActionsState();
 }
 
-// 全选
+// Select all
 function selectAllExecutions() {
     const checkboxes = document.querySelectorAll('.monitor-execution-checkbox');
     checkboxes.forEach(cb => {
@@ -1529,7 +1529,7 @@ function selectAllExecutions() {
     updateBatchActionsState();
 }
 
-// 取消全选
+// Deselect all
 function deselectAllExecutions() {
     const checkboxes = document.querySelectorAll('.monitor-execution-checkbox');
     checkboxes.forEach(cb => {
@@ -1543,19 +1543,19 @@ function deselectAllExecutions() {
     updateBatchActionsState();
 }
 
-// 批量删除执行记录
+// Bulk delete execution records
 async function batchDeleteExecutions() {
     const checkboxes = document.querySelectorAll('.monitor-execution-checkbox:checked');
     if (checkboxes.length === 0) {
-        alert('请先选择要删除的执行记录');
+        alert('Please select execution records to delete first');
         return;
     }
     
     const ids = Array.from(checkboxes).map(cb => cb.value);
     const count = ids.length;
     
-    // 确认删除
-    if (!confirm(`确定要删除选中的 ${count} 条执行记录吗？此操作不可恢复。`)) {
+    // ConfirmDelete
+    if (!confirm(`Are you sure you want to delete ${count} selected execution records? This action cannot be undone.`)) {
         return;
     }
     
@@ -1570,43 +1570,43 @@ async function batchDeleteExecutions() {
         
         if (!response.ok) {
             const error = await response.json().catch(() => ({}));
-            throw new Error(error.error || '批量删除执行记录失败');
+            throw new Error(error.error || 'Failed to bulk delete execution records');
         }
         
         const result = await response.json().catch(() => ({}));
         const deletedCount = result.deleted || count;
         
-        // 删除成功后刷新当前页面
+        // Refresh current page after successful deletion
         const currentPage = monitorState.pagination.page;
         await refreshMonitorPanel(currentPage);
         
-        alert(`成功删除 ${deletedCount} 条执行记录`);
+        alert(`Successfully deleted ${deletedCount} execution records`);
     } catch (error) {
-        console.error('批量删除执行记录失败:', error);
-        alert('批量删除执行记录失败: ' + error.message);
+        console.error('Failed to bulk delete execution records:', error);
+        alert('Failed to bulk delete execution records: ' + error.message);
     }
 }
 
 function formatExecutionDuration(start, end) {
     if (!start) {
-        return '未知';
+        return 'Unknown';
     }
     const startTime = new Date(start);
     const endTime = end ? new Date(end) : new Date();
     if (Number.isNaN(startTime.getTime()) || Number.isNaN(endTime.getTime())) {
-        return '未知';
+        return 'Unknown';
     }
     const diffMs = Math.max(0, endTime - startTime);
     const seconds = Math.floor(diffMs / 1000);
     if (seconds < 60) {
-        return `${seconds} 秒`;
+        return `${seconds}s`;
     }
     const minutes = Math.floor(seconds / 60);
     if (minutes < 60) {
         const remain = seconds % 60;
-        return remain > 0 ? `${minutes} 分 ${remain} 秒` : `${minutes} 分`;
+        return remain > 0 ? `${minutes}m ${remain}s` : `${minutes}m`;
     }
     const hours = Math.floor(minutes / 60);
     const remainMinutes = minutes % 60;
-    return remainMinutes > 0 ? `${hours} 小时 ${remainMinutes} 分` : `${hours} 小时`;
+    return remainMinutes > 0 ? `${hours}h ${remainMinutes}m` : `${hours}h`;
 }

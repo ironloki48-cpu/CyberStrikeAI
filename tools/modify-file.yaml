@@ -24,38 +24,38 @@ args:
     with path.open(mode, encoding="utf-8") as f:
         f.write(content)
 
-    action = "追加" if append else "覆盖"
-    print(f"{action}写入完成: {path}")
+    action = "Appended" if append else "Overwritten"
+    print(f"{action} write complete: {path}")
 enabled: true
-short_description: "修改文件工具"
+short_description: "File modification tool"
 description: |
-  修改服务器上的现有文件。
+  Modify existing files on the server.
 
-  **主要功能：**
-  - 修改文件
-  - 追加内容
-  - 覆盖内容
+  **Key Features:**
+  - Modify files
+  - Append content
+  - Overwrite content
 
-  **使用场景：**
-  - 文件编辑
-  - 内容追加
-  - 配置修改
+  **Use Cases:**
+  - File editing
+  - Content appending
+  - Configuration modification
 parameters:
   - name: "filename"
     type: "string"
-    description: "要修改的文件名"
+    description: "Filename to modify"
     required: true
     position: 0
     format: "positional"
   - name: "content"
     type: "string"
-    description: "要写入或追加的内容"
+    description: "Content to write or append"
     required: true
     position: 1
     format: "positional"
   - name: "append"
     type: "bool"
-    description: "是否追加（true）或覆盖（false）"
+    description: "Whether to append (true) or overwrite (false)"
     required: false
     default: false
     position: 2
@@ -63,14 +63,14 @@ parameters:
   - name: "additional_args"
     type: "string"
     description: |
-      额外的modify-file参数。用于传递未在参数列表中定义的modify-file选项。
+      Additional modify-file parameters. Used to pass modify-file options not defined in the parameter list.
 
-      **示例值：**
-      - 根据工具特性添加常用参数示例
+      **Example values:**
+      - Add common parameter examples based on tool characteristics
 
-      **注意事项：**
-      - 多个参数用空格分隔
-      - 确保参数格式正确，避免命令注入
-      - 此参数会直接追加到命令末尾
+      **Notes:**
+      - Multiple parameters separated by spaces
+      - Ensure parameter format is correct to avoid command injection
+      - This parameter will be appended directly to the end of the command
     required: false
     format: "positional"

@@ -28,7 +28,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// App 应用
+// App application
 type App struct {
 	config             *config.Config
 	logger             *logger.Logger
@@ -38,59 +38,59 @@ type App struct {
 	agent              *agent.Agent
 	executor           *security.Executor
 	db                 *database.DB
-	knowledgeDB        *database.DB // 知识库数据库连接（如果使用独立数据库）
+	knowledgeDB        *database.DB // knowledge base database connection (if using a separate database)
 	auth               *security.AuthManager
-	knowledgeManager   *knowledge.Manager        // 知识库管理器（用于动态初始化）
-	knowledgeRetriever *knowledge.Retriever      // 知识库检索器（用于动态初始化）
-	knowledgeIndexer   *knowledge.Indexer        // 知识库索引器（用于动态初始化）
-	knowledgeHandler   *handler.KnowledgeHandler // 知识库处理器（用于动态初始化）
-	agentHandler       *handler.AgentHandler     // Agent处理器（用于更新知识库管理器）
-	robotHandler       *handler.RobotHandler     // 机器人处理器（钉钉/飞书/企业微信）
-	robotMu            sync.Mutex                 // 保护钉钉/飞书长连接的 cancel
-	dingCancel         context.CancelFunc        // 钉钉 Stream 取消函数，用于配置变更时重启
-	larkCancel         context.CancelFunc        // 飞书长连接取消函数，用于配置变更时重启
+	knowledgeManager   *knowledge.Manager        // knowledge base manager (for dynamic initialization)
+	knowledgeRetriever *knowledge.Retriever      // knowledge base retriever (for dynamic initialization)
+	knowledgeIndexer   *knowledge.Indexer        // knowledge base indexer (for dynamic initialization)
+	knowledgeHandler   *handler.KnowledgeHandler // knowledge base handler (for dynamic initialization)
+	agentHandler       *handler.AgentHandler     // Agent handler (for updating knowledge base manager)
+	robotHandler       *handler.RobotHandler     // robot handler (DingTalk/Lark/WeCom)
+	robotMu            sync.Mutex                 // protects DingTalk/Lark long connection cancel
+	dingCancel         context.CancelFunc        // DingTalk Stream cancel function, used to restart on config change
+	larkCancel         context.CancelFunc        // Lark long connection cancel function, used to restart on config change
 }
 
-// New 创建新应用
+// New creates a new application
 func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.Default()
 
-	// CORS中间件
+	// CORS middleware
 	router.Use(corsMiddleware())
 
-	// 认证管理器
+	// authentication manager
 	authManager, err := security.NewAuthManager(cfg.Auth.Password, cfg.Auth.SessionDurationHours)
 	if err != nil {
-		return nil, fmt.Errorf("初始化认证失败: %w", err)
+		return nil, fmt.Errorf("failed to initialize authentication: %w", err)
 	}
 
-	// 初始化数据库
+	// initialize database
 	dbPath := cfg.Database.Path
 	if dbPath == "" {
 		dbPath = "data/conversations.db"
 	}
 
-	// 确保目录存在
+	// ensure directory exists
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
-		return nil, fmt.Errorf("创建数据库目录失败: %w", err)
+		return nil, fmt.Errorf("failed to create database directory: %w", err)
 	}
 
 	db, err := database.NewDB(dbPath, log.Logger)
 	if err != nil {
-		return nil, fmt.Errorf("初始化数据库失败: %w", err)
+		return nil, fmt.Errorf("failed to initialize database: %w", err)
 	}
 
-	// 创建MCP服务器（带数据库持久化）
+	// create MCP server (with database persistence)
 	mcpServer := mcp.NewServerWithStorage(log.Logger, db)
 
-	// 创建安全工具执行器
+	// create security tool executor
 	executor := security.NewExecutor(&cfg.Security, mcpServer, log.Logger)
 
-	// 注册工具
+	// register tools
 	executor.RegisterTools(mcpServer)
 
-	// 注册漏洞记录工具
+	// register vulnerability recording tool
 	registerVulnerabilityTool(mcpServer, db, log.Logger)
 
 	if cfg.Auth.GeneratedPassword != "" {
@@ -100,82 +100,82 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		cfg.Auth.GeneratedPasswordPersistErr = ""
 	}
 
-	// 创建外部MCP管理器（使用与内部MCP服务器相同的存储）
+	// create external MCP manager (using the same storage as the internal MCP server)
 	externalMCPMgr := mcp.NewExternalMCPManagerWithStorage(log.Logger, db)
 	if cfg.ExternalMCP.Servers != nil {
 		externalMCPMgr.LoadConfigs(&cfg.ExternalMCP)
-		// 启动所有启用的外部MCP客户端
+		// start all enabled external MCP clients
 		externalMCPMgr.StartAllEnabled()
 	}
 
-	// 初始化结果存储
+	// initialize result storage
 	resultStorageDir := "tmp"
 	if cfg.Agent.ResultStorageDir != "" {
 		resultStorageDir = cfg.Agent.ResultStorageDir
 	}
 
-	// 确保存储目录存在
+	// ensure storage directory exists
 	if err := os.MkdirAll(resultStorageDir, 0755); err != nil {
-		return nil, fmt.Errorf("创建结果存储目录失败: %w", err)
+		return nil, fmt.Errorf("failed to create result storage directory: %w", err)
 	}
 
-	// 创建结果存储实例
+	// create result storage instance
 	resultStorage, err := storage.NewFileResultStorage(resultStorageDir, log.Logger)
 	if err != nil {
-		return nil, fmt.Errorf("初始化结果存储失败: %w", err)
+		return nil, fmt.Errorf("failed to initialize result storage: %w", err)
 	}
 
-	// 创建Agent
+	// create Agent
 	maxIterations := cfg.Agent.MaxIterations
 	if maxIterations <= 0 {
-		maxIterations = 30 // 默认值
+		maxIterations = 30 // default value
 	}
 	agent := agent.NewAgent(&cfg.OpenAI, &cfg.Agent, mcpServer, externalMCPMgr, log.Logger, maxIterations)
 
-	// 设置结果存储到Agent
+	// set result storage on Agent
 	agent.SetResultStorage(resultStorage)
 
-	// 设置结果存储到Executor（用于查询工具）
+	// set result storage on Executor (for query tools)
 	executor.SetResultStorage(resultStorage)
 
-	// 初始化知识库模块（如果启用）
+	// initialize knowledge base module (if enabled)
 	var knowledgeManager *knowledge.Manager
 	var knowledgeRetriever *knowledge.Retriever
 	var knowledgeIndexer *knowledge.Indexer
 	var knowledgeHandler *handler.KnowledgeHandler
 
 	var knowledgeDBConn *database.DB
-	log.Logger.Info("检查知识库配置", zap.Bool("enabled", cfg.Knowledge.Enabled))
+	log.Logger.Info("checking knowledge base configuration", zap.Bool("enabled", cfg.Knowledge.Enabled))
 	if cfg.Knowledge.Enabled {
-		// 确定知识库数据库路径
+		// determine knowledge base database path
 		knowledgeDBPath := cfg.Database.KnowledgeDBPath
 		var knowledgeDB *sql.DB
 
 		if knowledgeDBPath != "" {
-			// 使用独立的知识库数据库
-			// 确保目录存在
+			// use a separate knowledge base database
+			// ensure directory exists
 			if err := os.MkdirAll(filepath.Dir(knowledgeDBPath), 0755); err != nil {
-				return nil, fmt.Errorf("创建知识库数据库目录失败: %w", err)
+				return nil, fmt.Errorf("failed to create knowledge base database directory: %w", err)
 			}
 
 			var err error
 			knowledgeDBConn, err = database.NewKnowledgeDB(knowledgeDBPath, log.Logger)
 			if err != nil {
-				return nil, fmt.Errorf("初始化知识库数据库失败: %w", err)
+				return nil, fmt.Errorf("failed to initialize knowledge base database: %w", err)
 			}
 			knowledgeDB = knowledgeDBConn.DB
-			log.Logger.Info("使用独立的知识库数据库", zap.String("path", knowledgeDBPath))
+			log.Logger.Info("using separate knowledge base database", zap.String("path", knowledgeDBPath))
 		} else {
-			// 向后兼容：使用会话数据库
+			// backward compatibility: use the conversation database
 			knowledgeDB = db.DB
-			log.Logger.Info("使用会话数据库存储知识库数据（建议配置knowledge_db_path以分离数据）")
+			log.Logger.Info("using conversation database for knowledge base data (recommended to configure knowledge_db_path to separate data)")
 		}
 
-		// 创建知识库管理器
+		// create knowledge base manager
 		knowledgeManager = knowledge.NewManager(knowledgeDB, cfg.Knowledge.BasePath, log.Logger)
 
-		// 创建嵌入器
-		// 使用OpenAI配置的API Key（如果知识库配置中没有指定）
+		// create embedder
+		// use OpenAI config API Key (if not specified in knowledge base config)
 		if cfg.Knowledge.Embedding.APIKey == "" {
 			cfg.Knowledge.Embedding.APIKey = cfg.OpenAI.APIKey
 		}
@@ -189,7 +189,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		openAIClient := openai.NewClient(&cfg.OpenAI, httpClient, log.Logger)
 		embedder := knowledge.NewEmbedder(&cfg.Knowledge, &cfg.OpenAI, openAIClient, log.Logger)
 
-		// 创建检索器
+		// create retriever
 		retrievalConfig := &knowledge.RetrievalConfig{
 			TopK:                cfg.Knowledge.Retrieval.TopK,
 			SimilarityThreshold: cfg.Knowledge.Retrieval.SimilarityThreshold,
@@ -197,35 +197,35 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		}
 		knowledgeRetriever = knowledge.NewRetriever(knowledgeDB, embedder, retrievalConfig, log.Logger)
 
-		// 创建索引器
+		// create indexer
 		knowledgeIndexer = knowledge.NewIndexer(knowledgeDB, embedder, log.Logger)
 
-		// 注册知识检索工具到MCP服务器
+		// register knowledge retrieval tool to MCP server
 		knowledge.RegisterKnowledgeTool(mcpServer, knowledgeRetriever, knowledgeManager, log.Logger)
 
-		// 创建知识库API处理器
+		// create knowledge base API handler
 		knowledgeHandler = handler.NewKnowledgeHandler(knowledgeManager, knowledgeRetriever, knowledgeIndexer, db, log.Logger)
-		log.Logger.Info("知识库模块初始化完成", zap.Bool("handler_created", knowledgeHandler != nil))
+		log.Logger.Info("knowledge base module initialization complete", zap.Bool("handler_created", knowledgeHandler != nil))
 
-		// 扫描知识库并建立索引（异步）
+		// scan knowledge base and build index (async)
 		go func() {
 			itemsToIndex, err := knowledgeManager.ScanKnowledgeBase()
 			if err != nil {
-				log.Logger.Warn("扫描知识库失败", zap.Error(err))
+				log.Logger.Warn("failed to scan knowledge base", zap.Error(err))
 				return
 			}
 
-			// 检查是否已有索引
+			// check if index already exists
 			hasIndex, err := knowledgeIndexer.HasIndex()
 			if err != nil {
-				log.Logger.Warn("检查索引状态失败", zap.Error(err))
+				log.Logger.Warn("failed to check index status", zap.Error(err))
 				return
 			}
 
 			if hasIndex {
-				// 如果已有索引，只索引新添加或更新的项
+				// if index exists, only index newly added or updated items
 				if len(itemsToIndex) > 0 {
-					log.Logger.Info("检测到已有知识库索引，开始增量索引", zap.Int("count", len(itemsToIndex)))
+					log.Logger.Info("existing knowledge base index detected, starting incremental indexing", zap.Int("count", len(itemsToIndex)))
 					ctx := context.Background()
 					consecutiveFailures := 0
 					var firstFailureItemID string
@@ -240,12 +240,12 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 							if consecutiveFailures == 1 {
 								firstFailureItemID = itemID
 								firstFailureError = err
-								log.Logger.Warn("索引知识项失败", zap.String("itemId", itemID), zap.Error(err))
+								log.Logger.Warn("failed to index knowledge item", zap.String("itemId", itemID), zap.Error(err))
 							}
 
-							// 如果连续失败2次，立即停止增量索引
+							// if 2 consecutive failures, immediately stop incremental indexing
 							if consecutiveFailures >= 2 {
-								log.Logger.Error("连续索引失败次数过多，立即停止增量索引",
+								log.Logger.Error("too many consecutive index failures, stopping incremental indexing immediately",
 									zap.Int("consecutiveFailures", consecutiveFailures),
 									zap.Int("totalItems", len(itemsToIndex)),
 									zap.String("firstFailureItemId", firstFailureItemID),
@@ -256,65 +256,65 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 							continue
 						}
 
-						// 成功时重置连续失败计数
+						// reset consecutive failure count on success
 						if consecutiveFailures > 0 {
 							consecutiveFailures = 0
 							firstFailureItemID = ""
 							firstFailureError = nil
 						}
 					}
-					log.Logger.Info("增量索引完成", zap.Int("totalItems", len(itemsToIndex)), zap.Int("failedCount", failedCount))
+					log.Logger.Info("incremental indexing complete", zap.Int("totalItems", len(itemsToIndex)), zap.Int("failedCount", failedCount))
 				} else {
-					log.Logger.Info("检测到已有知识库索引，没有需要索引的新项或更新项")
+					log.Logger.Info("existing knowledge base index detected, no new or updated items to index")
 				}
 				return
 			}
 
-			// 只有在没有索引时才自动重建
-			log.Logger.Info("未检测到知识库索引，开始自动构建索引")
+			// only auto-rebuild when no index exists
+			log.Logger.Info("no knowledge base index detected, starting automatic index build")
 			ctx := context.Background()
 			if err := knowledgeIndexer.RebuildIndex(ctx); err != nil {
-				log.Logger.Warn("重建知识库索引失败", zap.Error(err))
+				log.Logger.Warn("failed to rebuild knowledge base index", zap.Error(err))
 			}
 		}()
 	}
 
-	// 获取配置文件路径
+	// get config file path
 	configPath := "config.yaml"
 	if len(os.Args) > 1 {
 		configPath = os.Args[1]
 	}
 
-	// 初始化Skills管理器
+	// initialize Skills manager
 	skillsDir := cfg.SkillsDir
 	if skillsDir == "" {
-		skillsDir = "skills" // 默认目录
+		skillsDir = "skills" // default directory
 	}
-	// 如果是相对路径，相对于配置文件所在目录
+	// if relative path, relative to the config file directory
 	configDir := filepath.Dir(configPath)
 	if !filepath.IsAbs(skillsDir) {
 		skillsDir = filepath.Join(configDir, skillsDir)
 	}
 	skillsManager := skills.NewManager(skillsDir, log.Logger)
-	log.Logger.Info("Skills管理器已初始化", zap.String("skillsDir", skillsDir))
+	log.Logger.Info("Skills manager initialized", zap.String("skillsDir", skillsDir))
 
-	// 注册Skills工具到MCP服务器（让AI可以按需调用，带数据库存储支持统计）
-	// 创建一个适配器，将database.DB适配为SkillStatsStorage接口
+	// register Skills tool to MCP server (allowing AI to call on demand, with database storage for statistics)
+	// create an adapter to adapt database.DB to the SkillStatsStorage interface
 	var skillStatsStorage skills.SkillStatsStorage
 	if db != nil {
 		skillStatsStorage = &skillStatsDBAdapter{db: db}
 	}
 	skills.RegisterSkillsToolWithStorage(mcpServer, skillsManager, skillStatsStorage, log.Logger)
 
-	// 创建处理器
+	// create handlers
 	agentHandler := handler.NewAgentHandler(agent, db, cfg, log.Logger)
-	agentHandler.SetSkillsManager(skillsManager) // 设置Skills管理器
-	// 如果知识库已启用，设置知识库管理器到AgentHandler以便记录检索日志
+	agentHandler.SetSkillsManager(skillsManager) // set Skills manager
+	// if knowledge base is enabled, set knowledge base manager on AgentHandler for retrieval log recording
 	if knowledgeManager != nil {
 		agentHandler.SetKnowledgeManager(knowledgeManager)
 	}
 	monitorHandler := handler.NewMonitorHandler(mcpServer, executor, db, log.Logger)
-	monitorHandler.SetExternalMCPManager(externalMCPMgr) // 设置外部MCP管理器，以便获取外部MCP执行记录
+	monitorHandler.SetExternalMCPManager(externalMCPMgr) // set external MCP manager to get external MCP execution records
 	groupHandler := handler.NewGroupHandler(db, log.Logger)
 	authHandler := handler.NewAuthHandler(authManager, cfg, configPath, log.Logger)
 	attackChainHandler := handler.NewAttackChainHandler(db, &cfg.OpenAI, log.Logger)
@@ -322,20 +322,20 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	configHandler := handler.NewConfigHandler(configPath, cfg, mcpServer, executor, agent, attackChainHandler, externalMCPMgr, log.Logger)
 	externalMCPHandler := handler.NewExternalMCPHandler(externalMCPMgr, cfg, configPath, log.Logger)
 	roleHandler := handler.NewRoleHandler(cfg, configPath, log.Logger)
-	roleHandler.SetSkillsManager(skillsManager) // 设置Skills管理器到RoleHandler
+	roleHandler.SetSkillsManager(skillsManager) // set Skills manager on RoleHandler
 	skillsHandler := handler.NewSkillsHandler(skillsManager, cfg, configPath, log.Logger)
 	fofaHandler := handler.NewFofaHandler(cfg, log.Logger)
 	terminalHandler := handler.NewTerminalHandler(log.Logger)
 	if db != nil {
-		skillsHandler.SetDB(db) // 设置数据库连接以便获取调用统计
+		skillsHandler.SetDB(db) // set database connection for fetching call statistics
 	}
 
-	// 创建OpenAPI处理器
+	// create OpenAPI handler
 	conversationHandler := handler.NewConversationHandler(db, log.Logger)
 	robotHandler := handler.NewRobotHandler(cfg, db, agentHandler, log.Logger)
 	openAPIHandler := handler.NewOpenAPIHandler(db, log.Logger, resultStorage, conversationHandler, agentHandler)
 
-	// 创建 App 实例（部分字段稍后填充）
+	// create App instance (some fields filled in later)
 	app := &App{
 		config:             cfg,
 		logger:             log,
@@ -354,19 +354,19 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		agentHandler:       agentHandler,
 		robotHandler:       robotHandler,
 	}
-	// 飞书/钉钉长连接（无需公网），启用时在后台启动；后续前端应用配置时会通过 RestartRobotConnections 重启
+	// Lark/DingTalk long connections (no public network needed), start in background when enabled; will be restarted via RestartRobotConnections when frontend applies config
 	app.startRobotConnections()
 
-	// 设置漏洞工具注册器（内置工具，必须设置）
+	// set vulnerability tool registrar (built-in tool, must be set)
 	vulnerabilityRegistrar := func() error {
 		registerVulnerabilityTool(mcpServer, db, log.Logger)
 		return nil
 	}
 	configHandler.SetVulnerabilityToolRegistrar(vulnerabilityRegistrar)
 
-	// 设置Skills工具注册器（内置工具，必须设置）
+	// set Skills tool registrar (built-in tool, must be set)
 	skillsRegistrar := func() error {
-		// 创建一个适配器，将database.DB适配为SkillStatsStorage接口
+		// create an adapter to adapt database.DB to the SkillStatsStorage interface
 		var skillStatsStorage skills.SkillStatsStorage
 		if db != nil {
 			skillStatsStorage = &skillStatsDBAdapter{db: db}
@@ -376,46 +376,46 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	}
 	configHandler.SetSkillsToolRegistrar(skillsRegistrar)
 
-	// 设置知识库初始化器（用于动态初始化，需要在 App 创建后设置）
+	// set knowledge base initializer (for dynamic initialization, must be set after App is created)
 	configHandler.SetKnowledgeInitializer(func() (*handler.KnowledgeHandler, error) {
 		knowledgeHandler, err := initializeKnowledge(cfg, db, knowledgeDBConn, mcpServer, agentHandler, app, log.Logger)
 		if err != nil {
 			return nil, err
 		}
 
-		// 动态初始化后，设置知识库工具注册器和检索器更新器
-		// 这样后续 ApplyConfig 时就能重新注册工具了
+		// after dynamic initialization, set knowledge base tool registrar and retriever updater
+		// so that subsequent ApplyConfig calls can re-register tools
 		if app.knowledgeRetriever != nil && app.knowledgeManager != nil {
-			// 创建闭包，捕获knowledgeRetriever和knowledgeManager的引用
+			// create closure, capturing references to knowledgeRetriever and knowledgeManager
 			registrar := func() error {
 				knowledge.RegisterKnowledgeTool(mcpServer, app.knowledgeRetriever, app.knowledgeManager, log.Logger)
 				return nil
 			}
 			configHandler.SetKnowledgeToolRegistrar(registrar)
-			// 设置检索器更新器，以便在ApplyConfig时更新检索器配置
+			// set retriever updater so ApplyConfig can update retriever config
 			configHandler.SetRetrieverUpdater(app.knowledgeRetriever)
-			log.Logger.Info("动态初始化后已设置知识库工具注册器和检索器更新器")
+			log.Logger.Info("knowledge base tool registrar and retriever updater set after dynamic initialization")
 		}
 
 		return knowledgeHandler, nil
 	})
 
-	// 如果知识库已启用，设置知识库工具注册器和检索器更新器
+	// if knowledge base is enabled, set knowledge base tool registrar and retriever updater
 	if cfg.Knowledge.Enabled && knowledgeRetriever != nil && knowledgeManager != nil {
-		// 创建闭包，捕获knowledgeRetriever和knowledgeManager的引用
+		// create closure, capturing references to knowledgeRetriever and knowledgeManager
 		registrar := func() error {
 			knowledge.RegisterKnowledgeTool(mcpServer, knowledgeRetriever, knowledgeManager, log.Logger)
 			return nil
 		}
 		configHandler.SetKnowledgeToolRegistrar(registrar)
-		// 设置检索器更新器，以便在ApplyConfig时更新检索器配置
+		// set retriever updater so ApplyConfig can update retriever config
 		configHandler.SetRetrieverUpdater(knowledgeRetriever)
 	}
 
-	// 设置机器人连接重启器，前端应用配置后无需重启服务即可使钉钉/飞书新配置生效
+	// set robot connection restarter, so new DingTalk/Lark config takes effect without restarting the service
 	configHandler.SetRobotRestarter(app)
 
-	// 设置路由（使用 App 实例以便动态获取 handler）
+	// set up routes (using App instance for dynamic handler access)
 	setupRoutes(
 		router,
 		authHandler,
@@ -427,7 +427,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		configHandler,
 		externalMCPHandler,
 		attackChainHandler,
-		app, // 传递 App 实例以便动态获取 knowledgeHandler
+		app, // pass App instance for dynamic knowledgeHandler access
 		vulnerabilityHandler,
 		roleHandler,
 		skillsHandler,
@@ -442,33 +442,33 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 
 }
 
-// Run 启动应用
+// Run starts the application
 func (a *App) Run() error {
-	// 启动MCP服务器（如果启用）
+	// start MCP server (if enabled)
 	if a.config.MCP.Enabled {
 		go func() {
 			mcpAddr := fmt.Sprintf("%s:%d", a.config.MCP.Host, a.config.MCP.Port)
-			a.logger.Info("启动MCP服务器", zap.String("address", mcpAddr))
+			a.logger.Info("starting MCP server", zap.String("address", mcpAddr))
 
 			mux := http.NewServeMux()
 			mux.HandleFunc("/mcp", a.mcpServer.HandleHTTP)
 
 			if err := http.ListenAndServe(mcpAddr, mux); err != nil {
-				a.logger.Error("MCP服务器启动失败", zap.Error(err))
+				a.logger.Error("MCP server failed to start", zap.Error(err))
 			}
 		}()
 	}
 
-	// 启动主服务器
+	// start main server
 	addr := fmt.Sprintf("%s:%d", a.config.Server.Host, a.config.Server.Port)
-	a.logger.Info("启动HTTP服务器", zap.String("address", addr))
+	a.logger.Info("starting HTTP server", zap.String("address", addr))
 
 	return a.router.Run(addr)
 }
 
-// Shutdown 关闭应用
+// Shutdown shuts down the application
 func (a *App) Shutdown() {
-	// 停止钉钉/飞书长连接
+	// stop DingTalk/Lark long connections
 	a.robotMu.Lock()
 	if a.dingCancel != nil {
 		a.dingCancel()
@@ -480,20 +480,20 @@ func (a *App) Shutdown() {
 	}
 	a.robotMu.Unlock()
 
-	// 停止所有外部MCP客户端
+	// stop all external MCP clients
 	if a.externalMCPMgr != nil {
 		a.externalMCPMgr.StopAll()
 	}
 
-	// 关闭知识库数据库连接（如果使用独立数据库）
+	// close knowledge base database connection (if using separate database)
 	if a.knowledgeDB != nil {
 		if err := a.knowledgeDB.Close(); err != nil {
-			a.logger.Logger.Warn("关闭知识库数据库连接失败", zap.Error(err))
+			a.logger.Logger.Warn("failed to close knowledge base database connection", zap.Error(err))
 		}
 	}
 }
 
-// startRobotConnections 根据当前配置启动钉钉/飞书长连接（不先关闭已有连接，仅用于首次启动）
+// startRobotConnections starts DingTalk/Lark long connections based on current config (does not close existing connections, for initial startup only)
 func (a *App) startRobotConnections() {
 	a.robotMu.Lock()
 	defer a.robotMu.Unlock()
@@ -510,7 +510,7 @@ func (a *App) startRobotConnections() {
 	}
 }
 
-// RestartRobotConnections 重启钉钉/飞书长连接，使前端应用配置后立即生效（实现 handler.RobotRestarter）
+// RestartRobotConnections restarts DingTalk/Lark long connections so frontend config changes take effect immediately (implements handler.RobotRestarter)
 func (a *App) RestartRobotConnections() {
 	a.robotMu.Lock()
 	if a.dingCancel != nil {
@@ -522,12 +522,12 @@ func (a *App) RestartRobotConnections() {
 		a.larkCancel = nil
 	}
 	a.robotMu.Unlock()
-	// 给旧 goroutine 一点时间退出
+	// give old goroutines a moment to exit
 	time.Sleep(200 * time.Millisecond)
 	a.startRobotConnections()
 }
 
-// setupRoutes 设置路由
+// setupRoutes sets up routes
 func setupRoutes(
 	router *gin.Engine,
 	authHandler *handler.AuthHandler,
@@ -539,7 +539,7 @@ func setupRoutes(
 	configHandler *handler.ConfigHandler,
 	externalMCPHandler *handler.ExternalMCPHandler,
 	attackChainHandler *handler.AttackChainHandler,
-	app *App, // 传递 App 实例以便动态获取 knowledgeHandler
+	app *App, // pass App instance for dynamic knowledgeHandler access
 	vulnerabilityHandler *handler.VulnerabilityHandler,
 	roleHandler *handler.RoleHandler,
 	skillsHandler *handler.SkillsHandler,
@@ -549,10 +549,10 @@ func setupRoutes(
 	authManager *security.AuthManager,
 	openAPIHandler *handler.OpenAPIHandler,
 ) {
-	// API路由
+	// API routes
 	api := router.Group("/api")
 
-	// 认证相关路由
+	// authentication routes
 	authRoutes := api.Group("/auth")
 	{
 		authRoutes.POST("/login", authHandler.Login)
@@ -561,7 +561,7 @@ func setupRoutes(
 		authRoutes.GET("/validate", security.AuthMiddleware(authManager), authHandler.Validate)
 	}
 
-	// 机器人回调（无需登录，供企业微信/钉钉/飞书服务器调用）
+	// robot callbacks (no login required, called by WeCom/DingTalk/Lark servers)
 	api.GET("/robot/wecom", robotHandler.HandleWecomGET)
 	api.POST("/robot/wecom", robotHandler.HandleWecomPOST)
 	api.POST("/robot/dingtalk", robotHandler.HandleDingtalkPOST)
@@ -570,24 +570,24 @@ func setupRoutes(
 	protected := api.Group("")
 	protected.Use(security.AuthMiddleware(authManager))
 	{
-		// 机器人测试（需登录）：POST /api/robot/test，body: {"platform":"dingtalk","user_id":"test","text":"帮助"}，用于验证机器人逻辑
+		// robot test (login required): POST /api/robot/test, body: {"platform":"dingtalk","user_id":"test","text":"help"}, used to verify robot logic
 		protected.POST("/robot/test", robotHandler.HandleRobotTest)
 
 		// Agent Loop
 		protected.POST("/agent-loop", agentHandler.AgentLoop)
-		// Agent Loop 流式输出
+		// Agent Loop streaming output
 		protected.POST("/agent-loop/stream", agentHandler.AgentLoopStream)
-		// Agent Loop 取消与任务列表
+		// Agent Loop cancel and task list
 		protected.POST("/agent-loop/cancel", agentHandler.CancelAgentLoop)
 		protected.GET("/agent-loop/tasks", agentHandler.ListAgentTasks)
 		protected.GET("/agent-loop/tasks/completed", agentHandler.ListCompletedTasks)
 
-		// 信息收集 - FOFA 查询（后端代理）
+		// information gathering - FOFA query (backend proxy)
 		protected.POST("/fofa/search", fofaHandler.Search)
-		// 信息收集 - 自然语言解析为 FOFA 语法（需人工确认后再查询）
+		// information gathering - parse natural language to FOFA syntax (requires manual confirmation before querying)
 		protected.POST("/fofa/parse", fofaHandler.ParseNaturalLanguage)
 
-		// 批量任务管理
+		// batch task management
 		protected.POST("/batch-tasks", agentHandler.CreateBatchQueue)
 		protected.GET("/batch-tasks", agentHandler.ListBatchQueues)
 		protected.GET("/batch-tasks/:queueId", agentHandler.GetBatchQueue)
@@ -598,7 +598,7 @@ func setupRoutes(
 		protected.POST("/batch-tasks/:queueId/tasks", agentHandler.AddBatchTask)
 		protected.DELETE("/batch-tasks/:queueId/tasks/:taskId", agentHandler.DeleteBatchTask)
 
-		// 对话历史
+		// conversation history
 		protected.POST("/conversations", conversationHandler.CreateConversation)
 		protected.GET("/conversations", conversationHandler.ListConversations)
 		protected.GET("/conversations/:id", conversationHandler.GetConversation)
@@ -606,7 +606,7 @@ func setupRoutes(
 		protected.DELETE("/conversations/:id", conversationHandler.DeleteConversation)
 		protected.PUT("/conversations/:id/pinned", groupHandler.UpdateConversationPinned)
 
-		// 对话分组
+		// conversation groups
 		protected.POST("/groups", groupHandler.CreateGroup)
 		protected.GET("/groups", groupHandler.ListGroups)
 		protected.GET("/groups/:id", groupHandler.GetGroup)
@@ -618,25 +618,25 @@ func setupRoutes(
 		protected.DELETE("/groups/:id/conversations/:conversationId", groupHandler.RemoveConversationFromGroup)
 		protected.PUT("/groups/:id/conversations/:conversationId/pinned", groupHandler.UpdateConversationPinnedInGroup)
 
-		// 监控
+		// monitoring
 		protected.GET("/monitor", monitorHandler.Monitor)
 		protected.GET("/monitor/execution/:id", monitorHandler.GetExecution)
 		protected.DELETE("/monitor/execution/:id", monitorHandler.DeleteExecution)
 		protected.DELETE("/monitor/executions", monitorHandler.DeleteExecutions)
 		protected.GET("/monitor/stats", monitorHandler.GetStats)
 
-		// 配置管理
+		// configuration management
 		protected.GET("/config", configHandler.GetConfig)
 		protected.GET("/config/tools", configHandler.GetTools)
 		protected.PUT("/config", configHandler.UpdateConfig)
 		protected.POST("/config/apply", configHandler.ApplyConfig)
 
-		// 系统设置 - 终端（执行命令，提高运维效率）
+		// system settings - terminal (execute commands to improve operations efficiency)
 		protected.POST("/terminal/run", terminalHandler.RunCommand)
 		protected.POST("/terminal/run/stream", terminalHandler.RunCommandStream)
 		protected.GET("/terminal/ws", terminalHandler.RunCommandWS)
 
-		// 外部MCP管理
+		// external MCP management
 		protected.GET("/external-mcp", externalMCPHandler.GetExternalMCPs)
 		protected.GET("/external-mcp/stats", externalMCPHandler.GetExternalMCPStats)
 		protected.GET("/external-mcp/:name", externalMCPHandler.GetExternalMCP)
@@ -645,11 +645,11 @@ func setupRoutes(
 		protected.POST("/external-mcp/:name/start", externalMCPHandler.StartExternalMCP)
 		protected.POST("/external-mcp/:name/stop", externalMCPHandler.StopExternalMCP)
 
-		// 攻击链可视化
+		// attack chain visualization
 		protected.GET("/attack-chain/:conversationId", attackChainHandler.GetAttackChain)
 		protected.POST("/attack-chain/:conversationId/regenerate", attackChainHandler.RegenerateAttackChain)
 
-		// 知识库管理（始终注册路由，通过 App 实例动态获取 handler）
+		// knowledge base management (always register routes, dynamically get handler via App instance)
 		knowledgeRoutes := protected.Group("/knowledge")
 		{
 			knowledgeRoutes.GET("/categories", func(c *gin.Context) {
@@ -657,7 +657,7 @@ func setupRoutes(
 					c.JSON(http.StatusOK, gin.H{
 						"categories": []string{},
 						"enabled":    false,
-						"message":    "知识库功能未启用，请前往系统设置启用知识检索功能",
+						"message":    "Knowledge base feature is not enabled. Please go to system settings to enable knowledge retrieval.",
 					})
 					return
 				}
@@ -668,7 +668,7 @@ func setupRoutes(
 					c.JSON(http.StatusOK, gin.H{
 						"items":   []interface{}{},
 						"enabled": false,
-						"message": "知识库功能未启用，请前往系统设置启用知识检索功能",
+						"message": "Knowledge base feature is not enabled. Please go to system settings to enable knowledge retrieval.",
 					})
 					return
 				}
@@ -678,7 +678,7 @@ func setupRoutes(
 				if app.knowledgeHandler == nil {
 					c.JSON(http.StatusOK, gin.H{
 						"enabled": false,
-						"message": "知识库功能未启用，请前往系统设置启用知识检索功能",
+						"message": "Knowledge base feature is not enabled. Please go to system settings to enable knowledge retrieval.",
 					})
 					return
 				}
@@ -688,7 +688,7 @@ func setupRoutes(
 				if app.knowledgeHandler == nil {
 					c.JSON(http.StatusOK, gin.H{
 						"enabled": false,
-						"error":   "知识库功能未启用，请前往系统设置启用知识检索功能",
+						"error":   "Knowledge base feature is not enabled. Please go to system settings to enable knowledge retrieval.",
 					})
 					return
 				}
@@ -698,7 +698,7 @@ func setupRoutes(
 				if app.knowledgeHandler == nil {
 					c.JSON(http.StatusOK, gin.H{
 						"enabled": false,
-						"error":   "知识库功能未启用，请前往系统设置启用知识检索功能",
+						"error":   "Knowledge base feature is not enabled. Please go to system settings to enable knowledge retrieval.",
 					})
 					return
 				}
@@ -708,7 +708,7 @@ func setupRoutes(
 				if app.knowledgeHandler == nil {
 					c.JSON(http.StatusOK, gin.H{
 						"enabled": false,
-						"error":   "知识库功能未启用，请前往系统设置启用知识检索功能",
+						"error":   "Knowledge base feature is not enabled. Please go to system settings to enable knowledge retrieval.",
 					})
 					return
 				}
@@ -722,7 +722,7 @@ func setupRoutes(
 						"indexed_items":    0,
 						"progress_percent": 0,
 						"is_complete":      false,
-						"message":          "知识库功能未启用，请前往系统设置启用知识检索功能",
+						"message":          "Knowledge base feature is not enabled. Please go to system settings to enable knowledge retrieval.",
 					})
 					return
 				}
@@ -732,7 +732,7 @@ func setupRoutes(
 				if app.knowledgeHandler == nil {
 					c.JSON(http.StatusOK, gin.H{
 						"enabled": false,
-						"error":   "知识库功能未启用，请前往系统设置启用知识检索功能",
+						"error":   "Knowledge base feature is not enabled. Please go to system settings to enable knowledge retrieval.",
 					})
 					return
 				}
@@ -742,7 +742,7 @@ func setupRoutes(
 				if app.knowledgeHandler == nil {
 					c.JSON(http.StatusOK, gin.H{
 						"enabled": false,
-						"error":   "知识库功能未启用，请前往系统设置启用知识检索功能",
+						"error":   "Knowledge base feature is not enabled. Please go to system settings to enable knowledge retrieval.",
 					})
 					return
 				}
@@ -753,7 +753,7 @@ func setupRoutes(
 					c.JSON(http.StatusOK, gin.H{
 						"logs":    []interface{}{},
 						"enabled": false,
-						"message": "知识库功能未启用，请前往系统设置启用知识检索功能",
+						"message": "Knowledge base feature is not enabled. Please go to system settings to enable knowledge retrieval.",
 					})
 					return
 				}
@@ -763,7 +763,7 @@ func setupRoutes(
 				if app.knowledgeHandler == nil {
 					c.JSON(http.StatusOK, gin.H{
 						"enabled": false,
-						"error":   "知识库功能未启用，请前往系统设置启用知识检索功能",
+						"error":   "Knowledge base feature is not enabled. Please go to system settings to enable knowledge retrieval.",
 					})
 					return
 				}
@@ -774,7 +774,7 @@ func setupRoutes(
 					c.JSON(http.StatusOK, gin.H{
 						"results": []interface{}{},
 						"enabled": false,
-						"message": "知识库功能未启用，请前往系统设置启用知识检索功能",
+						"message": "Knowledge base feature is not enabled. Please go to system settings to enable knowledge retrieval.",
 					})
 					return
 				}
@@ -786,7 +786,7 @@ func setupRoutes(
 						"enabled":          false,
 						"total_categories": 0,
 						"total_items":      0,
-						"message":          "知识库功能未启用，请前往系统设置启用知识检索功能",
+						"message":          "Knowledge base feature is not enabled. Please go to system settings to enable knowledge retrieval.",
 					})
 					return
 				}
@@ -794,7 +794,7 @@ func setupRoutes(
 			})
 		}
 
-		// 漏洞管理
+		// vulnerability management
 		protected.GET("/vulnerabilities", vulnerabilityHandler.ListVulnerabilities)
 		protected.GET("/vulnerabilities/stats", vulnerabilityHandler.GetVulnerabilityStats)
 		protected.GET("/vulnerabilities/:id", vulnerabilityHandler.GetVulnerability)
@@ -802,7 +802,7 @@ func setupRoutes(
 		protected.PUT("/vulnerabilities/:id", vulnerabilityHandler.UpdateVulnerability)
 		protected.DELETE("/vulnerabilities/:id", vulnerabilityHandler.DeleteVulnerability)
 
-		// 角色管理
+		// role management
 		protected.GET("/roles", roleHandler.GetRoles)
 		protected.GET("/roles/:name", roleHandler.GetRole)
 		protected.GET("/roles/skills/list", roleHandler.GetSkills)
@@ -810,7 +810,7 @@ func setupRoutes(
 		protected.PUT("/roles/:name", roleHandler.UpdateRole)
 		protected.DELETE("/roles/:name", roleHandler.DeleteRole)
 
-		// Skills管理
+		// Skills management
 		protected.GET("/skills", skillsHandler.GetSkills)
 		protected.GET("/skills/stats", skillsHandler.GetSkillStats)
 		protected.DELETE("/skills/stats", skillsHandler.ClearSkillStats)
@@ -821,28 +821,28 @@ func setupRoutes(
 		protected.DELETE("/skills/:name", skillsHandler.DeleteSkill)
 		protected.DELETE("/skills/:name/stats", skillsHandler.ClearSkillStatsByName)
 
-		// MCP端点
+		// MCP endpoint
 		protected.POST("/mcp", func(c *gin.Context) {
 			mcpServer.HandleHTTP(c.Writer, c.Request)
 		})
 
-		// OpenAPI结果聚合端点（可选，用于获取对话的完整结果）
+		// OpenAPI result aggregation endpoint (optional, for fetching complete conversation results)
 		protected.GET("/conversations/:id/results", openAPIHandler.GetConversationResults)
 	}
 
-	// OpenAPI规范（需要认证，避免暴露API结构信息）
+	// OpenAPI spec (requires authentication to avoid exposing API structure)
 	protected.GET("/openapi/spec", openAPIHandler.GetOpenAPISpec)
 
-	// API文档页面（公开访问，但需要登录后才能使用API）
+	// API documentation page (publicly accessible, but login required to use the API)
 	router.GET("/api-docs", func(c *gin.Context) {
 		c.HTML(http.StatusOK, "api-docs.html", nil)
 	})
 
-	// 静态文件
+	// static files
 	router.Static("/static", "./web/static")
 	router.LoadHTMLGlob("web/templates/*")
 
-	// 前端页面
+	// frontend page
 	router.GET("/", func(c *gin.Context) {
 		version := app.config.Version
 		if version == "" {
@@ -852,47 +852,47 @@ func setupRoutes(
 	})
 }
 
-// registerVulnerabilityTool 注册漏洞记录工具到MCP服务器
+// registerVulnerabilityTool registers the vulnerability recording tool to the MCP server
 func registerVulnerabilityTool(mcpServer *mcp.Server, db *database.DB, logger *zap.Logger) {
 	tool := mcp.Tool{
 		Name:             builtin.ToolRecordVulnerability,
-		Description:      "记录发现的漏洞详情到漏洞管理系统。当发现有效漏洞时，使用此工具记录漏洞信息，包括标题、描述、严重程度、类型、目标、证明、影响和建议等。",
-		ShortDescription: "记录发现的漏洞详情到漏洞管理系统",
+		Description:      "Record details of discovered vulnerabilities to the vulnerability management system. When a valid vulnerability is found, use this tool to record vulnerability information including title, description, severity, type, target, proof, impact, and recommendations.",
+		ShortDescription: "Record details of discovered vulnerabilities to the vulnerability management system",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"title": map[string]interface{}{
 					"type":        "string",
-					"description": "漏洞标题（必需）",
+					"description": "Vulnerability title (required)",
 				},
 				"description": map[string]interface{}{
 					"type":        "string",
-					"description": "漏洞详细描述",
+					"description": "Detailed vulnerability description",
 				},
 				"severity": map[string]interface{}{
 					"type":        "string",
-					"description": "漏洞严重程度：critical（严重）、high（高）、medium（中）、low（低）、info（信息）",
+					"description": "Vulnerability severity: critical, high, medium, low, info",
 					"enum":        []string{"critical", "high", "medium", "low", "info"},
 				},
 				"vulnerability_type": map[string]interface{}{
 					"type":        "string",
-					"description": "漏洞类型，如：SQL注入、XSS、CSRF、命令注入等",
+					"description": "Vulnerability type, e.g.: SQL Injection, XSS, CSRF, Command Injection, etc.",
 				},
 				"target": map[string]interface{}{
 					"type":        "string",
-					"description": "受影响的目标（URL、IP地址、服务等）",
+					"description": "Affected target (URL, IP address, service, etc.)",
 				},
 				"proof": map[string]interface{}{
 					"type":        "string",
-					"description": "漏洞证明（POC、截图、请求/响应等）",
+					"description": "Vulnerability proof (POC, screenshots, request/response, etc.)",
 				},
 				"impact": map[string]interface{}{
 					"type":        "string",
-					"description": "漏洞影响说明",
+					"description": "Vulnerability impact description",
 				},
 				"recommendation": map[string]interface{}{
 					"type":        "string",
-					"description": "修复建议",
+					"description": "Remediation recommendations",
 				},
 			},
 			"required": []string{"title", "severity"},
@@ -900,14 +900,14 @@ func registerVulnerabilityTool(mcpServer *mcp.Server, db *database.DB, logger *z
 	}
 
 	handler := func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
-		// 从参数中获取conversation_id（由Agent自动添加）
+		// get conversation_id from args (automatically added by Agent)
 		conversationID, _ := args["conversation_id"].(string)
 		if conversationID == "" {
 			return &mcp.ToolResult{
 				Content: []mcp.Content{
 					{
 						Type: "text",
-						Text: "错误: conversation_id 未设置。这是系统错误，请重试。",
+						Text: "Error: conversation_id is not set. This is a system error, please retry.",
 					},
 				},
 				IsError: true,
@@ -920,7 +920,7 @@ func registerVulnerabilityTool(mcpServer *mcp.Server, db *database.DB, logger *z
 				Content: []mcp.Content{
 					{
 						Type: "text",
-						Text: "错误: title 参数必需且不能为空",
+						Text: "Error: title parameter is required and cannot be empty",
 					},
 				},
 				IsError: true,
@@ -933,14 +933,14 @@ func registerVulnerabilityTool(mcpServer *mcp.Server, db *database.DB, logger *z
 				Content: []mcp.Content{
 					{
 						Type: "text",
-						Text: "错误: severity 参数必需且不能为空",
+						Text: "Error: severity parameter is required and cannot be empty",
 					},
 				},
 				IsError: true,
 			}, nil
 		}
 
-		// 验证严重程度
+		// validate severity
 		validSeverities := map[string]bool{
 			"critical": true,
 			"high":     true,
@@ -953,14 +953,14 @@ func registerVulnerabilityTool(mcpServer *mcp.Server, db *database.DB, logger *z
 				Content: []mcp.Content{
 					{
 						Type: "text",
-						Text: fmt.Sprintf("错误: severity 必须是 critical、high、medium、low 或 info 之一，当前值: %s", severity),
+						Text: fmt.Sprintf("Error: severity must be one of critical, high, medium, low, or info. Current value: %s", severity),
 					},
 				},
 				IsError: true,
 			}, nil
 		}
 
-		// 获取可选参数
+		// get optional parameters
 		description := ""
 		if d, ok := args["description"].(string); ok {
 			description = d
@@ -991,7 +991,7 @@ func registerVulnerabilityTool(mcpServer *mcp.Server, db *database.DB, logger *z
 			recommendation = r
 		}
 
-		// 创建漏洞记录
+		// create vulnerability record
 		vuln := &database.Vulnerability{
 			ConversationID: conversationID,
 			Title:          title,
@@ -1007,19 +1007,19 @@ func registerVulnerabilityTool(mcpServer *mcp.Server, db *database.DB, logger *z
 
 		created, err := db.CreateVulnerability(vuln)
 		if err != nil {
-			logger.Error("记录漏洞失败", zap.Error(err))
+			logger.Error("failed to record vulnerability", zap.Error(err))
 			return &mcp.ToolResult{
 				Content: []mcp.Content{
 					{
 						Type: "text",
-						Text: fmt.Sprintf("记录漏洞失败: %v", err),
+						Text: fmt.Sprintf("Failed to record vulnerability: %v", err),
 					},
 				},
 				IsError: true,
 			}, nil
 		}
 
-		logger.Info("漏洞记录成功",
+		logger.Info("vulnerability recorded successfully",
 			zap.String("id", created.ID),
 			zap.String("title", created.Title),
 			zap.String("severity", created.Severity),
@@ -1030,7 +1030,7 @@ func registerVulnerabilityTool(mcpServer *mcp.Server, db *database.DB, logger *z
 			Content: []mcp.Content{
 				{
 					Type: "text",
-					Text: fmt.Sprintf("漏洞已成功记录！\n\n漏洞ID: %s\n标题: %s\n严重程度: %s\n状态: %s\n\n你可以在漏洞管理页面查看和管理此漏洞。", created.ID, created.Title, created.Severity, created.Status),
+					Text: fmt.Sprintf("Vulnerability recorded successfully!\n\nVulnerability ID: %s\nTitle: %s\nSeverity: %s\nStatus: %s\n\nYou can view and manage this vulnerability on the vulnerability management page.", created.ID, created.Title, created.Severity, created.Status),
 				},
 			},
 			IsError: false,
@@ -1038,48 +1038,48 @@ func registerVulnerabilityTool(mcpServer *mcp.Server, db *database.DB, logger *z
 	}
 
 	mcpServer.RegisterTool(tool, handler)
-	logger.Info("漏洞记录工具注册成功")
+	logger.Info("vulnerability recording tool registered successfully")
 }
 
-// initializeKnowledge 初始化知识库组件（用于动态初始化）
+// initializeKnowledge initializes knowledge base components (for dynamic initialization)
 func initializeKnowledge(
 	cfg *config.Config,
 	db *database.DB,
 	knowledgeDBConn *database.DB,
 	mcpServer *mcp.Server,
 	agentHandler *handler.AgentHandler,
-	app *App, // 传递 App 引用以便更新知识库组件
+	app *App, // pass App reference to update knowledge base components
 	logger *zap.Logger,
 ) (*handler.KnowledgeHandler, error) {
-	// 确定知识库数据库路径
+	// determine knowledge base database path
 	knowledgeDBPath := cfg.Database.KnowledgeDBPath
 	var knowledgeDB *sql.DB
 
 	if knowledgeDBPath != "" {
-		// 使用独立的知识库数据库
-		// 确保目录存在
+		// use a separate knowledge base database
+		// ensure directory exists
 		if err := os.MkdirAll(filepath.Dir(knowledgeDBPath), 0755); err != nil {
-			return nil, fmt.Errorf("创建知识库数据库目录失败: %w", err)
+			return nil, fmt.Errorf("failed to create knowledge base database directory: %w", err)
 		}
 
 		var err error
 		knowledgeDBConn, err = database.NewKnowledgeDB(knowledgeDBPath, logger)
 		if err != nil {
-			return nil, fmt.Errorf("初始化知识库数据库失败: %w", err)
+			return nil, fmt.Errorf("failed to initialize knowledge base database: %w", err)
 		}
 		knowledgeDB = knowledgeDBConn.DB
-		logger.Info("使用独立的知识库数据库", zap.String("path", knowledgeDBPath))
+		logger.Info("using separate knowledge base database", zap.String("path", knowledgeDBPath))
 	} else {
-		// 向后兼容：使用会话数据库
+		// backward compatibility: use the conversation database
 		knowledgeDB = db.DB
-		logger.Info("使用会话数据库存储知识库数据（建议配置knowledge_db_path以分离数据）")
+		logger.Info("using conversation database for knowledge base data (recommended to configure knowledge_db_path to separate data)")
 	}
 
-	// 创建知识库管理器
+	// create knowledge base manager
 	knowledgeManager := knowledge.NewManager(knowledgeDB, cfg.Knowledge.BasePath, logger)
 
-	// 创建嵌入器
-	// 使用OpenAI配置的API Key（如果知识库配置中没有指定）
+	// create embedder
+	// use OpenAI config API Key (if not specified in knowledge base config)
 	if cfg.Knowledge.Embedding.APIKey == "" {
 		cfg.Knowledge.Embedding.APIKey = cfg.OpenAI.APIKey
 	}
@@ -1093,7 +1093,7 @@ func initializeKnowledge(
 	openAIClient := openai.NewClient(&cfg.OpenAI, httpClient, logger)
 	embedder := knowledge.NewEmbedder(&cfg.Knowledge, &cfg.OpenAI, openAIClient, logger)
 
-	// 创建检索器
+	// create retriever
 	retrievalConfig := &knowledge.RetrievalConfig{
 		TopK:                cfg.Knowledge.Retrieval.TopK,
 		SimilarityThreshold: cfg.Knowledge.Retrieval.SimilarityThreshold,
@@ -1101,51 +1101,51 @@ func initializeKnowledge(
 	}
 	knowledgeRetriever := knowledge.NewRetriever(knowledgeDB, embedder, retrievalConfig, logger)
 
-	// 创建索引器
+	// create indexer
 	knowledgeIndexer := knowledge.NewIndexer(knowledgeDB, embedder, logger)
 
-	// 注册知识检索工具到MCP服务器
+	// register knowledge retrieval tool to MCP server
 	knowledge.RegisterKnowledgeTool(mcpServer, knowledgeRetriever, knowledgeManager, logger)
 
-	// 创建知识库API处理器
+	// create knowledge base API handler
 	knowledgeHandler := handler.NewKnowledgeHandler(knowledgeManager, knowledgeRetriever, knowledgeIndexer, db, logger)
-	logger.Info("知识库模块初始化完成", zap.Bool("handler_created", knowledgeHandler != nil))
+	logger.Info("knowledge base module initialization complete", zap.Bool("handler_created", knowledgeHandler != nil))
 
-	// 设置知识库管理器到AgentHandler以便记录检索日志
+	// set knowledge base manager on AgentHandler for retrieval log recording
 	agentHandler.SetKnowledgeManager(knowledgeManager)
 
-	// 更新 App 中的知识库组件（如果 App 不为 nil，说明是动态初始化）
+	// update knowledge base components in App (if App is not nil, this is a dynamic initialization)
 	if app != nil {
 		app.knowledgeManager = knowledgeManager
 		app.knowledgeRetriever = knowledgeRetriever
 		app.knowledgeIndexer = knowledgeIndexer
 		app.knowledgeHandler = knowledgeHandler
-		// 如果使用独立数据库，更新 knowledgeDB
+		// if using separate database, update knowledgeDB
 		if knowledgeDBPath != "" {
 			app.knowledgeDB = knowledgeDBConn
 		}
-		logger.Info("App 中的知识库组件已更新")
+		logger.Info("knowledge base components in App have been updated")
 	}
 
-	// 扫描知识库并建立索引（异步）
+	// scan knowledge base and build index (async)
 	go func() {
 		itemsToIndex, err := knowledgeManager.ScanKnowledgeBase()
 		if err != nil {
-			logger.Warn("扫描知识库失败", zap.Error(err))
+			logger.Warn("failed to scan knowledge base", zap.Error(err))
 			return
 		}
 
-		// 检查是否已有索引
+		// check if index already exists
 		hasIndex, err := knowledgeIndexer.HasIndex()
 		if err != nil {
-			logger.Warn("检查索引状态失败", zap.Error(err))
+			logger.Warn("failed to check index status", zap.Error(err))
 			return
 		}
 
 		if hasIndex {
-			// 如果已有索引，只索引新添加或更新的项
+			// if index exists, only index newly added or updated items
 			if len(itemsToIndex) > 0 {
-				logger.Info("检测到已有知识库索引，开始增量索引", zap.Int("count", len(itemsToIndex)))
+				logger.Info("existing knowledge base index detected, starting incremental indexing", zap.Int("count", len(itemsToIndex)))
 				ctx := context.Background()
 				consecutiveFailures := 0
 				var firstFailureItemID string
@@ -1160,12 +1160,12 @@ func initializeKnowledge(
 						if consecutiveFailures == 1 {
 							firstFailureItemID = itemID
 							firstFailureError = err
-							logger.Warn("索引知识项失败", zap.String("itemId", itemID), zap.Error(err))
+							logger.Warn("failed to index knowledge item", zap.String("itemId", itemID), zap.Error(err))
 						}
 
-						// 如果连续失败2次，立即停止增量索引
+						// if 2 consecutive failures, immediately stop incremental indexing
 						if consecutiveFailures >= 2 {
-							logger.Error("连续索引失败次数过多，立即停止增量索引",
+							logger.Error("too many consecutive index failures, stopping incremental indexing immediately",
 								zap.Int("consecutiveFailures", consecutiveFailures),
 								zap.Int("totalItems", len(itemsToIndex)),
 								zap.String("firstFailureItemId", firstFailureItemID),
@@ -1176,32 +1176,32 @@ func initializeKnowledge(
 						continue
 					}
 
-					// 成功时重置连续失败计数
+					// reset consecutive failure count on success
 					if consecutiveFailures > 0 {
 						consecutiveFailures = 0
 						firstFailureItemID = ""
 						firstFailureError = nil
 					}
 				}
-				logger.Info("增量索引完成", zap.Int("totalItems", len(itemsToIndex)), zap.Int("failedCount", failedCount))
+				logger.Info("incremental indexing complete", zap.Int("totalItems", len(itemsToIndex)), zap.Int("failedCount", failedCount))
 			} else {
-				logger.Info("检测到已有知识库索引，没有需要索引的新项或更新项")
+				logger.Info("existing knowledge base index detected, no new or updated items to index")
 			}
 			return
 		}
 
-		// 只有在没有索引时才自动重建
-		logger.Info("未检测到知识库索引，开始自动构建索引")
+		// only auto-rebuild when no index exists
+		logger.Info("no knowledge base index detected, starting automatic index build")
 		ctx := context.Background()
 		if err := knowledgeIndexer.RebuildIndex(ctx); err != nil {
-			logger.Warn("重建知识库索引失败", zap.Error(err))
+			logger.Warn("failed to rebuild knowledge base index", zap.Error(err))
 		}
 	}()
 
 	return knowledgeHandler, nil
 }
 
-// corsMiddleware CORS中间件
+// corsMiddleware CORS middleware
 func corsMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")

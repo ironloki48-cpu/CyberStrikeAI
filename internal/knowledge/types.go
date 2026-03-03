@@ -5,29 +5,29 @@ import (
 	"time"
 )
 
-// KnowledgeItem 知识库项
+// KnowledgeItem represents a knowledge base item
 type KnowledgeItem struct {
 	ID        string    `json:"id"`
-	Category  string    `json:"category"` // 风险类型（文件夹名）
-	Title     string    `json:"title"`    // 标题（文件名）
-	FilePath  string    `json:"filePath"` // 文件路径
-	Content   string    `json:"content"`  // 文件内容
+	Category  string    `json:"category"` // risk type (folder name)
+	Title     string    `json:"title"`    // title (file name)
+	FilePath  string    `json:"filePath"` // file path
+	Content   string    `json:"content"`  // file content
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
-// KnowledgeItemSummary 知识库项摘要（用于列表，不包含完整内容）
+// KnowledgeItemSummary is a knowledge base item summary (used for lists, does not include full content)
 type KnowledgeItemSummary struct {
 	ID        string    `json:"id"`
 	Category  string    `json:"category"`
 	Title     string    `json:"title"`
 	FilePath  string    `json:"filePath"`
-	Content   string    `json:"content,omitempty"` // 可选：内容预览（如果提供，通常只包含前150字符）
+	Content   string    `json:"content,omitempty"` // optional: content preview (if provided, usually only the first 150 characters)
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
-// MarshalJSON 自定义JSON序列化，确保时间格式正确
+// MarshalJSON custom JSON serialization to ensure correct time format
 func (k *KnowledgeItemSummary) MarshalJSON() ([]byte, error) {
 	type Alias KnowledgeItemSummary
 	aux := &struct {
@@ -38,14 +38,14 @@ func (k *KnowledgeItemSummary) MarshalJSON() ([]byte, error) {
 		Alias: (*Alias)(k),
 	}
 
-	// 格式化创建时间
+	// format created time
 	if k.CreatedAt.IsZero() {
 		aux.CreatedAt = ""
 	} else {
 		aux.CreatedAt = k.CreatedAt.Format(time.RFC3339)
 	}
 
-	// 格式化更新时间
+	// format updated time
 	if k.UpdatedAt.IsZero() {
 		aux.UpdatedAt = ""
 	} else {
@@ -55,7 +55,7 @@ func (k *KnowledgeItemSummary) MarshalJSON() ([]byte, error) {
 	return json.Marshal(aux)
 }
 
-// MarshalJSON 自定义JSON序列化，确保时间格式正确
+// MarshalJSON custom JSON serialization to ensure correct time format
 func (k *KnowledgeItem) MarshalJSON() ([]byte, error) {
 	type Alias KnowledgeItem
 	aux := &struct {
@@ -66,14 +66,14 @@ func (k *KnowledgeItem) MarshalJSON() ([]byte, error) {
 		Alias: (*Alias)(k),
 	}
 
-	// 格式化创建时间
+	// format created time
 	if k.CreatedAt.IsZero() {
 		aux.CreatedAt = ""
 	} else {
 		aux.CreatedAt = k.CreatedAt.Format(time.RFC3339)
 	}
 
-	// 格式化更新时间
+	// format updated time
 	if k.UpdatedAt.IsZero() {
 		aux.UpdatedAt = ""
 	} else {
@@ -83,36 +83,36 @@ func (k *KnowledgeItem) MarshalJSON() ([]byte, error) {
 	return json.Marshal(aux)
 }
 
-// KnowledgeChunk 知识块（用于向量化）
+// KnowledgeChunk is a knowledge chunk (used for vectorization)
 type KnowledgeChunk struct {
 	ID         string    `json:"id"`
 	ItemID     string    `json:"itemId"`
 	ChunkIndex int       `json:"chunkIndex"`
 	ChunkText  string    `json:"chunkText"`
-	Embedding  []float32 `json:"-"` // 向量嵌入，不序列化到JSON
+	Embedding  []float32 `json:"-"` // vector embedding, not serialized to JSON
 	CreatedAt  time.Time `json:"createdAt"`
 }
 
-// RetrievalResult 检索结果
+// RetrievalResult is a retrieval result
 type RetrievalResult struct {
 	Chunk      *KnowledgeChunk `json:"chunk"`
 	Item       *KnowledgeItem  `json:"item"`
-	Similarity float64         `json:"similarity"` // 相似度分数
-	Score      float64         `json:"score"`      // 综合分数（混合检索）
+	Similarity float64         `json:"similarity"` // similarity score
+	Score      float64         `json:"score"`      // composite score (hybrid retrieval)
 }
 
-// RetrievalLog 检索日志
+// RetrievalLog is a retrieval log
 type RetrievalLog struct {
 	ID             string    `json:"id"`
 	ConversationID string    `json:"conversationId,omitempty"`
 	MessageID      string    `json:"messageId,omitempty"`
 	Query          string    `json:"query"`
 	RiskType       string    `json:"riskType,omitempty"`
-	RetrievedItems []string  `json:"retrievedItems"` // 检索到的知识项ID列表
+	RetrievedItems []string  `json:"retrievedItems"` // list of retrieved knowledge item IDs
 	CreatedAt      time.Time `json:"createdAt"`
 }
 
-// MarshalJSON 自定义JSON序列化，确保时间格式正确
+// MarshalJSON custom JSON serialization to ensure correct time format
 func (r *RetrievalLog) MarshalJSON() ([]byte, error) {
 	type Alias RetrievalLog
 	return json.Marshal(&struct {
@@ -124,17 +124,17 @@ func (r *RetrievalLog) MarshalJSON() ([]byte, error) {
 	})
 }
 
-// CategoryWithItems 分类及其下的知识项（用于按分类分页）
+// CategoryWithItems represents a category and its knowledge items (used for category-based pagination)
 type CategoryWithItems struct {
-	Category string                `json:"category"`           // 分类名称
-	ItemCount int                  `json:"itemCount"`          // 该分类下的知识项总数
-	Items     []*KnowledgeItemSummary `json:"items"`          // 该分类下的知识项列表
+	Category  string                `json:"category"`  // category name
+	ItemCount int                   `json:"itemCount"` // total knowledge items in this category
+	Items     []*KnowledgeItemSummary `json:"items"`   // knowledge items in this category
 }
 
-// SearchRequest 搜索请求
+// SearchRequest is the search request
 type SearchRequest struct {
 	Query     string  `json:"query"`
-	RiskType  string  `json:"riskType,omitempty"`  // 可选：指定风险类型
-	TopK      int     `json:"topK,omitempty"`      // 返回Top-K结果，默认5
-	Threshold float64 `json:"threshold,omitempty"` // 相似度阈值，默认0.7
+	RiskType  string  `json:"riskType,omitempty"`  // optional: specify risk type
+	TopK      int     `json:"topK,omitempty"`      // return top-K results, default 5
+	Threshold float64 `json:"threshold,omitempty"` // similarity threshold, default 0.7
 }

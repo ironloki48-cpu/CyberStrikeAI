@@ -1,12 +1,12 @@
 let currentConversationId = null;
 
-// @ 提及相关状态
+// @ mention related state
 let mentionTools = [];
 let mentionToolsLoaded = false;
 let mentionToolsLoadingPromise = null;
 let mentionSuggestionsEl = null;
 let mentionFilteredTools = [];
-let externalMcpNames = []; // 外部MCP名称列表
+let externalMcpNames = []; // External MCP name list
 const mentionState = {
     active: false,
     startIndex: -1,
@@ -14,49 +14,49 @@ const mentionState = {
     selectedIndex: 0,
 };
 
-// IME输入法状态跟踪
+// IME input method state tracking
 let isComposing = false;
 
-// 输入框草稿保存相关
+// Input box draft saving related
 const DRAFT_STORAGE_KEY = 'cyberstrike-chat-draft';
 let draftSaveTimer = null;
-const DRAFT_SAVE_DELAY = 500; // 500ms防抖延迟
+const DRAFT_SAVE_DELAY = 500; // 500ms debounce delay
 
-// 对话文件上传相关（后端会拼接路径与内容发给大模型，前端不再重复发文件列表）
+// Conversation file upload related (backend will concatenate path and content for the model; frontend no longer re-sends the file list)
 const MAX_CHAT_FILES = 10;
-const CHAT_FILE_DEFAULT_PROMPT = '请根据上传的文件内容进行分析。';
+const CHAT_FILE_DEFAULT_PROMPT = 'Please analyze the uploaded file content.';
 /** @type {{ fileName: string, content: string, mimeType: string }[]} */
 let chatAttachments = [];
 
-// 保存输入框草稿到localStorage（防抖版本）
+// Save input box draft to localStorage (debounced version)
 function saveChatDraftDebounced(content) {
-    // 清除之前的定时器
+    // Clear previous timer
     if (draftSaveTimer) {
         clearTimeout(draftSaveTimer);
     }
     
-    // 设置新的定时器
+    // Set new timer
     draftSaveTimer = setTimeout(() => {
         saveChatDraft(content);
     }, DRAFT_SAVE_DELAY);
 }
 
-// 保存输入框草稿到localStorage
+// Save input box draft to localStorage
 function saveChatDraft(content) {
     try {
         if (content && content.trim().length > 0) {
             localStorage.setItem(DRAFT_STORAGE_KEY, content);
         } else {
-            // 如果内容为空，清除保存的草稿
+            // If content is empty, clear the saved draft
             localStorage.removeItem(DRAFT_STORAGE_KEY);
         }
     } catch (error) {
-        // localStorage可能已满或不可用，静默失败
-        console.warn('保存草稿失败:', error);
+        // localStorage may be full or unavailable; fail silently
+        console.warn('Failed to save draft:', error);
     }
 }
 
-// 从localStorage恢复输入框草稿
+// Restore input box draft from localStorage
 function restoreChatDraft() {
     try {
         const chatInput = document.getElementById('chat-input');
@@ -64,7 +64,7 @@ function restoreChatDraft() {
             return;
         }
         
-        // 如果输入框已有内容，不恢复草稿（避免覆盖用户输入）
+        // If the input box already has content, do not restore the draft (avoid overwriting user input)
         if (chatInput.value && chatInput.value.trim().length > 0) {
             return;
         }
@@ -72,45 +72,45 @@ function restoreChatDraft() {
         const draft = localStorage.getItem(DRAFT_STORAGE_KEY);
         if (draft && draft.trim().length > 0) {
             chatInput.value = draft;
-            // 调整输入框高度以适应内容
+            // Adjust input box height to fit content
             adjustTextareaHeight(chatInput);
         }
     } catch (error) {
-        console.warn('恢复草稿失败:', error);
+        console.warn('Failed to restore draft:', error);
     }
 }
 
-// 清除保存的草稿
+// Clear saved draft
 function clearChatDraft() {
     try {
-        // 同步清除，确保立即生效
+        // Synchronous clear, ensure immediate effect
         localStorage.removeItem(DRAFT_STORAGE_KEY);
     } catch (error) {
-        console.warn('清除草稿失败:', error);
+        console.warn('Failed to clear draft:', error);
     }
 }
 
-// 调整textarea高度以适应内容
+// Adjust textarea height to fit content
 function adjustTextareaHeight(textarea) {
     if (!textarea) return;
     
-    // 先重置高度为auto，然后立即设置为固定值，确保能准确获取scrollHeight
+    // First reset height to auto, then immediately set to a fixed value to accurately get scrollHeight
     textarea.style.height = 'auto';
-    // 强制浏览器重新计算布局
+    // Force browser to recalculate layout
     void textarea.offsetHeight;
     
-    // 计算新高度（最小40px，最大不超过300px）
+    // Calculate new height (min 40px, max 300px)
     const scrollHeight = textarea.scrollHeight;
     const newHeight = Math.min(Math.max(scrollHeight, 40), 300);
     textarea.style.height = newHeight + 'px';
     
-    // 如果内容为空或只有很少内容，立即重置到最小高度
+    // If content is empty or very short, immediately reset to minimum height
     if (!textarea.value || textarea.value.trim().length === 0) {
         textarea.style.height = '40px';
     }
 }
 
-// 发送消息
+// Send message
 async function sendMessage() {
     const input = document.getElementById('chat-input');
     let message = input.value.trim();
@@ -119,38 +119,38 @@ async function sendMessage() {
     if (!message && !hasAttachments) {
         return;
     }
-    // 有附件且用户未输入时，发一句简短默认提示即可（后端会拼接路径和文件内容给大模型）
+    // If there are attachments and no user input, send a short default prompt (backend will concatenate path and file content for the model)
     if (hasAttachments && !message) {
         message = CHAT_FILE_DEFAULT_PROMPT;
     }
 
-    // 显示用户消息（含附件名，便于用户确认）
+    // Display user message (including attachment names for user confirmation)
     const displayMessage = hasAttachments
         ? message + '\n' + chatAttachments.map(a => '📎 ' + a.fileName).join('\n')
         : message;
     addMessage('user', displayMessage);
     
-    // 清除防抖定时器，防止在清空输入框后重新保存草稿
+    // Clear debounce timer to prevent re-saving draft after clearing input box
     if (draftSaveTimer) {
         clearTimeout(draftSaveTimer);
         draftSaveTimer = null;
     }
     
-    // 立即清除草稿，防止页面刷新时恢复
+    // Immediately clear draft to prevent restoring on page refresh
     clearChatDraft();
-    // 使用同步方式确保草稿被清除
+    // Use synchronous method to ensure draft is cleared
     try {
         localStorage.removeItem(DRAFT_STORAGE_KEY);
     } catch (e) {
-        // 忽略错误
+        // Ignore error
     }
     
-    // 立即清空输入框并清除草稿（在发送请求之前）
+    // Immediately clear input box and draft (before sending the request)
     input.value = '';
-    // 强制重置输入框高度为初始高度（40px）
+    // Force reset input box height to initial height (40px)
     input.style.height = '40px';
 
-    // 构建请求体（含附件）
+    // Build request body (with attachments)
     const body = {
         message: message,
         conversationId: currentConversationId,
@@ -163,11 +163,11 @@ async function sendMessage() {
             mimeType: a.mimeType || ''
         }));
     }
-    // 发送后清空附件列表
+    // Clear attachment list after sending
     chatAttachments = [];
     renderChatFileChips();
 
-    // 创建进度消息容器（使用详细的进度展示）
+    // Create progress message container (with detailed progress display)
     const progressId = addProgressMessage();
     const progressElement = document.getElementById(progressId);
     registerProgressTask(progressId, currentConversationId);
@@ -185,7 +185,7 @@ async function sendMessage() {
         });
         
         if (!response.ok) {
-            throw new Error('请求失败: ' + response.status);
+            throw new Error('Request failed: ' + response.status);
         }
         
         const reader = response.body.getReader();
@@ -198,7 +198,7 @@ async function sendMessage() {
             
             buffer += decoder.decode(value, { stream: true });
             const lines = buffer.split('\n');
-            buffer = lines.pop(); // 保留最后一个不完整的行
+            buffer = lines.pop(); // Retain last incomplete line
             
             for (const line of lines) {
                 if (line.startsWith('data: ')) {
@@ -208,13 +208,13 @@ async function sendMessage() {
                                          () => assistantMessageId, (id) => { assistantMessageId = id; },
                                          () => mcpExecutionIds, (ids) => { mcpExecutionIds = ids; });
                     } catch (e) {
-                        console.error('解析事件数据失败:', e, line);
+                        console.error('Failed to parse event data:', e, line);
                     }
                 }
             }
         }
         
-        // 处理剩余的buffer
+        // Handle remaining buffer
         if (buffer.trim()) {
             const lines = buffer.split('\n');
             for (const line of lines) {
@@ -225,28 +225,28 @@ async function sendMessage() {
                                          () => assistantMessageId, (id) => { assistantMessageId = id; },
                                          () => mcpExecutionIds, (ids) => { mcpExecutionIds = ids; });
                     } catch (e) {
-                        console.error('解析事件数据失败:', e, line);
+                        console.error('Failed to parse event data:', e, line);
                     }
                 }
             }
         }
         
-        // 消息发送成功后，再次确保草稿被清除
+        // After successful message send, ensure draft is cleared again
         clearChatDraft();
         try {
             localStorage.removeItem(DRAFT_STORAGE_KEY);
         } catch (e) {
-            // 忽略错误
+            // Ignore error
         }
         
     } catch (error) {
         removeMessage(progressId);
-        addMessage('system', '错误: ' + error.message);
-        // 发送失败时，不恢复草稿，因为消息已经显示在对话框中了
+        addMessage('system', 'Error: ' + error.message);
+        // On send failure, do not restore draft, as the message is already shown in the chat
     }
 }
 
-// ---------- 对话文件上传 ----------
+// ---------- Conversation file upload ----------
 function renderChatFileChips() {
     const list = document.getElementById('chat-file-list');
     if (!list) return;
@@ -263,9 +263,9 @@ function renderChatFileChips() {
         const remove = document.createElement('button');
         remove.type = 'button';
         remove.className = 'chat-file-chip-remove';
-        remove.title = '移除';
+        remove.title = 'Remove';
         remove.innerHTML = '×';
-        remove.setAttribute('aria-label', '移除 ' + a.fileName);
+        remove.setAttribute('aria-label', 'Remove ' + a.fileName);
         remove.addEventListener('click', () => removeChatAttachment(i));
         chip.appendChild(name);
         chip.appendChild(remove);
@@ -278,7 +278,7 @@ function removeChatAttachment(index) {
     renderChatFileChips();
 }
 
-// 有附件且输入框为空时，填入一句默认提示（可编辑）；后端会单独拼接路径与内容给大模型
+// If there are attachments and the input box is empty, fill in a default prompt (editable); backend will concatenate path and content for the model
 function appendChatFilePrompt() {
     const input = document.getElementById('chat-input');
     if (!input || !chatAttachments.length) return;
@@ -313,7 +313,7 @@ function addFilesToChat(files) {
     if (!files || !files.length) return;
     const next = Array.from(files);
     if (chatAttachments.length + next.length > MAX_CHAT_FILES) {
-        alert('最多同时上传 ' + MAX_CHAT_FILES + ' 个文件，当前已选 ' + chatAttachments.length + ' 个。');
+        alert('You can upload at most ' + MAX_CHAT_FILES + ' files at once. Currently selected: ' + chatAttachments.length + '.');
         return;
     }
     const addOne = (file) => {
@@ -322,7 +322,7 @@ function addFilesToChat(files) {
             renderChatFileChips();
             appendChatFilePrompt();
         }).catch(() => {
-            alert('读取文件失败：' + file.name);
+            alert('Failed to read file: ' + file.name);
         });
     };
     let p = Promise.resolve();
@@ -364,7 +364,7 @@ function setupChatFileUpload() {
     });
 }
 
-// 确保 chat-input-container 有 id（若模板未写）
+// Ensure chat-input-container has an id (in case template did not set it)
 function ensureChatInputContainerId() {
     const c = document.querySelector('.chat-input-container');
     if (c && !c.id) c.id = 'chat-input-container';
@@ -375,36 +375,36 @@ function setupMentionSupport() {
     if (mentionSuggestionsEl) {
         mentionSuggestionsEl.style.display = 'none';
         mentionSuggestionsEl.addEventListener('mousedown', (event) => {
-            // 防止点击候选项时输入框失焦
+            // Prevent input box from losing focus when clicking a suggestion
             event.preventDefault();
         });
     }
     ensureMentionToolsLoaded().catch(() => {
-        // 忽略加载错误，稍后可重试
+        // Ignore load error; can retry later
     });
 }
 
-// 刷新工具列表（重置已加载状态，强制重新加载）
+// Refresh tool list (reset loaded state, force reload)
 function refreshMentionTools() {
     mentionToolsLoaded = false;
     mentionTools = [];
     externalMcpNames = [];
     mentionToolsLoadingPromise = null;
-    // 如果当前正在使用@功能，立即触发重新加载
+    // If @ mention is currently active, immediately trigger reload
     if (mentionState.active) {
         ensureMentionToolsLoaded().catch(() => {
-            // 忽略加载错误
+            // Ignore load error
         });
     }
 }
 
-// 将刷新函数暴露到window对象，供其他模块调用
+// Expose refresh function to window object for other modules to call
 if (typeof window !== 'undefined') {
     window.refreshMentionTools = refreshMentionTools;
 }
 
 function ensureMentionToolsLoaded() {
-    // 检查角色是否改变，如果改变则强制重新加载
+    // Check if role has changed; if so, force reload
     if (typeof window !== 'undefined' && window._mentionToolsRoleChanged) {
         mentionToolsLoaded = false;
         mentionTools = [];
@@ -423,10 +423,10 @@ function ensureMentionToolsLoaded() {
     return mentionToolsLoadingPromise;
 }
 
-// 生成工具的唯一标识符，用于区分同名但来源不同的工具
+// Generate unique tool identifier to distinguish tools with same name but different sources
 function getToolKeyForMention(tool) {
-    // 如果是外部工具，使用 external_mcp::tool.name 作为唯一标识
-    // 如果是内部工具，使用 tool.name 作为标识
+    // If it is an external tool, use external_mcp::tool.name as unique identifier
+    // If it is an internal tool, use tool.name as identifier
     if (tool.is_external && tool.external_mcp) {
         return `${tool.external_mcp}::${tool.name}`;
     }
@@ -441,30 +441,30 @@ async function fetchMentionTools() {
     const collected = [];
 
     try {
-        // 获取当前选中的角色（从 roles.js 的函数获取）
+        // Get currently selected role (from roles.js function)
         const roleName = typeof getCurrentRole === 'function' ? getCurrentRole() : '';
 
-        // 同时获取外部MCP列表
+        // Also get external MCP list
         try {
             const mcpResponse = await apiFetch('/api/external-mcp');
             if (mcpResponse.ok) {
                 const mcpData = await mcpResponse.json();
                 externalMcpNames = Object.keys(mcpData.servers || {}).filter(name => {
                     const server = mcpData.servers[name];
-                    // 只包含已连接且已启用的MCP
+                    // Only include connected and enabled MCPs
                     return server.status === 'connected' && 
                            (server.config.external_mcp_enable || (server.config.enabled && !server.config.disabled));
                 });
             }
         } catch (mcpError) {
-            console.warn('加载外部MCP列表失败:', mcpError);
+            console.warn('Failed to load external MCP list:', mcpError);
             externalMcpNames = [];
         }
 
         while (page <= totalPages && page <= 20) {
-            // 构建API URL，如果指定了角色，添加role查询参数
+            // Build API URL; if role is specified, add role query parameter
             let url = `/api/config/tools?page=${page}&page_size=${pageSize}`;
-            if (roleName && roleName !== '默认') {
+            if (roleName && roleName !== 'Default') {
                 url += `&role=${encodeURIComponent(roleName)}`;
             }
 
@@ -478,16 +478,16 @@ async function fetchMentionTools() {
                 if (!tool || !tool.name) {
                     return;
                 }
-                // 使用唯一标识符来去重，而不是只使用工具名称
+                // Use unique identifier for deduplication, not just the tool name
                 const toolKey = getToolKeyForMention(tool);
                 if (seen.has(toolKey)) {
                     return;
                 }
                 seen.add(toolKey);
 
-                // 确定工具在当前角色中的启用状态
-                // 如果有 role_enabled 字段，使用它（表示指定了角色）
-                // 否则使用 enabled 字段（表示未指定角色或使用所有工具）
+                // Determine the enabled state of the tool in the current role
+                // If role_enabled field exists, use it (indicates a role was specified)
+                // Otherwise use the enabled field (indicates no role specified or using all tools)
                 let roleEnabled = tool.enabled !== false;
                 if (tool.role_enabled !== undefined && tool.role_enabled !== null) {
                     roleEnabled = tool.role_enabled;
@@ -496,11 +496,11 @@ async function fetchMentionTools() {
                 collected.push({
                     name: tool.name,
                     description: tool.description || '',
-                    enabled: tool.enabled !== false, // 工具本身的启用状态
-                    roleEnabled: roleEnabled, // 在当前角色中的启用状态
+                    enabled: tool.enabled !== false, // Tool's own enabled state
+                    roleEnabled: roleEnabled, // Enabled state in current role
                     isExternal: !!tool.is_external,
                     externalMcp: tool.external_mcp || '',
-                    toolKey: toolKey, // 保存唯一标识符
+                    toolKey: toolKey, // Save unique identifier
                 });
             });
             totalPages = result.total_pages || 1;
@@ -512,7 +512,7 @@ async function fetchMentionTools() {
         mentionTools = collected;
         mentionToolsLoaded = true;
     } catch (error) {
-        console.warn('加载工具列表失败，@提及功能可能不可用:', error);
+        console.warn('Failed to load tool list; @ mention feature may be unavailable:', error);
     }
     return mentionTools;
 }
@@ -520,12 +520,12 @@ async function fetchMentionTools() {
 function handleChatInputInput(event) {
     const textarea = event.target;
     updateMentionStateFromInput(textarea);
-    // 自动调整输入框高度
-    // 使用requestAnimationFrame确保在DOM更新后立即调整，特别是在删除内容时
+    // Auto-adjust input box height
+    // Use requestAnimationFrame to adjust immediately after DOM update, especially when deleting content
     requestAnimationFrame(() => {
         adjustTextareaHeight(textarea);
     });
-    // 保存输入内容到localStorage（防抖）
+    // Save input content to localStorage (debounced)
     saveChatDraftDebounced(textarea.value);
 }
 
@@ -534,8 +534,8 @@ function handleChatInputClick(event) {
 }
 
 function handleChatInputKeydown(event) {
-    // 如果正在使用输入法输入（IME），回车键应该用于确认候选词，而不是发送消息
-    // 使用 event.isComposing 或 isComposing 标志来判断
+    // If using an input method (IME), Enter should confirm the candidate word, not send the message
+    // Use event.isComposing or isComposing flag to determine this
     if (event.isComposing || isComposing) {
         return;
     }
@@ -583,7 +583,7 @@ function updateMentionStateFromInput(textarea) {
         return;
     }
 
-    // 限制触发字符之前必须是空白或起始位置
+    // The character before the trigger must be whitespace or start of string
     if (atIndex > 0) {
         const boundaryChar = textBefore[atIndex - 1];
         if (boundaryChar && !/\s/.test(boundaryChar) && !'([{，。,.;:!?'.includes(boundaryChar)) {
@@ -633,29 +633,29 @@ function updateMentionCandidates() {
     let filtered = mentionTools;
 
     if (normalizedQuery) {
-        // 检查是否精确匹配外部MCP名称
+        // Check if it exactly matches an external MCP name
         const exactMatchedMcp = externalMcpNames.find(mcpName => 
             mcpName.toLowerCase() === normalizedQuery
         );
 
         if (exactMatchedMcp) {
-            // 如果完全匹配MCP名称，只显示该MCP下的所有工具
+            // If exactly matching an MCP name, show only tools under that MCP
             filtered = mentionTools.filter(tool => {
                 return tool.externalMcp && tool.externalMcp.toLowerCase() === exactMatchedMcp.toLowerCase();
             });
         } else {
-            // 检查是否部分匹配MCP名称
+            // Check if it partially matches an MCP name
             const partialMatchedMcps = externalMcpNames.filter(mcpName => 
                 mcpName.toLowerCase().includes(normalizedQuery)
             );
             
-            // 正常匹配：按工具名称和描述过滤，同时也匹配MCP名称
+            // Normal match: filter by tool name and description, also match MCP name
             filtered = mentionTools.filter(tool => {
                 const nameMatch = tool.name.toLowerCase().includes(normalizedQuery);
                 const descMatch = tool.description && tool.description.toLowerCase().includes(normalizedQuery);
                 const mcpMatch = tool.externalMcp && tool.externalMcp.toLowerCase().includes(normalizedQuery);
                 
-                // 如果部分匹配到MCP名称，也包含该MCP下的所有工具
+                // If partially matching an MCP name, also include all tools under that MCP
                 const mcpPartialMatch = partialMatchedMcps.some(mcpName => 
                     tool.externalMcp && tool.externalMcp.toLowerCase() === mcpName.toLowerCase()
                 );
@@ -666,17 +666,17 @@ function updateMentionCandidates() {
     }
 
     filtered = filtered.slice().sort((a, b) => {
-        // 如果指定了角色，优先显示在当前角色中启用的工具
+        // If a role is specified, prioritize tools enabled in the current role
         if (a.roleEnabled !== undefined || b.roleEnabled !== undefined) {
             const aRoleEnabled = a.roleEnabled !== undefined ? a.roleEnabled : a.enabled;
             const bRoleEnabled = b.roleEnabled !== undefined ? b.roleEnabled : b.enabled;
             if (aRoleEnabled !== bRoleEnabled) {
-                return aRoleEnabled ? -1 : 1; // 启用的工具排在前面
+                return aRoleEnabled ? -1 : 1; // Enabled tools come first
             }
         }
 
         if (normalizedQuery) {
-            // 精确匹配MCP名称的工具优先显示
+            // Tools that exactly match the MCP name are shown first
             const aMcpExact = a.externalMcp && a.externalMcp.toLowerCase() === normalizedQuery;
             const bMcpExact = b.externalMcp && b.externalMcp.toLowerCase() === normalizedQuery;
             if (aMcpExact !== bMcpExact) {
@@ -689,13 +689,13 @@ function updateMentionCandidates() {
                 return aStarts ? -1 : 1;
             }
         }
-        // 如果指定了角色，使用 roleEnabled；否则使用 enabled
+        // If a role is specified, use roleEnabled; otherwise use enabled
         const aEnabled = a.roleEnabled !== undefined ? a.roleEnabled : a.enabled;
         const bEnabled = b.roleEnabled !== undefined ? b.roleEnabled : b.enabled;
         if (aEnabled !== bEnabled) {
             return aEnabled ? -1 : 1;
         }
-        return a.name.localeCompare(b.name, 'zh-CN');
+        return a.name.localeCompare(b.name, 'en-US');
     });
 
     mentionFilteredTools = filtered;
@@ -720,14 +720,14 @@ function renderMentionSuggestions({ showLoading = false } = {}) {
     const previousScrollTop = canPreserveScroll ? existingList.scrollTop : 0;
 
     if (showLoading) {
-        mentionSuggestionsEl.innerHTML = '<div class="mention-empty">正在加载工具...</div>';
+        mentionSuggestionsEl.innerHTML = '<div class="mention-empty">Loading tools...</div>';
         mentionSuggestionsEl.style.display = 'block';
         delete mentionSuggestionsEl.dataset.lastMentionQuery;
         return;
     }
 
     if (!mentionFilteredTools.length) {
-        mentionSuggestionsEl.innerHTML = '<div class="mention-empty">没有匹配的工具</div>';
+        mentionSuggestionsEl.innerHTML = '<div class="mention-empty">No matching tools</div>';
         mentionSuggestionsEl.style.display = 'block';
         mentionSuggestionsEl.dataset.lastMentionQuery = currentQuery;
         return;
@@ -735,19 +735,19 @@ function renderMentionSuggestions({ showLoading = false } = {}) {
 
     const itemsHtml = mentionFilteredTools.map((tool, index) => {
         const activeClass = index === mentionState.selectedIndex ? 'active' : '';
-        // 如果工具有 roleEnabled 字段（指定了角色），使用它；否则使用 enabled
+        // If the tool has roleEnabled field (role specified), use it; otherwise use enabled
         const toolEnabled = tool.roleEnabled !== undefined ? tool.roleEnabled : tool.enabled;
         const disabledClass = toolEnabled ? '' : 'disabled';
-        const badge = tool.isExternal ? '<span class="mention-item-badge">外部</span>' : '<span class="mention-item-badge internal">内置</span>';
+        const badge = tool.isExternal ? '<span class="mention-item-badge">External</span>' : '<span class="mention-item-badge internal">Built-in</span>';
         const nameHtml = escapeHtml(tool.name);
-        const description = tool.description && tool.description.length > 0 ? escapeHtml(tool.description) : '暂无描述';
+        const description = tool.description && tool.description.length > 0 ? escapeHtml(tool.description) : 'No description';
         const descHtml = `<div class="mention-item-desc">${description}</div>`;
-        // 根据工具在当前角色中的启用状态显示状态标签
-        const statusLabel = toolEnabled ? '可用' : (tool.roleEnabled !== undefined ? '已禁用（当前角色）' : '已禁用');
+        // Show status label based on tool enabled state in the current role
+        const statusLabel = toolEnabled ? 'Available' : (tool.roleEnabled !== undefined ? 'Disabled (current role)' : 'Disabled');
         const statusClass = toolEnabled ? 'enabled' : 'disabled';
         const originLabel = tool.isExternal
-            ? (tool.externalMcp ? `来源：${escapeHtml(tool.externalMcp)}` : '来源：外部MCP')
-            : '来源：内置工具';
+            ? (tool.externalMcp ? `Source: ${escapeHtml(tool.externalMcp)}` : 'Source: External MCP')
+            : 'Source: Built-in tool';
 
         return `
             <button type="button" class="mention-item ${activeClass} ${disabledClass}" data-index="${index}">
@@ -889,7 +889,7 @@ function applyMentionSelection() {
     textarea.focus();
     textarea.setSelectionRange(newCaret, newCaret);
     
-    // 调整输入框高度并保存草稿
+    // Adjust input box height and save draft
     adjustTextareaHeight(textarea);
     saveChatDraftDebounced(textarea.value);
 
@@ -899,28 +899,28 @@ function applyMentionSelection() {
 function initializeChatUI() {
     const chatInputEl = document.getElementById('chat-input');
     if (chatInputEl) {
-        // 初始化时设置正确的高度
+        // Set correct height during initialization
         adjustTextareaHeight(chatInputEl);
-        // 恢复保存的草稿（仅在输入框为空时恢复，避免覆盖用户输入）
+        // Restore saved draft (only when input box is empty, to avoid overwriting user input)
         if (!chatInputEl.value || chatInputEl.value.trim() === '') {
-            // 检查对话中是否有最近的消息（30秒内），如果有，说明可能是刚刚发送的消息，不恢复草稿
+            // Check if there are recent messages (within 30 seconds); if so, it may be a just-sent message, do not restore draft
             const messagesDiv = document.getElementById('chat-messages');
             let shouldRestoreDraft = true;
             if (messagesDiv && messagesDiv.children.length > 0) {
-                // 检查最后一条消息的时间
+                // Check the time of the last message
                 const lastMessage = messagesDiv.lastElementChild;
                 if (lastMessage) {
                     const timeDiv = lastMessage.querySelector('.message-time');
                     if (timeDiv && timeDiv.textContent) {
-                        // 如果最后一条消息是用户消息，且时间很近，不恢复草稿
+                        // If the last message is a user message and recent, do not restore draft
                         const isUserMessage = lastMessage.classList.contains('user');
                         if (isUserMessage) {
-                            // 检查消息时间，如果是最近30秒内的，不恢复草稿
+                            // Check message time; if within the last 30 seconds, do not restore draft
                             const now = new Date();
                             const messageTimeText = timeDiv.textContent;
-                            // 简单检查：如果消息时间显示的是当前时间（格式：HH:MM），且是用户消息，不恢复草稿
-                            // 更精确的方法是检查消息的创建时间，但需要从消息元素中获取
-                            // 这里采用简单策略：如果最后一条是用户消息，且输入框为空，可能是刚发送的，不恢复草稿
+                            // Simple check: if message time shows current time (format: HH:MM) and it is a user message, do not restore draft
+                            // More precise method: check message creation time, but requires extracting from the message element
+                            // Simple strategy: if the last message is a user message and input box is empty, it may have just been sent, do not restore draft
                             shouldRestoreDraft = false;
                         }
                     }
@@ -929,7 +929,7 @@ function initializeChatUI() {
             if (shouldRestoreDraft) {
                 restoreChatDraft();
             } else {
-                // 即使不恢复草稿，也要清除localStorage中的草稿，避免下次误恢复
+                // Even if not restoring draft, clear the draft from localStorage to avoid false restore next time
                 clearChatDraft();
             }
         }
@@ -937,7 +937,7 @@ function initializeChatUI() {
 
     const messagesDiv = document.getElementById('chat-messages');
     if (messagesDiv && messagesDiv.childElementCount === 0) {
-        addMessage('assistant', '系统已就绪。请输入您的测试需求，系统将自动执行相应的安全测试。');
+        addMessage('assistant', 'System ready. Please enter your testing requirements; the system will automatically execute the corresponding security tests.');
     }
 
     addAttackChainButton(currentConversationId);
@@ -951,29 +951,29 @@ function initializeChatUI() {
     setupChatFileUpload();
 }
 
-// 消息计数器，确保ID唯一
+// Message counter to ensure unique IDs
 let messageCounter = 0;
 
-// 为消息气泡中的表格添加独立的滚动容器
+// Add independent scroll container for tables in message bubbles
 function wrapTablesInBubble(bubble) {
     const tables = bubble.querySelectorAll('table');
     tables.forEach(table => {
-        // 检查表格是否已经有包装容器
+        // Check if the table already has a wrapper container
         if (table.parentElement && table.parentElement.classList.contains('table-wrapper')) {
             return;
         }
         
-        // 创建表格包装容器
+        // Create table wrapper container
         const wrapper = document.createElement('div');
         wrapper.className = 'table-wrapper';
         
-        // 将表格移动到包装容器中
+        // Move table into wrapper container
         table.parentNode.insertBefore(wrapper, table);
         wrapper.appendChild(table);
     });
 }
 
-// 添加消息
+// Add message
 function addMessage(role, content, mcpExecutionIds = null, progressId = null, createdAt = null) {
     const messagesDiv = document.getElementById('chat-messages');
     const messageDiv = document.createElement('div');
@@ -982,7 +982,7 @@ function addMessage(role, content, mcpExecutionIds = null, progressId = null, cr
     messageDiv.id = id;
     messageDiv.className = 'message ' + role;
     
-    // 创建头像
+    // Create avatar
     const avatar = document.createElement('div');
     avatar.className = 'message-avatar';
     if (role === 'user') {
@@ -994,15 +994,15 @@ function addMessage(role, content, mcpExecutionIds = null, progressId = null, cr
     }
     messageDiv.appendChild(avatar);
     
-    // 创建消息内容容器
+    // Create message content container
     const contentWrapper = document.createElement('div');
     contentWrapper.className = 'message-content';
     
-    // 创建消息气泡
+    // Create message bubble
     const bubble = document.createElement('div');
     bubble.className = 'message-bubble';
     
-    // 解析 Markdown 或 HTML 格式
+    // Parse Markdown or HTML format
     let formattedContent;
     const defaultSanitizeConfig = {
         ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'u', 's', 'code', 'pre', 'blockquote', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'a', 'img', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'hr'],
@@ -1010,7 +1010,7 @@ function addMessage(role, content, mcpExecutionIds = null, progressId = null, cr
         ALLOW_DATA_ATTR: false,
     };
     
-    // HTML实体编码函数
+    // HTML entity encoding function
     const escapeHtml = (text) => {
         if (!text) return '';
         const div = document.createElement('div');
@@ -1018,11 +1018,11 @@ function addMessage(role, content, mcpExecutionIds = null, progressId = null, cr
         return div.innerHTML;
     };
     
-    // 注意：代码块内容不需要转义，因为：
-    // 1. Markdown解析后，代码块会被包裹在<code>或<pre>标签中
-    // 2. 浏览器不会执行<code>和<pre>标签内的HTML（它们是文本节点）
-    // 3. DOMPurify会保留这些标签内的文本内容
-    // 这样既能防止XSS，又能正常显示代码
+    // Note: code block content does not need escaping, because:
+    // 1. After Markdown parsing, code blocks are wrapped in <code> or <pre> tags
+    // 2. Browsers do not execute HTML inside <code> and <pre> tags (they are text nodes)
+    // 3. DOMPurify preserves text content inside these tags
+    // This prevents XSS while correctly displaying code
     
     const parseMarkdown = (raw) => {
         if (typeof marked === 'undefined') {
@@ -1035,38 +1035,38 @@ function addMessage(role, content, mcpExecutionIds = null, progressId = null, cr
             });
             return marked.parse(raw);
         } catch (e) {
-            console.error('Markdown 解析失败:', e);
+            console.error('Markdown parsing failed:', e);
             return null;
         }
     };
     
-    // 对于用户消息，直接转义HTML，不进行Markdown解析，以保留所有特殊字符
+    // For user messages, directly escape HTML without Markdown parsing to preserve all special characters
     if (role === 'user') {
         formattedContent = escapeHtml(content).replace(/\n/g, '<br>');
     } else if (typeof DOMPurify !== 'undefined') {
-        // 直接解析Markdown（代码块会被包裹在<code>/<pre>中，DOMPurify会保留其文本内容）
+        // Directly parse Markdown (code blocks will be wrapped in <code>/<pre>; DOMPurify preserves text content)
         let parsedContent = parseMarkdown(content);
         if (!parsedContent) {
             parsedContent = content;
         }
         
-        // 使用DOMPurify清理，只添加必要的URL验证钩子（DOMPurify默认会处理事件处理器等）
+        // Use DOMPurify for sanitization, only add necessary URL validation hooks (DOMPurify handles event handlers etc. by default)
         if (DOMPurify.addHook) {
-            // 移除之前可能存在的钩子
+            // Remove previously existing hooks
             try {
                 DOMPurify.removeHook('uponSanitizeAttribute');
             } catch (e) {
-                // 钩子不存在，忽略
+                // Hook does not exist, ignore
             }
             
-            // 只验证URL属性，防止危险协议（DOMPurify默认会处理事件处理器、style等）
+            // Only validate URL attributes to block dangerous protocols (DOMPurify handles event handlers, style, etc. by default)
             DOMPurify.addHook('uponSanitizeAttribute', (node, data) => {
                 const attrName = data.attrName.toLowerCase();
                 
-                // 只验证URL属性（src, href）
+                // Only validate URL attributes (src, href)
                 if ((attrName === 'src' || attrName === 'href') && data.attrValue) {
                     const value = data.attrValue.trim().toLowerCase();
-                    // 禁止危险协议
+                    // Block dangerous protocols
                     if (value.startsWith('javascript:') || 
                         value.startsWith('vbscript:') ||
                         value.startsWith('data:text/html') ||
@@ -1074,7 +1074,7 @@ function addMessage(role, content, mcpExecutionIds = null, progressId = null, cr
                         data.keepAttr = false;
                         return;
                     }
-                    // 对于img的src，禁止可疑的短URL（防止404和XSS）
+                    // For img src, block suspicious short URLs (prevent 404 and XSS)
                     if (attrName === 'src' && node.tagName && node.tagName.toLowerCase() === 'img') {
                         if (value.length <= 2 || /^[a-z]$/i.test(value)) {
                             data.keepAttr = false;
@@ -1099,14 +1099,14 @@ function addMessage(role, content, mcpExecutionIds = null, progressId = null, cr
     
     bubble.innerHTML = formattedContent;
     
-    // 最后的安全检查：只处理明显的可疑图片（防止404和XSS）
-    // DOMPurify已经处理了大部分XSS向量，这里只做必要的补充
+    // Final security check: only handle obviously suspicious images (prevent 404 and XSS)
+    // DOMPurify already handles most XSS vectors; this is just a necessary supplement
     const images = bubble.querySelectorAll('img');
     images.forEach(img => {
         const src = img.getAttribute('src');
         if (src) {
             const trimmedSrc = src.trim();
-            // 只检查明显的可疑URL（短字符串、单个字符）
+            // Only check obviously suspicious URLs (short strings, single characters)
             if (trimmedSrc.length <= 2 || /^[a-z]$/i.test(trimmedSrc)) {
                 img.remove();
             }
@@ -1115,22 +1115,22 @@ function addMessage(role, content, mcpExecutionIds = null, progressId = null, cr
         }
     });
     
-    // 为每个表格添加独立的滚动容器
+    // Add independent scroll container for each table
     wrapTablesInBubble(bubble);
     
     contentWrapper.appendChild(bubble);
     
-    // 保存原始内容到消息元素，用于复制功能
+    // Save original content to message element for copy functionality
     if (role === 'assistant') {
         messageDiv.dataset.originalContent = content;
     }
     
-    // 为助手消息添加复制按钮（复制整个回复内容）- 放在消息气泡右下角
+    // Add copy button to assistant messages (copies entire reply) - placed at bottom-right of message bubble
     if (role === 'assistant') {
         const copyBtn = document.createElement('button');
         copyBtn.className = 'message-copy-btn';
-        copyBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg><span>复制</span>';
-        copyBtn.title = '复制消息内容';
+        copyBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg><span>Copy</span>';
+        copyBtn.title = 'Copy message content';
         copyBtn.onclick = function(e) {
             e.stopPropagation();
             copyMessageToClipboard(messageDiv, this);
@@ -1138,13 +1138,13 @@ function addMessage(role, content, mcpExecutionIds = null, progressId = null, cr
         bubble.appendChild(copyBtn);
     }
     
-    // 添加时间戳
+    // Add timestamp
     const timeDiv = document.createElement('div');
     timeDiv.className = 'message-time';
-    // 如果有传入的创建时间，使用它；否则使用当前时间
+    // If creation time is provided, use it; otherwise use current time
     let messageTime;
     if (createdAt) {
-        // 处理字符串或Date对象
+        // Handle string or Date object
         if (typeof createdAt === 'string') {
             messageTime = new Date(createdAt);
         } else if (createdAt instanceof Date) {
@@ -1152,50 +1152,50 @@ function addMessage(role, content, mcpExecutionIds = null, progressId = null, cr
         } else {
             messageTime = new Date(createdAt);
         }
-        // 如果解析失败，使用当前时间
+        // If parsing fails, use current time
         if (isNaN(messageTime.getTime())) {
             messageTime = new Date();
         }
     } else {
         messageTime = new Date();
     }
-    timeDiv.textContent = messageTime.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+    timeDiv.textContent = messageTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
     contentWrapper.appendChild(timeDiv);
     
-    // 如果有MCP执行ID或进度ID，添加查看详情区域（统一使用"渗透测试详情"样式）
+    // If there are MCP execution IDs or a progress ID, add a details view area (unified "Penetration Test Details" style)
     if (role === 'assistant' && ((mcpExecutionIds && Array.isArray(mcpExecutionIds) && mcpExecutionIds.length > 0) || progressId)) {
         const mcpSection = document.createElement('div');
         mcpSection.className = 'mcp-call-section';
         
         const mcpLabel = document.createElement('div');
         mcpLabel.className = 'mcp-call-label';
-        mcpLabel.textContent = '📋 渗透测试详情';
+        mcpLabel.textContent = '📋 Penetration Test Details';
         mcpSection.appendChild(mcpLabel);
         
         const buttonsContainer = document.createElement('div');
         buttonsContainer.className = 'mcp-call-buttons';
         
-        // 如果有MCP执行ID，添加MCP调用详情按钮
+        // If there are MCP execution IDs, add MCP call detail buttons
         if (mcpExecutionIds && Array.isArray(mcpExecutionIds) && mcpExecutionIds.length > 0) {
             mcpExecutionIds.forEach((execId, index) => {
                 const detailBtn = document.createElement('button');
                 detailBtn.className = 'mcp-detail-btn';
-                detailBtn.innerHTML = `<span>调用 #${index + 1}</span>`;
+                detailBtn.innerHTML = `<span>Call #${index + 1}</span>`;
                 detailBtn.onclick = () => showMCPDetail(execId);
                 buttonsContainer.appendChild(detailBtn);
-                // 异步获取工具名称并更新按钮文本
+                // Asynchronously get tool name and update button text
                 updateButtonWithToolName(detailBtn, execId, index + 1);
             });
         }
         
-        // 如果有进度ID，添加展开详情按钮（统一使用"展开详情"文本）
+        // If there is a progress ID, add an expand details button (unified "Expand Details" text)
         if (progressId) {
             const progressDetailBtn = document.createElement('button');
             progressDetailBtn.className = 'mcp-detail-btn process-detail-btn';
-            progressDetailBtn.innerHTML = '<span>展开详情</span>';
+            progressDetailBtn.innerHTML = '<span>Expand Details</span>';
             progressDetailBtn.onclick = () => toggleProcessDetails(progressId, messageDiv.id);
             buttonsContainer.appendChild(progressDetailBtn);
-            // 存储进度ID到消息元素
+            // Store progress ID in message element
             messageDiv.dataset.progressId = progressId;
         }
         
@@ -1209,57 +1209,57 @@ function addMessage(role, content, mcpExecutionIds = null, progressId = null, cr
     return id;
 }
 
-// 复制消息内容到剪贴板（使用原始Markdown格式）
+// Copy message content to clipboard (using original Markdown format)
 function copyMessageToClipboard(messageDiv, button) {
     try {
-        // 获取保存的原始Markdown内容
+        // Get saved original Markdown content
         const originalContent = messageDiv.dataset.originalContent;
         
         if (!originalContent) {
-            // 如果没有保存原始内容，尝试从渲染后的HTML提取（降级方案）
+            // If no original content was saved, try extracting from rendered HTML (fallback)
             const bubble = messageDiv.querySelector('.message-bubble');
             if (bubble) {
                 const tempDiv = document.createElement('div');
                 tempDiv.innerHTML = bubble.innerHTML;
                 
-                // 移除复制按钮本身（避免复制按钮文本）
+                // Remove the copy button itself (avoid copying button text)
                 const copyBtnInTemp = tempDiv.querySelector('.message-copy-btn');
                 if (copyBtnInTemp) {
                     copyBtnInTemp.remove();
                 }
                 
-                // 提取纯文本内容
+                // Extract plain text content
                 let textContent = tempDiv.textContent || tempDiv.innerText || '';
                 textContent = textContent.replace(/\n{3,}/g, '\n\n').trim();
                 
                 navigator.clipboard.writeText(textContent).then(() => {
                     showCopySuccess(button);
                 }).catch(err => {
-                    console.error('复制失败:', err);
-                    alert('复制失败，请手动选择内容复制');
+                    console.error('Copy failed:', err);
+                    alert('Copy failed. Please manually select and copy the content.');
                 });
             }
             return;
         }
         
-        // 使用原始Markdown内容
+        // Use original Markdown content
         navigator.clipboard.writeText(originalContent).then(() => {
             showCopySuccess(button);
         }).catch(err => {
-            console.error('复制失败:', err);
-            alert('复制失败，请手动选择内容复制');
+            console.error('Copy failed:', err);
+            alert('Copy failed. Please manually select and copy the content.');
         });
     } catch (error) {
-        console.error('复制消息时出错:', error);
-        alert('复制失败，请手动选择内容复制');
+        console.error('Error copying message:', error);
+        alert('Copy failed. Please manually select and copy the content.');
     }
 }
 
-// 显示复制成功提示
+// Show copy success indicator
 function showCopySuccess(button) {
     if (button) {
         const originalText = button.innerHTML;
-        button.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg><span>已复制</span>';
+        button.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg><span>Copied</span>';
         button.style.color = '#10b981';
         button.style.background = 'rgba(16, 185, 129, 0.1)';
         button.style.borderColor = 'rgba(16, 185, 129, 0.3)';
@@ -1272,14 +1272,14 @@ function showCopySuccess(button) {
     }
 }
 
-// 渲染过程详情
+// Render process details
 function renderProcessDetails(messageId, processDetails) {
     const messageElement = document.getElementById(messageId);
     if (!messageElement) {
         return;
     }
     
-    // 查找或创建MCP调用区域
+    // Find or create MCP call area
     let mcpSection = messageElement.querySelector('.mcp-call-section');
     if (!mcpSection) {
         mcpSection = document.createElement('div');
@@ -1293,39 +1293,39 @@ function renderProcessDetails(messageId, processDetails) {
         }
     }
     
-    // 确保有标签和按钮容器（统一结构）
+    // Ensure label and button container exist (unified structure)
     let mcpLabel = mcpSection.querySelector('.mcp-call-label');
     let buttonsContainer = mcpSection.querySelector('.mcp-call-buttons');
     
-    // 如果没有标签，创建一个（当没有工具调用时）
+    // If no label, create one (when there are no tool calls)
     if (!mcpLabel && !buttonsContainer) {
         mcpLabel = document.createElement('div');
         mcpLabel.className = 'mcp-call-label';
-        mcpLabel.textContent = '📋 渗透测试详情';
+        mcpLabel.textContent = '📋 Penetration Test Details';
         mcpSection.appendChild(mcpLabel);
-    } else if (mcpLabel && mcpLabel.textContent !== '📋 渗透测试详情') {
-        // 如果标签存在但不是统一格式，更新它
-        mcpLabel.textContent = '📋 渗透测试详情';
+    } else if (mcpLabel && mcpLabel.textContent !== '📋 Penetration Test Details') {
+        // If label exists but not in unified format, update it
+        mcpLabel.textContent = '📋 Penetration Test Details';
     }
     
-    // 如果没有按钮容器，创建一个
+    // If no button container, create one
     if (!buttonsContainer) {
         buttonsContainer = document.createElement('div');
         buttonsContainer.className = 'mcp-call-buttons';
         mcpSection.appendChild(buttonsContainer);
     }
     
-    // 添加过程详情按钮（如果还没有）
+    // Add process detail button (if not already present)
     let processDetailBtn = buttonsContainer.querySelector('.process-detail-btn');
     if (!processDetailBtn) {
         processDetailBtn = document.createElement('button');
         processDetailBtn.className = 'mcp-detail-btn process-detail-btn';
-        processDetailBtn.innerHTML = '<span>展开详情</span>';
+        processDetailBtn.innerHTML = '<span>Expand Details</span>';
         processDetailBtn.onclick = () => toggleProcessDetails(null, messageId);
         buttonsContainer.appendChild(processDetailBtn);
     }
     
-    // 创建过程详情容器（放在按钮容器之后）
+    // Create process detail container (placed after button container)
     const detailsId = 'process-details-' + messageId;
     let detailsContainer = document.getElementById(detailsId);
     
@@ -1333,7 +1333,7 @@ function renderProcessDetails(messageId, processDetails) {
         detailsContainer = document.createElement('div');
         detailsContainer.id = detailsId;
         detailsContainer.className = 'process-details-container';
-        // 确保容器在按钮容器之后
+        // Ensure container is after button container
         if (buttonsContainer.nextSibling) {
             mcpSection.insertBefore(detailsContainer, buttonsContainer.nextSibling);
         } else {
@@ -1341,7 +1341,7 @@ function renderProcessDetails(messageId, processDetails) {
         }
     }
     
-    // 创建时间线（即使没有processDetails也要创建，以便展开详情按钮能正常工作）
+    // Create timeline (create even without processDetails, so the expand details button works)
     const timelineId = detailsId + '-timeline';
     let timeline = document.getElementById(timelineId);
     
@@ -1357,80 +1357,80 @@ function renderProcessDetails(messageId, processDetails) {
         detailsContainer.appendChild(contentDiv);
     }
     
-    // 如果没有processDetails或为空，显示空状态
+    // If no processDetails or empty, show empty state
     if (!processDetails || processDetails.length === 0) {
-        // 显示空状态提示
-        timeline.innerHTML = '<div class="progress-timeline-empty">暂无过程详情（可能执行过快或未触发详细事件）</div>';
-        // 默认折叠
+        // Show empty state hint
+        timeline.innerHTML = '<div class="progress-timeline-empty">No process details available (may have executed too fast or no detail events triggered)</div>';
+        // Default collapsed
         timeline.classList.remove('expanded');
         return;
     }
     
-    // 清空时间线并重新渲染
+    // Clear timeline and re-render
     timeline.innerHTML = '';
     
     
-    // 渲染每个过程详情事件
+    // Render each process detail event
     processDetails.forEach(detail => {
         const eventType = detail.eventType || '';
         const title = detail.message || '';
         const data = detail.data || {};
         
-        // 根据事件类型渲染不同的内容
+        // Render different content based on event type
         let itemTitle = title;
         if (eventType === 'iteration') {
-            itemTitle = `第 ${data.iteration || 1} 轮迭代`;
+            itemTitle = `Round ${data.iteration || 1}`;
         } else if (eventType === 'thinking') {
-            itemTitle = '🤔 AI思考';
+            itemTitle = '🤔 AI Thinking';
         } else if (eventType === 'tool_calls_detected') {
-            itemTitle = `🔧 检测到 ${data.count || 0} 个工具调用`;
+            itemTitle = `🔧 Detected ${data.count || 0} tool call(s)`;
         } else if (eventType === 'tool_call') {
-            const toolName = data.toolName || '未知工具';
+            const toolName = data.toolName || 'Unknown tool';
             const index = data.index || 0;
             const total = data.total || 0;
-            itemTitle = `🔧 调用工具: ${escapeHtml(toolName)} (${index}/${total})`;
+            itemTitle = `🔧 Calling tool: ${escapeHtml(toolName)} (${index}/${total})`;
         } else if (eventType === 'tool_result') {
-            const toolName = data.toolName || '未知工具';
+            const toolName = data.toolName || 'Unknown tool';
             const success = data.success !== false;
             const statusIcon = success ? '✅' : '❌';
-            itemTitle = `${statusIcon} 工具 ${escapeHtml(toolName)} 执行${success ? '完成' : '失败'}`;
+            itemTitle = `${statusIcon} Tool ${escapeHtml(toolName)} execution ${success ? 'completed' : 'failed'}`;
             
-            // 如果是知识检索工具，添加特殊标记
+            // If it is a knowledge retrieval tool, add special marker
             if (toolName === BuiltinTools.SEARCH_KNOWLEDGE_BASE && success) {
-                itemTitle = `📚 ${itemTitle} - 知识检索`;
+                itemTitle = `📚 ${itemTitle} - Knowledge Retrieval`;
             }
         } else if (eventType === 'knowledge_retrieval') {
-            itemTitle = '📚 知识检索';
+            itemTitle = '📚 Knowledge Retrieval';
         } else if (eventType === 'error') {
-            itemTitle = '❌ 错误';
+            itemTitle = '❌ Error';
         } else if (eventType === 'cancelled') {
-            itemTitle = '⛔ 任务已取消';
+            itemTitle = '⛔ Task Cancelled';
         }
         
         addTimelineItem(timeline, eventType, {
             title: itemTitle,
             message: detail.message || '',
             data: data,
-            createdAt: detail.createdAt // 传递实际的事件创建时间
+            createdAt: detail.createdAt // Pass actual event creation time
         });
     });
     
-    // 检查是否有错误或取消事件，如果有，确保详情默认折叠
+    // Check if there are error or cancelled events; if so, ensure details are collapsed by default
     const hasErrorOrCancelled = processDetails.some(d => 
         d.eventType === 'error' || d.eventType === 'cancelled'
     );
     if (hasErrorOrCancelled) {
-        // 确保时间线是折叠的
+        // Ensure timeline is collapsed
         timeline.classList.remove('expanded');
-        // 更新按钮文本为"展开详情"
+        // Update button text to "Expand Details"
         const processDetailBtn = messageElement.querySelector('.process-detail-btn');
         if (processDetailBtn) {
-            processDetailBtn.innerHTML = '<span>展开详情</span>';
+            processDetailBtn.innerHTML = '<span>Expand Details</span>';
         }
     }
 }
 
-// 移除消息
+// Remove message
 function removeMessage(id) {
     const messageDiv = document.getElementById(id);
     if (messageDiv) {
@@ -1438,14 +1438,14 @@ function removeMessage(id) {
     }
 }
 
-// 输入框事件绑定（回车发送 / @提及）
+// Input box event binding (Enter to send / @ mention)
 const chatInput = document.getElementById('chat-input');
 if (chatInput) {
     chatInput.addEventListener('keydown', handleChatInputKeydown);
     chatInput.addEventListener('input', handleChatInputInput);
     chatInput.addEventListener('click', handleChatInputClick);
     chatInput.addEventListener('focus', handleChatInputClick);
-    // IME输入法事件监听，用于跟踪输入法状态
+    // IME input method event listeners for tracking IME state
     chatInput.addEventListener('compositionstart', () => {
         isComposing = true;
     });
@@ -1458,47 +1458,47 @@ if (chatInput) {
                 deactivateMentionState();
             }
         }, 120);
-        // 失焦时立即保存草稿（不等待防抖）
+        // Save draft immediately on blur (without debounce)
         if (chatInput.value) {
             saveChatDraft(chatInput.value);
         }
     });
 }
 
-// 页面卸载时立即保存草稿
+// Save draft immediately on page unload
 window.addEventListener('beforeunload', () => {
     const chatInput = document.getElementById('chat-input');
     if (chatInput && chatInput.value) {
-        // 立即保存，不使用防抖
+        // Save immediately without debounce
         saveChatDraft(chatInput.value);
     }
 });
 
-// 异步获取工具名称并更新按钮文本
+// Asynchronously get tool name and update button text
 async function updateButtonWithToolName(button, executionId, index) {
     try {
         const response = await apiFetch(`/api/monitor/execution/${executionId}`);
         if (response.ok) {
             const exec = await response.json();
-            const toolName = exec.toolName || '未知工具';
-            // 格式化工具名称（如果是 name::toolName 格式，只显示 toolName 部分）
+            const toolName = exec.toolName || 'Unknown tool';
+            // Format tool name (if in name::toolName format, show only the toolName part)
             const displayToolName = toolName.includes('::') ? toolName.split('::')[1] : toolName;
             button.querySelector('span').textContent = `${displayToolName} #${index}`;
         }
     } catch (error) {
-        // 如果获取失败，保持原有文本不变
-        console.error('获取工具名称失败:', error);
+        // If fetch fails, keep original text
+        console.error('Failed to get tool name:', error);
     }
 }
 
-// 显示MCP调用详情
+// Show MCP call details
 async function showMCPDetail(executionId) {
     try {
         const response = await apiFetch(`/api/monitor/execution/${executionId}`);
         const exec = await response.json();
         
         if (response.ok) {
-            // 填充模态框内容
+            // Fill modal content
             document.getElementById('detail-tool-name').textContent = exec.toolName || 'Unknown';
             document.getElementById('detail-execution-id').textContent = exec.id || 'N/A';
             const statusEl = document.getElementById('detail-status');
@@ -1506,24 +1506,24 @@ async function showMCPDetail(executionId) {
             statusEl.textContent = getStatusText(exec.status);
             statusEl.className = `status-chip status-${normalizedStatus}`;
             document.getElementById('detail-time').textContent = exec.startTime
-                ? new Date(exec.startTime).toLocaleString('zh-CN')
+                ? new Date(exec.startTime).toLocaleString('en-US')
                 : '—';
             
-            // 请求参数
+            // Request parameters
             const requestData = {
                 tool: exec.toolName,
                 arguments: exec.arguments
             };
             document.getElementById('detail-request').textContent = JSON.stringify(requestData, null, 2);
             
-            // 响应结果 + 正确信息 / 错误信息
+            // Response result + success info / error info
             const responseElement = document.getElementById('detail-response');
             const successSection = document.getElementById('detail-success-section');
             const successElement = document.getElementById('detail-success');
             const errorSection = document.getElementById('detail-error-section');
             const errorElement = document.getElementById('detail-error');
 
-            // 重置状态
+            // Reset state
             responseElement.className = 'code-block';
             responseElement.textContent = '';
             if (successSection && successElement) {
@@ -1543,14 +1543,14 @@ async function showMCPDetail(executionId) {
                 responseElement.textContent = JSON.stringify(responseData, null, 2);
 
                 if (exec.result.isError) {
-                    // 错误场景：响应结果标红 + 错误信息区块
+                    // Error scenario: response result highlighted red + error info block
                     responseElement.className = 'code-block error';
                     if (exec.error && errorSection && errorElement) {
                         errorSection.style.display = 'block';
                         errorElement.textContent = exec.error;
                     }
                 } else {
-                    // 成功场景：响应结果保持普通样式，正确信息单独拎出来
+                    // Success scenario: response result stays normal style, success info shown separately
                     responseElement.className = 'code-block';
                     if (successSection && successElement) {
                         successSection.style.display = 'block';
@@ -1569,31 +1569,31 @@ async function showMCPDetail(executionId) {
                             successText = content.text;
                         }
                         if (!successText) {
-                            successText = '执行成功，未返回可展示的文本内容。';
+                            successText = 'Execution succeeded; no displayable text content returned.';
                         }
                         successElement.textContent = successText;
                     }
                 }
             } else {
-                responseElement.textContent = '暂无响应数据';
+                responseElement.textContent = 'No response data available';
             }
             
-            // 显示模态框
+            // Show modal
             document.getElementById('mcp-detail-modal').style.display = 'block';
         } else {
-            alert('获取详情失败: ' + (exec.error || '未知错误'));
+            alert('Failed to get details: ' + (exec.error || 'Unknown error'));
         }
     } catch (error) {
-        alert('获取详情失败: ' + error.message);
+        alert('Failed to get details: ' + error.message);
     }
 }
 
-// 关闭MCP详情模态框
+// Close MCP detail modal
 function closeMCPDetail() {
     document.getElementById('mcp-detail-modal').style.display = 'none';
 }
 
-// 复制详情面板中的内容
+// Copy content from detail panel
 function copyDetailBlock(elementId, triggerBtn = null) {
     const target = document.getElementById(elementId);
     if (!target) {
@@ -1613,11 +1613,11 @@ function copyDetailBlock(elementId, triggerBtn = null) {
         if (!triggerBtn) {
             return;
         }
-        triggerBtn.textContent = '已复制';
+        triggerBtn.textContent = 'Copied';
         triggerBtn.disabled = true;
         setTimeout(() => {
             triggerBtn.disabled = false;
-            triggerBtn.textContent = triggerBtn.dataset.originalLabel || originalLabel || '复制';
+            triggerBtn.textContent = triggerBtn.dataset.originalLabel || originalLabel || 'Copy';
         }, 1200);
     };
 
@@ -1656,44 +1656,44 @@ function copyDetailBlock(elementId, triggerBtn = null) {
         .catch(() => {
             if (triggerBtn) {
                 triggerBtn.disabled = false;
-                triggerBtn.textContent = triggerBtn.dataset.originalLabel || originalLabel || '复制';
+                triggerBtn.textContent = triggerBtn.dataset.originalLabel || originalLabel || 'Copy';
             }
-            alert('复制失败，请手动选择文本复制。');
+            alert('Copy failed. Please manually select and copy the text.');
         });
 }
 
 
-// 开始新对话
+// Start new conversation
 async function startNewConversation() {
-    // 如果当前在分组详情页面，先退出分组详情
+    // If currently on group detail page, exit group detail first
     if (currentGroupId) {
         const groupDetailPage = document.getElementById('group-detail-page');
         const chatContainer = document.querySelector('.chat-container');
         if (groupDetailPage) groupDetailPage.style.display = 'none';
         if (chatContainer) chatContainer.style.display = 'flex';
         currentGroupId = null;
-        // 刷新对话列表
+        // Refresh conversation list
         loadConversationsWithGroups();
     }
     
     currentConversationId = null;
-    currentConversationGroupId = null; // 新对话不属于任何分组
+    currentConversationGroupId = null; // New conversation does not belong to any group
     document.getElementById('chat-messages').innerHTML = '';
-    addMessage('assistant', '系统已就绪。请输入您的测试需求，系统将自动执行相应的安全测试。');
+    addMessage('assistant', 'System ready. Please enter your testing requirements; the system will automatically execute the corresponding security tests.');
     addAttackChainButton(null);
     updateActiveConversation();
-    // 刷新分组列表，清除分组高亮
+    // Refresh group list, clear group highlight
     await loadGroups();
-    // 刷新对话列表，确保显示最新的历史对话
+    // Refresh conversation list to ensure latest history is shown
     loadConversationsWithGroups();
-    // 清除防抖定时器，防止恢复草稿时触发保存
+    // Clear debounce timer to prevent triggering save during draft restore
     if (draftSaveTimer) {
         clearTimeout(draftSaveTimer);
         draftSaveTimer = null;
     }
-    // 清除草稿，新对话不应该恢复之前的草稿
+    // Clear draft; a new conversation should not restore the previous draft
     clearChatDraft();
-    // 清空输入框
+    // Clear input box
     const chatInput = document.getElementById('chat-input');
     if (chatInput) {
         chatInput.value = '';
@@ -1701,7 +1701,7 @@ async function startNewConversation() {
     }
 }
 
-// 加载对话列表（按时间分组）
+// Load conversation list (grouped by time)
 async function loadConversations(searchQuery = '') {
     try {
         let url = '/api/conversations?limit=50';
@@ -1715,14 +1715,14 @@ async function loadConversations(searchQuery = '') {
             return;
         }
 
-        // 保存滚动位置
+        // Save scroll position
         const sidebarContent = listContainer.closest('.sidebar-content');
         const savedScrollTop = sidebarContent ? sidebarContent.scrollTop : 0;
 
-        const emptyStateHtml = '<div style="padding: 20px; text-align: center; color: var(--text-muted); font-size: 0.875rem;">暂无历史对话</div>';
+        const emptyStateHtml = '<div style="padding: 20px; text-align: center; color: var(--text-muted); font-size: 0.875rem;">No conversation history</div>';
         listContainer.innerHTML = '';
 
-        // 如果响应不是200，显示空状态（友好处理，不显示错误）
+        // If the response is not 200, show empty state (handle gracefully, do not show error)
         if (!response.ok) {
             listContainer.innerHTML = emptyStateHtml;
             return;
@@ -1762,10 +1762,10 @@ async function loadConversations(searchQuery = '') {
         });
 
         const groupOrder = [
-            { key: 'today', label: '今天' },
-            { key: 'yesterday', label: '昨天' },
-            { key: 'thisWeek', label: '本周' },
-            { key: 'earlier', label: '更早' },
+            { key: 'today', label: 'Today' },
+            { key: 'yesterday', label: 'Yesterday' },
+            { key: 'thisWeek', label: 'This week' },
+            { key: 'earlier', label: 'Earlier' },
         ];
 
         const fragment = document.createDocumentFragment();
@@ -1787,7 +1787,7 @@ async function loadConversations(searchQuery = '') {
             section.appendChild(title);
 
             items.forEach(itemData => {
-                // 判断是否置顶
+                // Determine if pinned
                 const isPinned = itemData.pinned || false;
                 section.appendChild(createConversationListItemWithMenu(itemData, isPinned));
             });
@@ -1803,19 +1803,19 @@ async function loadConversations(searchQuery = '') {
         listContainer.appendChild(fragment);
         updateActiveConversation();
         
-        // 恢复滚动位置
+        // Restore scroll position
         if (sidebarContent) {
-            // 使用 requestAnimationFrame 确保 DOM 已经更新
+            // Use requestAnimationFrame to ensure DOM has been updated
             requestAnimationFrame(() => {
                 sidebarContent.scrollTop = savedScrollTop;
             });
         }
     } catch (error) {
-        console.error('加载对话列表失败:', error);
-        // 错误时显示空状态，而不是错误提示（更友好的用户体验）
+        console.error('Failed to load conversation list:', error);
+        // On error, show empty state rather than error prompt (better user experience)
         const listContainer = document.getElementById('conversations-list');
         if (listContainer) {
-            const emptyStateHtml = '<div style="padding: 20px; text-align: center; color: var(--text-muted); font-size: 0.875rem;">暂无历史对话</div>';
+            const emptyStateHtml = '<div style="padding: 20px; text-align: center; color: var(--text-muted); font-size: 0.875rem;">No conversation history</div>';
             listContainer.innerHTML = emptyStateHtml;
         }
     }
@@ -1834,9 +1834,9 @@ function createConversationListItem(conversation) {
 
     const title = document.createElement('div');
     title.className = 'conversation-title';
-    const titleText = conversation.title || '未命名对话';
+    const titleText = conversation.title || 'Unnamed conversation';
     title.textContent = safeTruncateText(titleText, 60);
-    title.title = titleText; // 设置完整标题以便悬停查看
+    title.title = titleText; // Set full title for hover view
     contentWrapper.appendChild(title);
 
     const time = document.createElement('div');
@@ -1854,7 +1854,7 @@ function createConversationListItem(conversation) {
                   stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
     `;
-    deleteBtn.title = '删除对话';
+    deleteBtn.title = 'Delete conversation';
     deleteBtn.onclick = (e) => {
         e.stopPropagation();
         deleteConversation(conversation.id);
@@ -1869,10 +1869,10 @@ function createConversationListItem(conversation) {
     return item;
 }
 
-// 处理历史记录搜索
+// Handle history search
 let conversationSearchTimer = null;
 function handleConversationSearch(query) {
-    // 防抖处理，避免频繁请求
+    // Debounce to avoid frequent requests
     if (conversationSearchTimer) {
         clearTimeout(conversationSearchTimer);
     }
@@ -1890,10 +1890,10 @@ function handleConversationSearch(query) {
     
     conversationSearchTimer = setTimeout(() => {
         loadConversations(query);
-    }, 300); // 300ms防抖延迟
+    }, 300); // 300ms debounce delay
 }
 
-// 清除搜索
+// Clear search
 function clearConversationSearch() {
     const searchInput = document.getElementById('conversation-search-input');
     const clearBtn = document.getElementById('conversation-search-clear');
@@ -1912,7 +1912,7 @@ function formatConversationTimestamp(dateObj, todayStart, yesterdayStart) {
     if (!(dateObj instanceof Date) || isNaN(dateObj.getTime())) {
         return '';
     }
-    // 如果没有传入 todayStart，使用当前日期作为参考
+    // If todayStart is not provided, use current date as reference
     const now = new Date();
     const referenceToday = todayStart || new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const referenceYesterday = yesterdayStart || new Date(referenceToday.getTime() - 24 * 60 * 60 * 1000);
@@ -1925,7 +1925,7 @@ function formatConversationTimestamp(dateObj, todayStart, yesterdayStart) {
         });
     }
     if (messageDate.getTime() === referenceYesterday.getTime()) {
-        return '昨天 ' + dateObj.toLocaleTimeString('zh-CN', {
+        return 'Yesterday ' + dateObj.toLocaleTimeString('en-US', {
             hour: '2-digit',
             minute: '2-digit'
         });
@@ -1967,55 +1967,55 @@ function getConversationGroup(dateObj, todayStart, startOfWeek, yesterdayStart) 
     return 'earlier';
 }
 
-// 加载对话
+// Load conversation
 async function loadConversation(conversationId) {
     try {
         const response = await apiFetch(`/api/conversations/${conversationId}`);
         const conversation = await response.json();
         
         if (!response.ok) {
-            alert('加载对话失败: ' + (conversation.error || '未知错误'));
+            alert('Failed to load conversation: ' + (conversation.error || 'Unknown error'));
             return;
         }
         
-        // 如果当前在分组详情页面，切换到对话界面
-        // 退出分组详情模式，显示所有最近对话，提供更好的用户体验
+        // If currently on group detail page, switch to conversation view
+        // Exit group detail mode, show all recent conversations for better UX
         if (currentGroupId) {
             const sidebar = document.querySelector('.conversation-sidebar');
             const groupDetailPage = document.getElementById('group-detail-page');
             const chatContainer = document.querySelector('.chat-container');
             
-            // 确保侧边栏始终可见
+            // Ensure sidebar is always visible
             if (sidebar) sidebar.style.display = 'flex';
-            // 隐藏分组详情页，显示对话界面
+            // Hide group detail page, show conversation view
             if (groupDetailPage) groupDetailPage.style.display = 'none';
             if (chatContainer) chatContainer.style.display = 'flex';
             
-            // 退出分组详情模式，这样最近对话列表会显示所有对话
-            // 用户可以在侧边栏看到所有对话，方便切换
+            // Exit group detail mode so recent conversation list shows all conversations
+            // User can see all conversations in sidebar for easy switching
             const previousGroupId = currentGroupId;
             currentGroupId = null;
             
-            // 刷新最近对话列表，显示所有对话（包括分组中的）
+            // Refresh recent conversation list to show all conversations (including grouped ones)
             loadConversationsWithGroups();
         }
         
-        // 获取当前对话所属的分组ID（用于高亮显示）
-        // 确保分组映射已加载
+        // Get the group ID the current conversation belongs to (for highlight display)
+        // Ensure group mapping is loaded
         if (Object.keys(conversationGroupMappingCache).length === 0) {
             await loadConversationGroupMapping();
         }
         currentConversationGroupId = conversationGroupMappingCache[conversationId] || null;
         
-        // 无论是否在分组详情页面，都刷新分组列表，确保高亮状态正确
-        // 这样可以清除之前分组的高亮状态，确保UI状态一致
+        // Regardless of group detail page, refresh group list to ensure highlight state is correct
+        // This clears previous group highlight state, ensuring UI state consistency
         await loadGroups();
         
-        // 更新当前对话ID
+        // Update current conversation ID
         currentConversationId = conversationId;
         updateActiveConversation();
         
-        // 如果攻击链模态框打开且显示的不是当前对话，关闭它
+        // If attack chain modal is open and showing a different conversation, close it
         const attackChainModal = document.getElementById('attack-chain-modal');
         if (attackChainModal && attackChainModal.style.display === 'block') {
             if (currentAttackChainConversationId !== conversationId) {
@@ -2023,26 +2023,26 @@ async function loadConversation(conversationId) {
             }
         }
         
-        // 清空消息区域
+        // Clear message area
         const messagesDiv = document.getElementById('chat-messages');
         messagesDiv.innerHTML = '';
         
-        // 检查对话中是否有最近的消息，如果有，清除草稿（避免恢复已发送的消息）
+        // Check if there are recent messages in the conversation; if so, clear draft (avoid restoring already sent messages)
         let hasRecentUserMessage = false;
         if (conversation.messages && conversation.messages.length > 0) {
             const lastMessage = conversation.messages[conversation.messages.length - 1];
             if (lastMessage && lastMessage.role === 'user') {
-                // 检查消息时间，如果是最近30秒内的，清除草稿
+                // Check message time; if within the last 30 seconds, clear draft
                 const messageTime = new Date(lastMessage.createdAt);
                 const now = new Date();
                 const timeDiff = now.getTime() - messageTime.getTime();
-                if (timeDiff < 30000) { // 30秒内
+                if (timeDiff < 30000) { // Within 30 seconds
                     hasRecentUserMessage = true;
                 }
             }
         }
         if (hasRecentUserMessage) {
-            // 如果有最近发送的用户消息，清除草稿
+            // If there are recently sent user messages, clear draft
             clearChatDraft();
             const chatInput = document.getElementById('chat-input');
             if (chatInput) {
@@ -2051,13 +2051,13 @@ async function loadConversation(conversationId) {
             }
         }
         
-        // 加载消息
+        // Load messages
         if (conversation.messages && conversation.messages.length > 0) {
             conversation.messages.forEach(msg => {
-                // 检查消息内容是否为"处理中..."，如果是，检查processDetails中是否有错误或取消事件
+                // Check if message content is "Processing..."; if so, check processDetails for error or cancel events
                 let displayContent = msg.content;
-                if (msg.role === 'assistant' && msg.content === '处理中...' && msg.processDetails && msg.processDetails.length > 0) {
-                    // 查找最后一个error或cancelled事件
+                if (msg.role === 'assistant' && msg.content === 'Processing...' && msg.processDetails && msg.processDetails.length > 0) {
+                    // Find the last error or cancelled event
                     for (let i = msg.processDetails.length - 1; i >= 0; i--) {
                         const detail = msg.processDetails[i];
                         if (detail.eventType === 'error' || detail.eventType === 'cancelled') {
@@ -2067,14 +2067,14 @@ async function loadConversation(conversationId) {
                     }
                 }
                 
-                // 传递消息的创建时间
+                // Pass message creation time
                 const messageId = addMessage(msg.role, displayContent, msg.mcpExecutionIds || [], null, msg.createdAt);
-                // 对于助手消息，总是渲染过程详情（即使没有processDetails也要显示展开详情按钮）
+                // For assistant messages, always render process details (show expand details button even without processDetails)
                 if (msg.role === 'assistant') {
-                    // 延迟一下，确保消息已经渲染
+                    // Slight delay to ensure message has rendered
                     setTimeout(() => {
                         renderProcessDetails(messageId, msg.processDetails || []);
-                        // 如果有过程详情，检查是否有错误或取消事件，如果有，确保详情默认折叠
+                        // If there are process details, check for error or cancel events; if found, ensure details are collapsed by default
                         if (msg.processDetails && msg.processDetails.length > 0) {
                             const hasErrorOrCancelled = msg.processDetails.some(d => 
                                 d.eventType === 'error' || d.eventType === 'cancelled'
@@ -2087,28 +2087,28 @@ async function loadConversation(conversationId) {
                 }
             });
         } else {
-            addMessage('assistant', '系统已就绪。请输入您的测试需求，系统将自动执行相应的安全测试。');
+            addMessage('assistant', 'System ready. Please enter your testing requirements; the system will automatically execute the corresponding security tests.');
         }
         
-        // 滚动到底部
+        // Scroll to bottom
         messagesDiv.scrollTop = messagesDiv.scrollHeight;
         
-        // 添加攻击链按钮
+        // Add attack chain button
         addAttackChainButton(conversationId);
         
-        // 刷新对话列表
+        // Refresh conversation list
         loadConversations();
     } catch (error) {
-        console.error('加载对话失败:', error);
-        alert('加载对话失败: ' + error.message);
+        console.error('Failed to load conversation:', error);
+        alert('Failed to load conversation: ' + error.message);
     }
 }
 
-// 删除对话
+// Delete conversation
 async function deleteConversation(conversationId, skipConfirm = false) {
-    // 确认删除（如果调用者没有跳过确认）
+    // Confirm deletion (if caller has not skipped confirmation)
     if (!skipConfirm) {
-        if (!confirm('确定要删除这个对话吗？此操作不可恢复。')) {
+        if (!confirm('Are you sure you want to delete this conversation? This action cannot be undone.')) {
             return;
         }
     }
@@ -2120,36 +2120,36 @@ async function deleteConversation(conversationId, skipConfirm = false) {
         
         if (!response.ok) {
             const error = await response.json();
-            throw new Error(error.error || '删除失败');
+            throw new Error(error.error || 'Delete failed');
         }
         
-        // 如果删除的是当前对话，清空对话界面
+        // If the deleted conversation is the current one, clear the conversation view
         if (conversationId === currentConversationId) {
             currentConversationId = null;
             document.getElementById('chat-messages').innerHTML = '';
-            addMessage('assistant', '系统已就绪。请输入您的测试需求，系统将自动执行相应的安全测试。');
+            addMessage('assistant', 'System ready. Please enter your testing requirements; the system will automatically execute the corresponding security tests.');
             addAttackChainButton(null);
         }
         
-        // 更新缓存 - 立即删除，确保后续加载时能正确识别
+        // Update cache - delete immediately to ensure correct identification on subsequent loads
         delete conversationGroupMappingCache[conversationId];
-        // 同时从待保留映射中移除
+        // Also remove from pending-preserve mapping
         delete pendingGroupMappings[conversationId];
         
-        // 如果当前在分组详情页面，重新加载分组对话
+        // If currently on group detail page, reload group conversations
         if (currentGroupId) {
             await loadGroupConversations(currentGroupId);
         }
         
-        // 刷新对话列表
+        // Refresh conversation list
         loadConversations();
     } catch (error) {
-        console.error('删除对话失败:', error);
-        alert('删除对话失败: ' + error.message);
+        console.error('Failed to delete conversation:', error);
+        alert('Failed to delete conversation: ' + error.message);
     }
 }
 
-// 更新活动对话样式
+// Update active conversation style
 function updateActiveConversation() {
     document.querySelectorAll('.conversation-item').forEach(item => {
         item.classList.remove('active');
@@ -2159,19 +2159,19 @@ function updateActiveConversation() {
     });
 }
 
-// ==================== 攻击链可视化功能 ====================
+// ==================== Attack chain visualization functionality ====================
 
 let attackChainCytoscape = null;
 let currentAttackChainConversationId = null;
-// 按对话ID管理加载状态，实现不同对话之间的解耦
+// Manage loading state by conversation ID for decoupling between conversations
 const attackChainLoadingMap = new Map(); // Map<conversationId, boolean>
 
-// 检查指定对话是否正在加载
+// Check if a specified conversation is loading
 function isAttackChainLoading(conversationId) {
     return attackChainLoadingMap.get(conversationId) === true;
 }
 
-// 设置指定对话的加载状态
+// Set the loading state of a specified conversation
 function setAttackChainLoading(conversationId, loading) {
     if (loading) {
         attackChainLoadingMap.set(conversationId, true);
@@ -2180,10 +2180,10 @@ function setAttackChainLoading(conversationId, loading) {
     }
 }
 
-// 添加攻击链按钮（已移至菜单，此函数保留以保持兼容性，但不再显示顶部按钮）
+// Add attack chain button (moved to menu; this function is retained for compatibility but no longer shows a top button)
 function addAttackChainButton(conversationId) {
-    // 攻击链按钮已移至三点菜单，不再需要显示顶部按钮
-    // 此函数保留以保持代码兼容性，但不再执行任何操作
+    // Attack chain button moved to three-dot menu; no longer need to show top button
+    // This function is retained for code compatibility but no longer does anything
     const conversationHeader = document.getElementById('conversation-header');
     if (conversationHeader) {
         conversationHeader.style.display = 'none';
@@ -2194,15 +2194,15 @@ function updateAttackChainAvailability() {
     addAttackChainButton(currentConversationId);
 }
 
-// 显示攻击链模态框
+// Show attack chain modal
 async function showAttackChain(conversationId) {
-    // 如果当前显示的对话ID不同，或者没有在加载，允许打开
-    // 如果正在加载同一个对话，也允许打开（显示加载状态）
+    // If the displayed conversation ID is different or not loading, allow opening
+    // If loading the same conversation, also allow opening (show loading state)
     if (isAttackChainLoading(conversationId) && currentAttackChainConversationId === conversationId) {
-        // 如果模态框已经打开且显示的是同一个对话，不重复打开
+        // If modal is already open showing the same conversation, do not open again
         const modal = document.getElementById('attack-chain-modal');
         if (modal && modal.style.display === 'block') {
-            console.log('攻击链正在加载中，模态框已打开');
+            console.log('Attack chain loading in progress, modal already open');
             return;
         }
     }
@@ -2210,25 +2210,25 @@ async function showAttackChain(conversationId) {
     currentAttackChainConversationId = conversationId;
     const modal = document.getElementById('attack-chain-modal');
     if (!modal) {
-        console.error('攻击链模态框未找到');
+        console.error('Attack chain modal not found');
         return;
     }
     
     modal.style.display = 'block';
     
-    // 清空容器
+    // Clear container
     const container = document.getElementById('attack-chain-container');
     if (container) {
-        container.innerHTML = '<div class="loading-spinner">加载中...</div>';
+        container.innerHTML = '<div class="loading-spinner">Loading...</div>';
     }
     
-    // 隐藏详情面板
+    // Hide detail panel
     const detailsPanel = document.getElementById('attack-chain-details');
     if (detailsPanel) {
         detailsPanel.style.display = 'none';
     }
     
-    // 禁用重新生成按钮
+    // Disable regenerate button
     const regenerateBtn = document.querySelector('button[onclick="regenerateAttackChain()"]');
     if (regenerateBtn) {
         regenerateBtn.disabled = true;
@@ -2236,14 +2236,14 @@ async function showAttackChain(conversationId) {
         regenerateBtn.style.cursor = 'not-allowed';
     }
     
-    // 加载攻击链数据
+    // Load attack chain data
     await loadAttackChain(conversationId);
 }
 
-// 加载攻击链数据
+// Load attack chain data
 async function loadAttackChain(conversationId) {
     if (isAttackChainLoading(conversationId)) {
-        return; // 防止重复调用
+        return; // Prevent duplicate calls
     }
     
     setAttackChainLoading(conversationId, true);
@@ -2252,7 +2252,7 @@ async function loadAttackChain(conversationId) {
         const response = await apiFetch(`/api/attack-chain/${conversationId}`);
         
         if (!response.ok) {
-            // 处理 409 Conflict（正在生成中）
+            // Handle 409 Conflict (generation in progress)
             if (response.status === 409) {
                 const error = await response.json();
                 const container = document.getElementById('attack-chain-container');
@@ -2261,44 +2261,44 @@ async function loadAttackChain(conversationId) {
                         <div style="text-align: center; padding: 28px 24px; color: var(--text-secondary);">
                             <div style="display: inline-flex; align-items: center; gap: 8px; font-size: 0.95rem; color: var(--text-primary);">
                                 <span role="presentation" aria-hidden="true">⏳</span>
-                                <span>攻击链生成中，请稍候</span>
+                                <span>Attack chain generating, please wait</span>
                             </div>
                             <button class="btn-secondary" onclick="refreshAttackChain()" style="margin-top: 12px; font-size: 0.78rem; padding: 4px 12px;">
-                                刷新
+                                Refresh
                             </button>
                         </div>
                     `;
                 }
-                // 5秒后自动刷新（允许刷新，但保持加载状态防止重复点击）
-                // 使用闭包保存 conversationId，防止串台
+                // Auto-refresh after 5 seconds (allow refresh but maintain loading state to prevent duplicate clicks)
+                // Use closure to save conversationId to prevent cross-contamination
                 setTimeout(() => {
-                    // 检查当前显示的对话ID是否匹配
+                    // Check if currently displayed conversation ID matches
                     if (currentAttackChainConversationId === conversationId) {
                         refreshAttackChain();
                     }
                 }, 5000);
-                // 在 409 情况下，保持加载状态，防止重复点击
-                // 但允许 refreshAttackChain 调用 loadAttackChain 来检查状态
-                // 注意：不重置加载状态，保持加载状态
-                // 恢复按钮状态（虽然保持加载状态，但允许用户手动刷新）
+                // In 409 case, maintain loading state to prevent duplicate clicks
+                // But allow refreshAttackChain to call loadAttackChain to check status
+                // Note: do not reset loading state; maintain loading state
+                // Restore button state (although loading state is maintained, allow user to manually refresh)
                 const regenerateBtn = document.querySelector('button[onclick="regenerateAttackChain()"]');
                 if (regenerateBtn) {
                     regenerateBtn.disabled = false;
                     regenerateBtn.style.opacity = '1';
                     regenerateBtn.style.cursor = 'pointer';
                 }
-                return; // 提前返回，不执行 finally 块中的 setAttackChainLoading(conversationId, false)
+                return; // Early return, do not execute setAttackChainLoading(conversationId, false) in finally block
             }
             
             const error = await response.json();
-            throw new Error(error.error || '加载攻击链失败');
+            throw new Error(error.error || 'Failed to load attack chain');
         }
         
         const chainData = await response.json();
         
-        // 检查当前显示的对话ID是否匹配，防止串台
+        // Check if currently displayed conversation ID matches to prevent cross-contamination
         if (currentAttackChainConversationId !== conversationId) {
-            console.log('攻击链数据已返回，但当前显示的对话已切换，忽略此次渲染', {
+            console.log('Attack chain data returned, but displayed conversation has switched; ignoring this render', {
                 returned: conversationId,
                 current: currentAttackChainConversationId
             });
@@ -2306,25 +2306,25 @@ async function loadAttackChain(conversationId) {
             return;
         }
         
-        // 渲染攻击链
+        // Render attack chain
         renderAttackChain(chainData);
         
-        // 更新统计信息
+        // Update statistics
         updateAttackChainStats(chainData);
         
-        // 成功加载后，重置加载状态
+        // After successful load, reset loading state
         setAttackChainLoading(conversationId, false);
         
     } catch (error) {
-        console.error('加载攻击链失败:', error);
+        console.error('Failed to load attack chain:', error);
         const container = document.getElementById('attack-chain-container');
         if (container) {
-            container.innerHTML = `<div class="error-message">加载失败: ${error.message}</div>`;
+            container.innerHTML = `<div class="error-message">Load failed: ${error.message}</div>`;
         }
-        // 错误时也重置加载状态
+        // Also reset loading state on error
         setAttackChainLoading(conversationId, false);
     } finally {
-        // 恢复重新生成按钮
+        // Restore regenerate button
         const regenerateBtn = document.querySelector('button[onclick="regenerateAttackChain()"]');
         if (regenerateBtn) {
             regenerateBtn.disabled = false;
@@ -2334,34 +2334,34 @@ async function loadAttackChain(conversationId) {
     }
 }
 
-// 渲染攻击链
+// Render attack chain
 function renderAttackChain(chainData) {
     const container = document.getElementById('attack-chain-container');
     if (!container) {
         return;
     }
     
-    // 清空容器
+    // Clear container
     container.innerHTML = '';
     
     if (!chainData.nodes || chainData.nodes.length === 0) {
-        container.innerHTML = '<div class="empty-message">暂无攻击链数据</div>';
+        container.innerHTML = '<div class="empty-message">No attack chain data available</div>';
         return;
     }
     
-    // 计算图的复杂度（用于动态调整布局和样式）
+    // Calculate graph complexity (for dynamically adjusting layout and style)
     const nodeCount = chainData.nodes.length;
     const edgeCount = chainData.edges.length;
     const isComplexGraph = nodeCount > 15 || edgeCount > 25;
     
-    // 优化节点标签：智能截断和换行
+    // Optimize node labels: smart truncation and wrapping
     chainData.nodes.forEach(node => {
         if (node.label) {
-            // 智能截断：优先在标点符号、空格处截断
+            // Smart truncation: prefer truncating at punctuation marks or spaces
             const maxLength = isComplexGraph ? 18 : 22;
             if (node.label.length > maxLength) {
                 let truncated = node.label.substring(0, maxLength);
-                // 尝试在最后一个标点符号或空格处截断
+                // Try to truncate at the last punctuation mark or space
                 const lastPunct = Math.max(
                     truncated.lastIndexOf('，'),
                     truncated.lastIndexOf('。'),
@@ -2369,7 +2369,7 @@ function renderAttackChain(chainData) {
                     truncated.lastIndexOf(' '),
                     truncated.lastIndexOf('/')
                 );
-                if (lastPunct > maxLength * 0.6) { // 如果标点符号位置合理
+                if (lastPunct > maxLength * 0.6) { // If punctuation position is reasonable
                     truncated = truncated.substring(0, lastPunct + 1);
                 }
                 node.label = truncated + '...';
@@ -2377,74 +2377,74 @@ function renderAttackChain(chainData) {
         }
     });
     
-    // 准备Cytoscape数据
+    // Prepare Cytoscape data
     const elements = [];
     
-    // 添加节点，并预计算文字颜色和边框颜色，同时为类型标签准备数据
+    // Add nodes, pre-calculate text color and border color, and prepare type label data
     chainData.nodes.forEach(node => {
         const riskScore = node.risk_score || 0;
         const nodeType = node.type || '';
         
-        // 根据节点类型设置类型标签文本和标识符（使用更现代的设计）
+        // Set type label text and identifier based on node type (using more modern design)
         let typeLabel = '';
         let typeBadge = '';
         let typeColor = '';
         if (nodeType === 'target') {
-            typeLabel = '目标';
-            typeBadge = '○';  // 使用空心圆，更现代
-            typeColor = '#1976d2';  // 蓝色
+            typeLabel = 'Target';
+            typeBadge = '○';  // Use hollow circle, more modern
+            typeColor = '#1976d2';  // Blue
         } else if (nodeType === 'action') {
-            typeLabel = '行动';
-            typeBadge = '▷';  // 使用更简洁的三角形
-            typeColor = '#f57c00';  // 橙色
+            typeLabel = 'Action';
+            typeBadge = '▷';  // Use simpler triangle
+            typeColor = '#f57c00';  // Orange
         } else if (nodeType === 'vulnerability') {
-            typeLabel = '漏洞';
-            typeBadge = '◇';  // 使用空心菱形，更精致
-            typeColor = '#d32f2f';  // 红色
+            typeLabel = 'Vulnerability';
+            typeBadge = '◇';  // Use hollow diamond, more refined
+            typeColor = '#d32f2f';  // Red
         } else {
             typeLabel = nodeType;
             typeBadge = '•';
             typeColor = '#666';
         }
         
-        // 根据风险分数计算文字颜色和边框颜色
+        // Calculate text color and border color based on risk score
         let textColor, borderColor, textOutlineWidth, textOutlineColor;
         if (riskScore >= 80) {
-            // 红色背景：白色文字，白色边框
+            // Red background: white text, white border
             textColor = '#fff';
             borderColor = '#fff';
             textOutlineWidth = 1;
             textOutlineColor = '#333';
         } else if (riskScore >= 60) {
-            // 橙色背景：白色文字，白色边框
+            // Orange background: white text, white border
             textColor = '#fff';
             borderColor = '#fff';
             textOutlineWidth = 1;
             textOutlineColor = '#333';
         } else if (riskScore >= 40) {
-            // 黄色背景：深色文字，深色边框
+            // Yellow background: dark text, dark border
             textColor = '#333';
             borderColor = '#cc9900';
             textOutlineWidth = 2;
             textOutlineColor = '#fff';
         } else {
-            // 绿色背景：深绿色文字，深色边框
+            // Green background: dark green text, dark border
             textColor = '#1a5a1a';
             borderColor = '#5a8a5a';
             textOutlineWidth = 2;
             textOutlineColor = '#fff';
         }
         
-        // 保存节点数据，使用原始标签（样式中会添加类型标签）
+        // Save node data, using original label (type label will be added in style)
         elements.push({
             data: {
                 id: node.id,
-                label: node.label,  // 原始标签
-                originalLabel: node.label,  // 保存原始标签用于搜索
+                label: node.label,  // Original label
+                originalLabel: node.label,  // Save original label for search
                 type: nodeType,
-                typeLabel: typeLabel,  // 保存类型标签文本
-                typeBadge: typeBadge,  // 保存类型标识符
-                typeColor: typeColor,  // 保存类型颜色
+                typeLabel: typeLabel,  // Save type label text
+                typeBadge: typeBadge,  // Save type identifier
+                typeColor: typeColor,  // Save type color
                 riskScore: riskScore,
                 toolExecutionId: node.tool_execution_id || '',
                 metadata: node.metadata || {},
@@ -2456,13 +2456,13 @@ function renderAttackChain(chainData) {
         });
     });
     
-    // 添加边（只添加源节点和目标节点都存在的边）
+    // Add edges (only add edges where both source and target nodes exist)
     const nodeIds = new Set(chainData.nodes.map(node => node.id));
     
-    // 保存有效的边用于ELK布局
+    // Save valid edges for ELK layout
     const validEdges = [];
     chainData.edges.forEach(edge => {
-        // 验证源节点和目标节点是否存在
+        // Validate that source and target nodes exist
         if (nodeIds.has(edge.source) && nodeIds.has(edge.target)) {
             validEdges.push(edge);
             elements.push({
@@ -2475,7 +2475,7 @@ function renderAttackChain(chainData) {
                 }
             });
         } else {
-            console.warn('跳过无效的边：源节点或目标节点不存在', {
+            console.warn('Skipping invalid edge: source or target node does not exist', {
                 edgeId: edge.id,
                 source: edge.source,
                 target: edge.target,
@@ -2485,7 +2485,7 @@ function renderAttackChain(chainData) {
         }
     });
     
-    // 初始化Cytoscape
+    // Initialize Cytoscape
     attackChainCytoscape = cytoscape({
         container: container,
         elements: elements,
@@ -2493,14 +2493,14 @@ function renderAttackChain(chainData) {
             {
                 selector: 'node',
                 style: {
-                    // 参考图二：现代化卡片设计，清晰的视觉层次
+                    // Modern card design with clear visual hierarchy
                     'label': function(ele) {
                         const typeLabel = ele.data('typeLabel') || '';
                         const label = ele.data('label') || '';
-                        // 简洁的两行显示：类型标签 + 内容
+                        // Clean two-line display: type label + content
                         return typeLabel + '\n' + label;
                     },
-                    // 合理的节点尺寸，参考图二
+                    // Reasonable node dimensions
                     'width': function(ele) {
                         const type = ele.data('type');
                         if (type === 'target') return isComplexGraph ? 280 : 320;
@@ -2514,24 +2514,24 @@ function renderAttackChain(chainData) {
                         return isComplexGraph ? 80 : 100;
                     },
                     'shape': 'round-rectangle',
-                    // 现代化背景：白色卡片 + 左侧彩色条
+                    // Modern background: white card with left colored bar
                     'background-color': '#FFFFFF',
                     'background-opacity': 1,
-                    // 左侧彩色条效果（通过边框实现）
+                    // Left colored bar effect (implemented via border)
                     'border-width': function(ele) {
                         const type = ele.data('type');
-                        return 0;  // 无边框，使用背景色块
+                        return 0;  // No border, use background color block
                     },
                     'border-color': 'transparent',
-                    // 文字样式：清晰易读
-                    'color': '#2C3E50',  // 深蓝灰色，专业感
+                    // Text style: clear and readable
+                    'color': '#2C3E50',  // Dark blue-grey, professional look
                     'font-size': function(ele) {
                         const type = ele.data('type');
                         if (type === 'target') return isComplexGraph ? '14px' : '16px';
                         if (type === 'vulnerability') return isComplexGraph ? '13px' : '15px';
                         return isComplexGraph ? '13px' : '15px';
                     },
-                    'font-weight': '600',  // 中等加粗
+                    'font-weight': '600',  // Medium bold
                     'font-family': '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Microsoft YaHei", sans-serif',
                     'text-valign': 'center',
                     'text-halign': 'center',
@@ -2544,13 +2544,13 @@ function renderAttackChain(chainData) {
                     },
                     'text-overflow-wrap': 'anywhere',
                     'text-margin-y': 4,
-                    'padding': '12px 16px',  // 合理的内边距
+                    'padding': '12px 16px',  // Reasonable inner padding
                     'line-height': 1.5,
                     'text-outline-width': 0
                 }
             },
             {
-                // 目标节点：蓝色主题
+                // Target node: blue theme
                 selector: 'node[type = "target"]',
                 style: {
                     'background-color': '#E3F2FD',
@@ -2561,7 +2561,7 @@ function renderAttackChain(chainData) {
                 }
             },
             {
-                // 行动节点：根据状态显示不同颜色
+                // Action node: show different colors based on status
                 selector: 'node[type = "action"]',
                 style: {
                     'background-color': function(ele) {
@@ -2572,9 +2572,9 @@ function renderAttackChain(chainData) {
                         const isFailedInsight = status === 'failed_insight';
                         
                         if (hasFindings && !isFailedInsight) {
-                            return '#E8F5E9';  // 浅绿色背景
+                            return '#E8F5E9';  // Light green background
                         } else {
-                            return '#F5F5F5';  // 浅灰色背景
+                            return '#F5F5F5';  // Light grey background
                         }
                     },
                     'color': '#424242',
@@ -2587,16 +2587,16 @@ function renderAttackChain(chainData) {
                         const isFailedInsight = status === 'failed_insight';
                         
                         if (hasFindings && !isFailedInsight) {
-                            return '#4CAF50';  // 绿色边框
+                            return '#4CAF50';  // Green border
                         } else {
-                            return '#9E9E9E';  // 灰色边框
+                            return '#9E9E9E';  // Grey border
                         }
                     },
                     'border-style': 'solid'
                 }
             },
             {
-                // 漏洞节点：根据风险等级显示颜色
+                // Vulnerability node: show colors based on risk level
                 selector: 'node[type = "vulnerability"]',
                 style: {
                     'background-color': function(ele) {
@@ -2627,19 +2627,19 @@ function renderAttackChain(chainData) {
             {
                 selector: 'edge',
                 style: {
-                    // 参考图二：简洁清晰的连接线
+                    // Clean and clear connection lines
                     'width': function(ele) {
                         const type = ele.data('type');
-                        if (type === 'discovers') return 2.5;  // 发现漏洞的边稍粗
-                        if (type === 'enables') return 2.5;  // 使能关系稍粗
-                        return 2;  // 普通边
+                        if (type === 'discovers') return 2.5;  // Slightly thicker for discovering vulnerabilities
+                        if (type === 'enables') return 2.5;  // Slightly thicker for enable relationships
+                        return 2;  // Normal edge
                     },
                     'line-color': function(ele) {
                         const type = ele.data('type');
-                        if (type === 'discovers') return '#42A5F5';  // 蓝色
-                        if (type === 'targets') return '#42A5F5';  // 蓝色
-                        if (type === 'enables') return '#EF5350';  // 红色
-                        if (type === 'leads_to') return '#90A4AE';  // 灰蓝色
+                        if (type === 'discovers') return '#42A5F5';  // Blue
+                        if (type === 'targets') return '#42A5F5';  // Blue
+                        if (type === 'enables') return '#EF5350';  // Red
+                        if (type === 'leads_to') return '#90A4AE';  // Blue-grey
                         return '#B0BEC5';
                     },
                     'target-arrow-color': function(ele) {
@@ -2651,9 +2651,9 @@ function renderAttackChain(chainData) {
                         return '#B0BEC5';
                     },
                     'target-arrow-shape': 'triangle',
-                    'arrow-scale': 1.2,  // 适中的箭头大小
+                    'arrow-scale': 1.2,  // Moderate arrow size
                     'curve-style': 'straight',
-                    'opacity': 0.7,  // 适中的不透明度
+                    'opacity': 0.7,  // Moderate opacity
                     'line-style': function(ele) {
                         const type = ele.data('type');
                         if (type === 'targets') return 'dashed';
@@ -2683,7 +2683,7 @@ function renderAttackChain(chainData) {
         boxSelectionEnabled: true
     });
     
-    // 使用ELK布局（高质量DAG布局，减少边交叉）
+    // Use ELK layout (high-quality DAG layout, reduces edge crossings)
     let layoutOptions = {
         name: 'breadthfirst',
         directed: true,
@@ -2691,41 +2691,41 @@ function renderAttackChain(chainData) {
         padding: 40
     };
     
-    // 使用ELK.js进行布局计算
-    // elk.bundled.js会暴露ELK对象，可以直接使用new ELK()
+    // Use ELK.js for layout calculation
+    // elk.bundled.js exposes the ELK object; can use new ELK() directly
     let elkInstance = null;
     if (typeof ELK !== 'undefined') {
         try {
             elkInstance = new ELK();
         } catch (e) {
-            console.warn('ELK初始化失败:', e);
+            console.warn('ELK initialization failed:', e);
         }
     }
     
     if (elkInstance) {
         try {
             
-            // 构建ELK图结构
+            // Build ELK graph structure
             const elkGraph = {
                 id: 'root',
                 layoutOptions: {
                     'elk.algorithm': 'layered',
                     'elk.direction': 'DOWN',
-                    'elk.spacing.nodeNode': String(isComplexGraph ? 100 : 120),  // 合理的节点间距
-                    'elk.spacing.edgeNode': '50',  // 合理的边到节点间距
-                    'elk.spacing.edgeEdge': '25',  // 合理的边间距
-                    'elk.layered.spacing.nodeNodeBetweenLayers': String(isComplexGraph ? 150 : 180),  // 合理的层级间距
-                    'elk.layered.nodePlacement.strategy': 'SIMPLE',  // 使用简单策略，让布局更分散
-                    'elk.layered.crossingMinimization.strategy': 'INTERACTIVE',  // 交互式交叉最小化
-                    'elk.layered.thoroughness': '10',  // 最高优化程度
+                    'elk.spacing.nodeNode': String(isComplexGraph ? 100 : 120),  // Reasonable node spacing
+                    'elk.spacing.edgeNode': '50',  // Reasonable edge-to-node spacing
+                    'elk.spacing.edgeEdge': '25',  // Reasonable edge spacing
+                    'elk.layered.spacing.nodeNodeBetweenLayers': String(isComplexGraph ? 150 : 180),  // Reasonable layer spacing
+                    'elk.layered.nodePlacement.strategy': 'SIMPLE',  // Use simple strategy for more spread-out layout
+                    'elk.layered.crossingMinimization.strategy': 'INTERACTIVE',  // Interactive crossing minimization
+                    'elk.layered.thoroughness': '10',  // Maximum optimization level
                     'elk.layered.spacing.edgeNodeBetweenLayers': '50',
                     'elk.layered.nodePlacement.strategy': 'BRANDES_KOEPF',
                     'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
                     'elk.layered.crossingMinimization.forceNodeModelOrder': 'true',
                     'elk.layered.cycleBreaking.strategy': 'GREEDY',
                     'elk.layered.thoroughness': '7',
-                    'elk.padding': '[top=60,left=100,bottom=60,right=100]',  // 更大的左右边距，让图更分散
-                    'elk.spacing.componentComponent': String(isComplexGraph ? 100 : 120)  // 组件间距
+                    'elk.padding': '[top=60,left=100,bottom=60,right=100]',  // Larger left/right padding for more spread-out graph
+                    'elk.spacing.componentComponent': String(isComplexGraph ? 100 : 120)  // Component spacing
                 },
                 children: chainData.nodes.map(node => {
                     const type = node.type || '';
@@ -2746,9 +2746,9 @@ function renderAttackChain(chainData) {
                 }))
             };
             
-            // 使用ELK计算布局
+            // Use ELK to calculate layout
             elkInstance.layout(elkGraph).then(laidOutGraph => {
-                // 应用ELK计算的布局到Cytoscape节点
+                // Apply ELK-calculated layout to Cytoscape nodes
                 if (laidOutGraph && laidOutGraph.children) {
                     laidOutGraph.children.forEach(elkNode => {
                         const cyNode = attackChainCytoscape.getElementById(elkNode.id);
@@ -2760,16 +2760,16 @@ function renderAttackChain(chainData) {
                         }
                     });
                     
-                    // 布局完成后，居中显示图
+                    // After layout completes, center the graph
                     setTimeout(() => {
                         centerAttackChain();
                     }, 150);
                 } else {
-                    throw new Error('ELK布局返回无效结果');
+                    throw new Error('ELK layout returned invalid result');
                 }
             }).catch(err => {
-                console.warn('ELK布局计算失败，使用默认布局:', err);
-                // 回退到默认布局
+                console.warn('ELK layout calculation failed, using default layout:', err);
+                // Fall back to default layout
                 const layout = attackChainCytoscape.layout(layoutOptions);
                 layout.one('layoutstop', () => {
                     setTimeout(() => {
@@ -2779,8 +2779,8 @@ function renderAttackChain(chainData) {
                 layout.run();
             });
         } catch (e) {
-            console.warn('ELK布局初始化失败，使用默认布局:', e);
-            // 回退到默认布局
+            console.warn('ELK layout initialization failed, using default layout:', e);
+            // Fall back to default layout
             const layout = attackChainCytoscape.layout(layoutOptions);
             layout.one('layoutstop', () => {
                 setTimeout(() => {
@@ -2790,8 +2790,8 @@ function renderAttackChain(chainData) {
             layout.run();
         }
     } else {
-        console.warn('ELK.js未加载，使用默认布局。请检查elkjs库是否正确加载。');
-        // 使用默认布局
+        console.warn('ELK.js not loaded, using default layout. Please check if elkjs library is correctly loaded.');
+        // Use default layout
         const layout = attackChainCytoscape.layout(layoutOptions);
         layout.one('layoutstop', () => {
             setTimeout(() => {
@@ -2801,7 +2801,7 @@ function renderAttackChain(chainData) {
         layout.run();
     }
     
-    // 居中攻击链的函数
+    // Function to center the attack chain
     function centerAttackChain() {
         try {
             if (!attackChainCytoscape) {
@@ -2817,16 +2817,16 @@ function renderAttackChain(chainData) {
             const containerHeight = container.offsetHeight;
             
             if (containerWidth === 0 || containerHeight === 0) {
-                // 如果容器尺寸为0，延迟重试
+                // If container size is 0, retry with delay
                 setTimeout(centerAttackChain, 100);
                 return;
             }
             
-            // 居中显示图，同时保持合理的缩放
-            const padding = 80;  // 边距
+            // Center the graph while maintaining reasonable zoom
+            const padding = 80;  // Margin
             attackChainCytoscape.fit(undefined, padding);
             
-            // 等待fit完成后再调整
+            // Wait for fit to complete before adjusting
             setTimeout(() => {
                 const extent = attackChainCytoscape.extent();
                 if (!extent || typeof extent.x1 === 'undefined' || typeof extent.x2 === 'undefined' || 
@@ -2838,21 +2838,21 @@ function renderAttackChain(chainData) {
                 const graphHeight = extent.y2 - extent.y1;
                 const currentZoom = attackChainCytoscape.zoom();
                 
-                // 如果图太小，适当放大
+                // If graph is too small, zoom in appropriately
                 const availableWidth = containerWidth - padding * 2;
                 const availableHeight = containerHeight - padding * 2;
                 const widthScale = graphWidth > 0 ? availableWidth / (graphWidth * currentZoom) : 1;
                 const heightScale = graphHeight > 0 ? availableHeight / (graphHeight * currentZoom) : 1;
                 const scale = Math.min(widthScale, heightScale);
                 
-                // 只在合理范围内调整缩放（0.8-1.3倍）
+                // Only adjust zoom within reasonable range (0.8x-1.3x)
                 if (scale > 1 && scale < 1.3) {
                     attackChainCytoscape.zoom(currentZoom * scale);
                 } else if (scale < 0.8) {
                     attackChainCytoscape.zoom(currentZoom * 0.8);
                 }
                 
-                // 确保图居中
+                // Ensure graph is centered
                 const graphCenterX = (extent.x1 + extent.x2) / 2;
                 const graphCenterY = (extent.y1 + extent.y2) / 2;
                 const zoom = attackChainCytoscape.zoom();
@@ -2873,17 +2873,17 @@ function renderAttackChain(chainData) {
                 });
             }, 100);
         } catch (error) {
-            console.warn('居中图表时出错:', error);
+            console.warn('Error centering chart:', error);
         }
     }
     
-    // 添加点击事件
+    // Add click events
     attackChainCytoscape.on('tap', 'node', function(evt) {
         const node = evt.target;
         showNodeDetails(node.data());
     });
     
-    // 添加悬停效果（使用事件监听器替代CSS选择器）
+    // Add hover effects (using event listeners instead of CSS selectors)
     attackChainCytoscape.on('mouseover', 'node', function(evt) {
         const node = evt.target;
         node.style('border-width', 5);
@@ -2895,36 +2895,36 @@ function renderAttackChain(chainData) {
     attackChainCytoscape.on('mouseout', 'node', function(evt) {
         const node = evt.target;
         const type = node.data('type');
-        // 恢复默认边框宽度
+        // Restore default border width
         const defaultBorderWidth = type === 'target' ? 5 : 4;
         node.style('border-width', defaultBorderWidth);
         node.style('z-index', 'auto');
         node.style('overlay-opacity', 0);
     });
     
-    // 保存原始数据用于过滤
+    // Save original data for filtering
     window.attackChainOriginalData = chainData;
 }
 
-// 安全地获取边的源节点和目标节点
+// Safely get source and target nodes of an edge
 function getEdgeNodes(edge) {
     try {
         const source = edge.source();
         const target = edge.target();
         
-        // 检查源节点和目标节点是否存在
+        // Check if source and target nodes exist
         if (!source || !target || source.length === 0 || target.length === 0) {
             return { source: null, target: null, valid: false };
         }
         
         return { source: source, target: target, valid: true };
     } catch (error) {
-        console.warn('获取边的节点时出错:', error, edge.id());
+        console.warn('Error getting edge nodes:', error, edge.id());
         return { source: null, target: null, valid: false };
     }
 }
 
-// 过滤攻击链节点（按搜索关键词）
+// Filter attack chain nodes (by search keyword)
 function filterAttackChainNodes(searchText) {
     if (!attackChainCytoscape || !window.attackChainOriginalData) {
         return;
@@ -2932,17 +2932,17 @@ function filterAttackChainNodes(searchText) {
     
     const searchLower = searchText.toLowerCase().trim();
     if (searchLower === '') {
-        // 重置所有节点可见性
+        // Reset visibility of all nodes
         attackChainCytoscape.nodes().style('display', 'element');
         attackChainCytoscape.edges().style('display', 'element');
-        // 恢复默认边框
+        // Restore default border
         attackChainCytoscape.nodes().style('border-width', 2);
         return;
     }
     
-    // 过滤节点
+    // Filter nodes
     attackChainCytoscape.nodes().forEach(node => {
-        // 使用原始标签进行搜索，不包含类型标签
+        // Use original label for search, excluding type label
         const originalLabel = node.data('originalLabel') || node.data('label') || '';
         const label = originalLabel.toLowerCase();
         const type = (node.data('type') || '').toLowerCase();
@@ -2950,7 +2950,7 @@ function filterAttackChainNodes(searchText) {
         
         if (matches) {
             node.style('display', 'element');
-            // 高亮匹配的节点
+            // Highlight matching nodes
             node.style('border-width', 4);
             node.style('border-color', '#0066ff');
         } else {
@@ -2958,7 +2958,7 @@ function filterAttackChainNodes(searchText) {
         }
     });
     
-    // 隐藏没有可见源节点或目标节点的边
+    // Hide edges without visible source or target nodes
     attackChainCytoscape.edges().forEach(edge => {
         const { source, target, valid } = getEdgeNodes(edge);
         if (!valid) {
@@ -2975,11 +2975,11 @@ function filterAttackChainNodes(searchText) {
         }
     });
     
-    // 重新调整视图
+    // Re-adjust view
     attackChainCytoscape.fit(undefined, 60);
 }
 
-// 按类型过滤攻击链节点
+// Filter attack chain nodes by type
 function filterAttackChainByType(type) {
     if (!attackChainCytoscape || !window.attackChainOriginalData) {
         return;
@@ -2993,7 +2993,7 @@ function filterAttackChainByType(type) {
         return;
     }
     
-    // 过滤节点
+    // Filter nodes
     attackChainCytoscape.nodes().forEach(node => {
         const nodeType = node.data('type') || '';
         if (nodeType === type) {
@@ -3003,7 +3003,7 @@ function filterAttackChainByType(type) {
         }
     });
     
-    // 隐藏没有可见源节点或目标节点的边
+    // Hide edges without visible source or target nodes
     attackChainCytoscape.edges().forEach(edge => {
         const { source, target, valid } = getEdgeNodes(edge);
         if (!valid) {
@@ -3020,11 +3020,11 @@ function filterAttackChainByType(type) {
         }
     });
     
-    // 重新调整视图
+    // Readjust view
     attackChainCytoscape.fit(undefined, 60);
 }
 
-// 按风险等级过滤攻击链节点
+// Filter attack chain nodes by risk level
 function filterAttackChainByRisk(riskLevel) {
     if (!attackChainCytoscape || !window.attackChainOriginalData) {
         return;
@@ -3038,7 +3038,7 @@ function filterAttackChainByRisk(riskLevel) {
         return;
     }
     
-    // 定义风险范围
+    // Define risk range
     const riskRanges = {
         'high': [80, 100],
         'medium-high': [60, 79],
@@ -3048,7 +3048,7 @@ function filterAttackChainByRisk(riskLevel) {
     
     const [minRisk, maxRisk] = riskRanges[riskLevel] || [0, 100];
     
-    // 过滤节点
+    // Filter nodes
     attackChainCytoscape.nodes().forEach(node => {
         const riskScore = node.data('riskScore') || 0;
         if (riskScore >= minRisk && riskScore <= maxRisk) {
@@ -3058,7 +3058,7 @@ function filterAttackChainByRisk(riskLevel) {
         }
     });
     
-    // 隐藏没有可见源节点或目标节点的边
+    // Hide edges with no visible source or target nodes
     attackChainCytoscape.edges().forEach(edge => {
         const { source, target, valid } = getEdgeNodes(edge);
         if (!valid) {
@@ -3075,42 +3075,42 @@ function filterAttackChainByRisk(riskLevel) {
         }
     });
     
-    // 重新调整视图
+    // Readjust view
     attackChainCytoscape.fit(undefined, 60);
 }
 
-// 重置攻击链筛选
+// Reset attack chain filters
 function resetAttackChainFilters() {
-    // 重置搜索框
+    // Reset search box
     const searchInput = document.getElementById('attack-chain-search');
     if (searchInput) {
         searchInput.value = '';
     }
     
-    // 重置类型筛选
+    // Reset type filter
     const typeFilter = document.getElementById('attack-chain-type-filter');
     if (typeFilter) {
         typeFilter.value = 'all';
     }
     
-    // 重置风险筛选
+    // Reset risk filter
     const riskFilter = document.getElementById('attack-chain-risk-filter');
     if (riskFilter) {
         riskFilter.value = 'all';
     }
     
-    // 重置所有节点可见性
+    // Reset visibility of all nodes
     if (attackChainCytoscape) {
         attackChainCytoscape.nodes().forEach(node => {
             node.style('display', 'element');
-            node.style('border-width', 2); // 恢复默认边框
+            node.style('border-width', 2); // Restore default border
         });
         attackChainCytoscape.edges().style('display', 'element');
         attackChainCytoscape.fit(undefined, 60);
     }
 }
 
-// 显示节点详情
+// Show node details
 function showNodeDetails(nodeData) {
     const detailsPanel = document.getElementById('attack-chain-details');
     const detailsContent = document.getElementById('attack-chain-details-content');
@@ -3119,10 +3119,10 @@ function showNodeDetails(nodeData) {
         return;
     }
     
-    // 使用 requestAnimationFrame 优化显示动画
+    // Use requestAnimationFrame to optimize display animation
     requestAnimationFrame(() => {
         detailsPanel.style.display = 'flex';
-        // 在下一帧设置透明度，确保显示动画流畅
+        // Set opacity in next frame to ensure smooth display animation
         requestAnimationFrame(() => {
             detailsPanel.style.opacity = '1';
         });
@@ -3130,53 +3130,53 @@ function showNodeDetails(nodeData) {
     
     let html = `
         <div class="node-detail-item">
-            <strong>节点ID:</strong> <code>${nodeData.id}</code>
+            <strong>Node ID:</strong> <code>${nodeData.id}</code>
         </div>
         <div class="node-detail-item">
-            <strong>类型:</strong> ${getNodeTypeLabel(nodeData.type)}
+            <strong>Type:</strong> ${getNodeTypeLabel(nodeData.type)}
         </div>
         <div class="node-detail-item">
-            <strong>标签:</strong> ${escapeHtml(nodeData.originalLabel || nodeData.label)}
+            <strong>Label:</strong> ${escapeHtml(nodeData.originalLabel || nodeData.label)}
         </div>
         <div class="node-detail-item">
-            <strong>风险评分:</strong> ${nodeData.riskScore}/100
+            <strong>Risk Score:</strong> ${nodeData.riskScore}/100
         </div>
     `;
     
-    // 显示action节点信息（工具执行 + AI分析）
+    // Show action node information (tool execution + AI analysis)
     if (nodeData.type === 'action' && nodeData.metadata) {
         if (nodeData.metadata.tool_name) {
             html += `
                 <div class="node-detail-item">
-                    <strong>工具名称:</strong> <code>${escapeHtml(nodeData.metadata.tool_name)}</code>
+                    <strong>Tool Name:</strong> <code>${escapeHtml(nodeData.metadata.tool_name)}</code>
                 </div>
             `;
         }
         if (nodeData.metadata.tool_intent) {
             html += `
                 <div class="node-detail-item">
-                    <strong>工具意图:</strong> <span style="color: #0066ff; font-weight: bold;">${escapeHtml(nodeData.metadata.tool_intent)}</span>
+                    <strong>Tool Intent:</strong> <span style="color: #0066ff; font-weight: bold;">${escapeHtml(nodeData.metadata.tool_intent)}</span>
                 </div>
             `;
         }
         if (nodeData.metadata.status === 'failed_insight') {
             html += `
                 <div class="node-detail-item">
-                    <strong>执行状态:</strong> <span style="color: #ff9800; font-weight: bold;">失败但有线索</span>
+                    <strong>Execution Status:</strong> <span style="color: #ff9800; font-weight: bold;">Failed but has clues</span>
                 </div>
             `;
         }
         if (nodeData.metadata.ai_analysis) {
             html += `
                 <div class="node-detail-item">
-                    <strong>AI分析:</strong> <div style="margin-top: 5px; padding: 8px; background: #f5f5f5; border-radius: 4px;">${escapeHtml(nodeData.metadata.ai_analysis)}</div>
+                    <strong>AI Analysis:</strong> <div style="margin-top: 5px; padding: 8px; background: #f5f5f5; border-radius: 4px;">${escapeHtml(nodeData.metadata.ai_analysis)}</div>
                 </div>
             `;
         }
         if (nodeData.metadata.findings && Array.isArray(nodeData.metadata.findings) && nodeData.metadata.findings.length > 0) {
             html += `
                 <div class="node-detail-item">
-                    <strong>关键发现:</strong>
+                    <strong>Key Findings:</strong>
                     <ul style="margin: 5px 0; padding-left: 20px;">
                         ${nodeData.metadata.findings.map(f => `<li>${escapeHtml(f)}</li>`).join('')}
                     </ul>
@@ -3185,42 +3185,42 @@ function showNodeDetails(nodeData) {
         }
     }
     
-    // 显示目标信息（如果是目标节点）
+    // Show target information (if it is a target node)
     if (nodeData.type === 'target' && nodeData.metadata && nodeData.metadata.target) {
         html += `
             <div class="node-detail-item">
-                <strong>测试目标:</strong> <code>${escapeHtml(nodeData.metadata.target)}</code>
+                <strong>Test Target:</strong> <code>${escapeHtml(nodeData.metadata.target)}</code>
             </div>
         `;
     }
     
-    // 显示漏洞信息（如果是漏洞节点）
+    // Show vulnerability information (if it is a vulnerability node)
     if (nodeData.type === 'vulnerability' && nodeData.metadata) {
         if (nodeData.metadata.vulnerability_type) {
             html += `
                 <div class="node-detail-item">
-                    <strong>漏洞类型:</strong> ${escapeHtml(nodeData.metadata.vulnerability_type)}
+                    <strong>Vulnerability Type:</strong> ${escapeHtml(nodeData.metadata.vulnerability_type)}
                 </div>
             `;
         }
         if (nodeData.metadata.description) {
             html += `
                 <div class="node-detail-item">
-                    <strong>描述:</strong> ${escapeHtml(nodeData.metadata.description)}
+                    <strong>Description:</strong> ${escapeHtml(nodeData.metadata.description)}
                 </div>
             `;
         }
         if (nodeData.metadata.severity) {
             html += `
                 <div class="node-detail-item">
-                    <strong>严重程度:</strong> <span style="color: ${getSeverityColor(nodeData.metadata.severity)}; font-weight: bold;">${escapeHtml(nodeData.metadata.severity)}</span>
+                    <strong>Severity:</strong> <span style="color: ${getSeverityColor(nodeData.metadata.severity)}; font-weight: bold;">${escapeHtml(nodeData.metadata.severity)}</span>
                 </div>
             `;
         }
         if (nodeData.metadata.location) {
             html += `
                 <div class="node-detail-item">
-                    <strong>位置:</strong> <code>${escapeHtml(nodeData.metadata.location)}</code>
+                    <strong>Location:</strong> <code>${escapeHtml(nodeData.metadata.location)}</code>
                 </div>
             `;
         }
@@ -3229,47 +3229,47 @@ function showNodeDetails(nodeData) {
     if (nodeData.toolExecutionId) {
         html += `
             <div class="node-detail-item">
-                <strong>工具执行ID:</strong> <code>${nodeData.toolExecutionId}</code>
+                <strong>Tool Execution ID:</strong> <code>${nodeData.toolExecutionId}</code>
             </div>
         `;
     }
     
-    // 先重置滚动位置，避免内容更新时的滚动计算
+    // First reset scroll position to avoid scroll calculation during content update
     if (detailsContent) {
         detailsContent.scrollTop = 0;
     }
     
-    // 使用 requestAnimationFrame 优化 DOM 更新和滚动
+    // Use requestAnimationFrame to optimize DOM update and scrolling
     requestAnimationFrame(() => {
-        // 更新内容
+        // Update content
         detailsContent.innerHTML = html;
         
-        // 在下一帧执行滚动，避免与 DOM 更新冲突
+        // Execute scrolling in the next frame to avoid conflict with DOM update
         requestAnimationFrame(() => {
-            // 重置详情内容区域的滚动位置
+            // Reset scroll position of detail content area
             if (detailsContent) {
                 detailsContent.scrollTop = 0;
             }
             
-            // 重置侧边栏的滚动位置，确保详情区域可见
+            // Reset sidebar scroll position to ensure detail area is visible
             const sidebar = document.querySelector('.attack-chain-sidebar-content');
             if (sidebar) {
-                // 找到详情面板的位置
+                // Find the position of the detail panel
                 const detailsPanel = document.getElementById('attack-chain-details');
                 if (detailsPanel && detailsPanel.offsetParent !== null) {
-                    // 使用 getBoundingClientRect 获取位置，性能更好
+                    // Use getBoundingClientRect to get position, better performance
                     const detailsRect = detailsPanel.getBoundingClientRect();
                     const sidebarRect = sidebar.getBoundingClientRect();
                     const scrollTop = sidebar.scrollTop;
                     const relativeTop = detailsRect.top - sidebarRect.top + scrollTop;
-                    sidebar.scrollTop = relativeTop - 20; // 留一点边距
+                    sidebar.scrollTop = relativeTop - 20; // Leave a small margin
                 }
             }
         });
     });
 }
 
-// 获取严重程度颜色
+// Get severity color
 function getSeverityColor(severity) {
     const colors = {
         'critical': '#ff0000',
@@ -3280,31 +3280,31 @@ function getSeverityColor(severity) {
     return colors[severity.toLowerCase()] || '#666';
 }
 
-// 获取节点类型标签
+// Get node type label
 function getNodeTypeLabel(type) {
     const labels = {
-        'action': '行动',
-        'vulnerability': '漏洞',
-        'target': '目标'
+        'action': 'Action',
+        'vulnerability': 'Vulnerability',
+        'target': 'Target'
     };
     return labels[type] || type;
 }
 
-// 更新统计信息
+// Update statistics
 function updateAttackChainStats(chainData) {
     const statsElement = document.getElementById('attack-chain-stats');
     if (statsElement) {
         const nodeCount = chainData.nodes ? chainData.nodes.length : 0;
         const edgeCount = chainData.edges ? chainData.edges.length : 0;
-        statsElement.textContent = `节点: ${nodeCount} | 边: ${edgeCount}`;
+        statsElement.textContent = `Nodes: ${nodeCount} | Edges: ${edgeCount}`;
     }
 }
 
-// 关闭节点详情
+// Close node details
 function closeNodeDetails() {
     const detailsPanel = document.getElementById('attack-chain-details');
     if (detailsPanel) {
-        // 添加淡出动画
+        // Add fade-out animation
         detailsPanel.style.opacity = '0';
         detailsPanel.style.maxHeight = detailsPanel.scrollHeight + 'px';
         
@@ -3315,23 +3315,23 @@ function closeNodeDetails() {
         }, 300);
     }
     
-    // 取消选中节点
+    // Deselect node
     if (attackChainCytoscape) {
         attackChainCytoscape.elements().unselect();
     }
 }
 
-// 关闭攻击链模态框
+// Close attack chain modal
 function closeAttackChainModal() {
     const modal = document.getElementById('attack-chain-modal');
     if (modal) {
         modal.style.display = 'none';
     }
     
-    // 关闭节点详情
+    // Close node details
     closeNodeDetails();
     
-    // 清理Cytoscape实例
+    // Clean up Cytoscape instance
     if (attackChainCytoscape) {
         attackChainCytoscape.destroy();
         attackChainCytoscape = null;
@@ -3340,47 +3340,47 @@ function closeAttackChainModal() {
     currentAttackChainConversationId = null;
 }
 
-// 刷新攻击链（重新加载）
-// 注意：此函数允许在加载过程中调用，用于检查生成状态
+// Refresh attack chain (reload)
+// Note: this function can be called during loading to check generation status
 function refreshAttackChain() {
     if (currentAttackChainConversationId) {
-        // 临时允许刷新，即使正在加载中（用于检查生成状态）
+        // Temporarily allow refresh even while loading (to check generation status)
         const wasLoading = isAttackChainLoading(currentAttackChainConversationId);
-        setAttackChainLoading(currentAttackChainConversationId, false); // 临时重置，允许刷新
+        setAttackChainLoading(currentAttackChainConversationId, false); // Temporarily reset to allow refresh
         loadAttackChain(currentAttackChainConversationId).finally(() => {
-            // 如果之前正在加载（409 情况），恢复加载状态
-            // 否则保持 false（正常完成）
+            // If previously loading (409 case), restore loading state
+            // Otherwise keep false (normal completion)
             if (wasLoading) {
-                // 检查是否仍然需要保持加载状态（如果还是 409，会在 loadAttackChain 中处理）
-                // 这里我们假设如果成功加载，则重置状态
-                // 如果还是 409，loadAttackChain 会保持加载状态
+                // Check if loading state still needs to be maintained (if still 409, it will be handled in loadAttackChain)
+                // Here we assume if loaded successfully, reset the state
+                // If still 409, loadAttackChain will maintain loading state
             }
         });
     }
 }
 
-// 重新生成攻击链
+// Regenerate attack chain
 async function regenerateAttackChain() {
     if (!currentAttackChainConversationId) {
         return;
     }
     
-    // 防止重复点击（只检查当前对话的加载状态）
+    // Prevent duplicate clicks (only check loading state of current conversation)
     if (isAttackChainLoading(currentAttackChainConversationId)) {
-        console.log('攻击链正在生成中，请稍候...');
+        console.log('Attack chain is generating, please wait...');
         return;
     }
     
-    // 保存请求时的对话ID，防止串台
+    // Save conversation ID at time of request to prevent cross-contamination
     const savedConversationId = currentAttackChainConversationId;
     setAttackChainLoading(savedConversationId, true);
     
     const container = document.getElementById('attack-chain-container');
     if (container) {
-        container.innerHTML = '<div class="loading-spinner">重新生成中...</div>';
+        container.innerHTML = '<div class="loading-spinner">Regenerating...</div>';
     }
     
-    // 禁用重新生成按钮
+    // Disable regenerate button
     const regenerateBtn = document.querySelector('button[onclick="regenerateAttackChain()"]');
     if (regenerateBtn) {
         regenerateBtn.disabled = true;
@@ -3389,32 +3389,32 @@ async function regenerateAttackChain() {
     }
     
     try {
-        // 调用重新生成接口
+        // Call regenerate API
         const response = await apiFetch(`/api/attack-chain/${savedConversationId}/regenerate`, {
             method: 'POST'
         });
         
         if (!response.ok) {
-            // 处理 409 Conflict（正在生成中）
+            // Handle 409 Conflict (generation in progress)
             if (response.status === 409) {
                 const error = await response.json();
                 if (container) {
                     container.innerHTML = `
                         <div class="loading-spinner" style="text-align: center; padding: 40px;">
-                            <div style="margin-bottom: 16px;">⏳ 攻击链正在生成中...</div>
+                            <div style="margin-bottom: 16px;">⏳ Attack chain generating...</div>
                             <div style="color: var(--text-secondary); font-size: 0.875rem;">
-                                请稍候，生成完成后将自动显示
+                                Please wait; will display automatically when generation is complete
                             </div>
                             <button class="btn-secondary" onclick="refreshAttackChain()" style="margin-top: 16px;">
-                                刷新查看进度
+                                Refresh to view progress
                             </button>
                         </div>
                     `;
                 }
-                // 5秒后自动刷新
-                // savedConversationId 已在函数开始处定义
+                // Auto-refresh after 5 seconds
+                // savedConversationId was defined at the start of the function
                 setTimeout(() => {
-                    // 检查当前显示的对话ID是否匹配，且仍在加载中
+                    // Check if currently displayed conversation ID matches and is still loading
                     if (currentAttackChainConversationId === savedConversationId && 
                         isAttackChainLoading(savedConversationId)) {
                         refreshAttackChain();
@@ -3424,14 +3424,14 @@ async function regenerateAttackChain() {
             }
             
             const error = await response.json();
-            throw new Error(error.error || '重新生成攻击链失败');
+            throw new Error(error.error || 'Regeneration of attack chain failed');
         }
         
         const chainData = await response.json();
         
-        // 检查当前显示的对话ID是否匹配，防止串台
+        // Check if currently displayed conversation ID matches to prevent cross-contamination
         if (currentAttackChainConversationId !== savedConversationId) {
-            console.log('攻击链数据已返回，但当前显示的对话已切换，忽略此次渲染', {
+            console.log('Attack chain data returned, but displayed conversation has switched; ignoring this render', {
                 returned: savedConversationId,
                 current: currentAttackChainConversationId
             });
@@ -3439,21 +3439,21 @@ async function regenerateAttackChain() {
             return;
         }
         
-        // 渲染攻击链
+        // Render attack chain
         renderAttackChain(chainData);
         
-        // 更新统计信息
+        // Update statistics
         updateAttackChainStats(chainData);
         
     } catch (error) {
-        console.error('重新生成攻击链失败:', error);
+        console.error('Regeneration of attack chain failed:', error);
         if (container) {
-            container.innerHTML = `<div class="error-message">重新生成失败: ${error.message}</div>`;
+            container.innerHTML = `<div class="error-message">Regeneration failed: ${error.message}</div>`;
         }
     } finally {
         setAttackChainLoading(savedConversationId, false);
         
-        // 恢复重新生成按钮
+        // Restore regenerate button
         if (regenerateBtn) {
             regenerateBtn.disabled = false;
             regenerateBtn.style.opacity = '1';
@@ -3462,14 +3462,14 @@ async function regenerateAttackChain() {
     }
 }
 
-// 导出攻击链
+// Export attack chain
 function exportAttackChain(format) {
     if (!attackChainCytoscape) {
-        alert('请先加载攻击链');
+        alert('Please load the attack chain first');
         return;
     }
     
-    // 确保图形已经渲染完成（使用小延迟）
+    // Ensure graph has finished rendering (using small delay)
     setTimeout(() => {
         try {
             if (format === 'png') {
@@ -3481,11 +3481,11 @@ function exportAttackChain(format) {
                         scale: 1
                     });
                     
-                    // 处理 Promise
+                    // Handle Promise
                     if (pngPromise && typeof pngPromise.then === 'function') {
                         pngPromise.then(blob => {
                             if (!blob) {
-                                throw new Error('PNG导出返回空数据');
+                                throw new Error('PNG export returned empty data');
                             }
                             const url = URL.createObjectURL(blob);
                             const a = document.createElement('a');
@@ -3496,11 +3496,11 @@ function exportAttackChain(format) {
                             document.body.removeChild(a);
                             setTimeout(() => URL.revokeObjectURL(url), 100);
                         }).catch(err => {
-                            console.error('导出PNG失败:', err);
-                            alert('导出PNG失败: ' + (err.message || '未知错误'));
+                            console.error('PNG export failed:', err);
+                            alert('PNG export failed: ' + (err.message || 'Unknown error'));
                         });
                     } else {
-                        // 如果不是 Promise，直接使用
+                        // If not a Promise, use directly
                         const url = URL.createObjectURL(pngPromise);
                         const a = document.createElement('a');
                         a.href = url;
@@ -3511,27 +3511,27 @@ function exportAttackChain(format) {
                         setTimeout(() => URL.revokeObjectURL(url), 100);
                     }
                 } catch (err) {
-                    console.error('PNG导出错误:', err);
-                    alert('导出PNG失败: ' + (err.message || '未知错误'));
+                    console.error('PNG export error:', err);
+                    alert('PNG export failed: ' + (err.message || 'Unknown error'));
                 }
             } else if (format === 'svg') {
                 try {
-                    // Cytoscape.js 3.x 不直接支持 .svg() 方法
-                    // 使用替代方案：从 Cytoscape 数据手动构建 SVG
+                    // Cytoscape.js 3.x does not directly support .svg() method
+                    // Use alternative: manually build SVG from Cytoscape data
                     const container = attackChainCytoscape.container();
                     if (!container) {
-                        throw new Error('无法获取容器元素');
+                        throw new Error('Cannot get container element');
                     }
                     
-                    // 获取所有节点和边
+                    // Get all nodes and edges
                     const nodes = attackChainCytoscape.nodes();
                     const edges = attackChainCytoscape.edges();
                     
                     if (nodes.length === 0) {
-                        throw new Error('没有节点可导出');
+                        throw new Error('No nodes to export');
                     }
                     
-                    // 计算所有节点的实际边界（包括节点大小）
+                    // Calculate actual bounds of all nodes (including node size)
                     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
                     nodes.forEach(node => {
                         const pos = node.position();
@@ -3545,7 +3545,7 @@ function exportAttackChain(format) {
                         maxY = Math.max(maxY, pos.y + size);
                     });
                     
-                    // 也考虑边的范围
+                    // Also consider edge bounds
                     edges.forEach(edge => {
                         const { source, target, valid } = getEdgeNodes(edge);
                         if (valid) {
@@ -3558,7 +3558,7 @@ function exportAttackChain(format) {
                         }
                     });
                     
-                    // 添加边距
+                    // Add margin
                     const padding = 50;
                     minX -= padding;
                     minY -= padding;
@@ -3568,14 +3568,14 @@ function exportAttackChain(format) {
                     const width = maxX - minX;
                     const height = maxY - minY;
                     
-                    // 创建 SVG 元素
+                    // Create SVG element
                     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
                     svg.setAttribute('width', width.toString());
                     svg.setAttribute('height', height.toString());
                     svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
                     svg.setAttribute('viewBox', `${minX} ${minY} ${width} ${height}`);
                     
-                    // 添加白色背景矩形
+                    // Add white background rectangle
                     const bgRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
                     bgRect.setAttribute('x', minX.toString());
                     bgRect.setAttribute('y', minY.toString());
@@ -3584,10 +3584,10 @@ function exportAttackChain(format) {
                     bgRect.setAttribute('fill', 'white');
                     svg.appendChild(bgRect);
                     
-                    // 创建 defs 用于箭头标记
+                    // Create defs for arrow markers
                     const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
                     
-                    // 添加边的箭头标记（为不同类型的边创建不同的箭头）
+                    // Add arrow markers for edges (create different arrows for different edge types)
                     const edgeTypes = ['discovers', 'targets', 'enables', 'leads_to'];
                     edgeTypes.forEach((type, index) => {
                         let color = '#999';
@@ -3611,11 +3611,11 @@ function exportAttackChain(format) {
                     });
                     svg.appendChild(defs);
                     
-                    // 添加边（先绘制，这样节点会在上面）
+                    // Add edges (draw first so nodes appear on top)
                     edges.forEach(edge => {
                         const { source, target, valid } = getEdgeNodes(edge);
                         if (!valid) {
-                            return; // 跳过无效的边
+                            return; // Skip invalid edges
                         }
                         
                         const sourcePos = source.position();
@@ -3623,23 +3623,23 @@ function exportAttackChain(format) {
                         const edgeData = edge.data();
                         const edgeType = edgeData.type || 'leads_to';
                         
-                        // 获取边的样式
+                        // Get edge style
                         let lineColor = '#999';
                         if (edgeType === 'discovers') lineColor = '#3498db';
                         else if (edgeType === 'targets') lineColor = '#0066ff';
                         else if (edgeType === 'enables') lineColor = '#e74c3c';
                         else if (edgeType === 'leads_to') lineColor = '#666';
                         
-                        // 创建路径（支持曲线）
+                        // Create path (supports curves)
                         const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-                        // 简单的直线路径（可以改进为曲线）
+                        // Simple straight line path (can be improved to curve)
                         const midX = (sourcePos.x + targetPos.x) / 2;
                         const midY = (sourcePos.y + targetPos.y) / 2;
                         const dx = targetPos.x - sourcePos.x;
                         const dy = targetPos.y - sourcePos.y;
                         const offset = Math.min(30, Math.sqrt(dx * dx + dy * dy) * 0.3);
                         
-                        // 使用二次贝塞尔曲线
+                        // Use quadratic Bezier curve
                         const controlX = midX + (dy > 0 ? -offset : offset);
                         const controlY = midY + (dx > 0 ? offset : -offset);
                         path.setAttribute('d', `M ${sourcePos.x} ${sourcePos.y} Q ${controlX} ${controlY} ${targetPos.x} ${targetPos.y}`);
@@ -3650,7 +3650,7 @@ function exportAttackChain(format) {
                         svg.appendChild(path);
                     });
                     
-                    // 添加节点
+                    // Add nodes
                     nodes.forEach(node => {
                         const pos = node.position();
                         const nodeData = node.data();
@@ -3659,7 +3659,7 @@ function exportAttackChain(format) {
                         const nodeHeight = node.height();
                         const size = Math.max(nodeWidth, nodeHeight) / 2;
                         
-                        // 确定节点颜色
+                        // Determine node color
                         let bgColor = '#88cc00';
                         let textColor = '#1a5a1a';
                         let borderColor = '#5a8a5a';
@@ -3677,11 +3677,11 @@ function exportAttackChain(format) {
                             borderColor = '#cc9900';
                         }
                         
-                        // 确定节点形状
+                        // Determine node shape
                         const nodeType = nodeData.type;
                         let shapeElement;
                         if (nodeType === 'vulnerability') {
-                            // 菱形
+                            // Diamond
                             shapeElement = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
                             const points = [
                                 `${pos.x},${pos.y - size}`,
@@ -3691,7 +3691,7 @@ function exportAttackChain(format) {
                             ].join(' ');
                             shapeElement.setAttribute('points', points);
                         } else if (nodeType === 'target') {
-                            // 星形（五角星）
+                            // Star (five-pointed)
                             shapeElement = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
                             const points = [];
                             for (let i = 0; i < 5; i++) {
@@ -3702,7 +3702,7 @@ function exportAttackChain(format) {
                             }
                             shapeElement.setAttribute('points', points.join(' '));
                         } else {
-                            // 圆角矩形
+                            // Rounded rectangle
                             shapeElement = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
                             shapeElement.setAttribute('x', (pos.x - size).toString());
                             shapeElement.setAttribute('y', (pos.y - size).toString());
@@ -3717,17 +3717,17 @@ function exportAttackChain(format) {
                         shapeElement.setAttribute('stroke-width', '2');
                         svg.appendChild(shapeElement);
                         
-                        // 添加文本标签（使用文本描边提高可读性）
-                        // 使用原始标签，不包含类型标签前缀
+                        // Add text label (use text stroke to improve readability)
+                        // Use original label, not including type label prefix
                         const label = (nodeData.originalLabel || nodeData.label || nodeData.id || '').toString();
                         const maxLength = 15;
                         
-                        // 创建文本组，包含描边和填充
+                        // Create text group, containing stroke and fill
                         const textGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
                         textGroup.setAttribute('text-anchor', 'middle');
                         textGroup.setAttribute('dominant-baseline', 'middle');
                         
-                        // 处理长文本（简单换行）
+                        // Handle long text (simple wrapping)
                         let lines = [];
                         if (label.length > maxLength) {
                             const words = label.split(' ');
@@ -3741,33 +3741,33 @@ function exportAttackChain(format) {
                                 }
                             });
                             if (currentLine) lines.push(currentLine);
-                            lines = lines.slice(0, 2); // 最多两行
+                            lines = lines.slice(0, 2); // Maximum two lines
                         } else {
                             lines = [label];
                         }
                         
-                        // 确定文本描边颜色（与原始渲染一致）
+                        // Determine text stroke color (consistent with original rendering)
                         let textOutlineColor = '#fff';
                         let textOutlineWidth = 2;
                         if (riskScore >= 80 || riskScore >= 60) {
-                            // 红色/橙色背景：白色文字，白色描边，深色轮廓
+                            // Red/orange background: white text, white stroke, dark outline
                             textOutlineColor = '#333';
                             textOutlineWidth = 1;
                         } else if (riskScore >= 40) {
-                            // 黄色背景：深色文字，白色描边
+                            // Yellow background: dark text, white stroke
                             textOutlineColor = '#fff';
                             textOutlineWidth = 2;
                         } else {
-                            // 绿色背景：深绿色文字，白色描边
+                            // Green background: dark green text, white stroke
                             textOutlineColor = '#fff';
                             textOutlineWidth = 2;
                         }
                         
-                        // 为每行文本创建描边和填充
+                        // Create stroke and fill for each line of text
                         lines.forEach((line, i) => {
                             const textY = pos.y + (i - (lines.length - 1) / 2) * 16;
                             
-                            // 描边文本（用于提高对比度，模拟text-outline效果）
+                            // Stroke text (to improve contrast, simulating text-outline effect)
                             const strokeText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
                             strokeText.setAttribute('x', pos.x.toString());
                             strokeText.setAttribute('y', textY.toString());
@@ -3784,7 +3784,7 @@ function exportAttackChain(format) {
                             strokeText.textContent = line;
                             textGroup.appendChild(strokeText);
                             
-                            // 填充文本（实际可见的文本）
+                            // Fill text (actually visible text)
                             const fillText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
                             fillText.setAttribute('x', pos.x.toString());
                             fillText.setAttribute('y', textY.toString());
@@ -3801,11 +3801,11 @@ function exportAttackChain(format) {
                         svg.appendChild(textGroup);
                     });
                     
-                    // 将 SVG 转换为字符串
+                    // Convert SVG to string
                     const serializer = new XMLSerializer();
                     let svgString = serializer.serializeToString(svg);
                     
-                    // 确保有 XML 声明
+                    // Ensure XML declaration exists
                     if (!svgString.startsWith('<?xml')) {
                         svgString = '<?xml version="1.0" encoding="UTF-8"?>\n' + svgString;
                     }
@@ -3820,33 +3820,33 @@ function exportAttackChain(format) {
                     document.body.removeChild(a);
                     setTimeout(() => URL.revokeObjectURL(url), 100);
                 } catch (err) {
-                    console.error('SVG导出错误:', err);
-                    alert('导出SVG失败: ' + (err.message || '未知错误'));
+                    console.error('SVG export error:', err);
+                    alert('SVG export failed: ' + (err.message || 'Unknown error'));
                 }
             } else {
-                alert('不支持的导出格式: ' + format);
+                alert('Unsupported export format: ' + format);
             }
         } catch (error) {
-            console.error('导出失败:', error);
-            alert('导出失败: ' + (error.message || '未知错误'));
+            console.error('Export failed:', error);
+            alert('Export failed: ' + (error.message || 'Unknown error'));
         }
-    }, 100); // 小延迟确保图形已渲染
+    }, 100); // Small delay to ensure graph has rendered
 }
 
 // ============================================
-// 对话分组和批量管理功能
+// Conversation grouping and bulk management functionality
 // ============================================
 
-// 分组数据管理（使用API）
-let currentGroupId = null; // 当前正在查看的分组详情页面
-let currentConversationGroupId = null; // 当前对话所属的分组ID（用于高亮显示）
+// Group data management (using API)
+let currentGroupId = null; // Currently viewing group detail page
+let currentConversationGroupId = null; // Group ID the current conversation belongs to (for highlight display)
 let contextMenuConversationId = null;
 let contextMenuGroupId = null;
 let groupsCache = [];
 let conversationGroupMappingCache = {};
-let pendingGroupMappings = {}; // 待保留的分组映射（用于处理后端API延迟的情况）
+let pendingGroupMappings = {}; // Pending group mappings (for handling backend API delay)
 
-// 加载分组列表
+// Load group list
 async function loadGroups() {
     try {
         const response = await apiFetch('/api/groups');
@@ -3855,11 +3855,11 @@ async function loadGroups() {
             return;
         }
         const data = await response.json();
-        // 确保groupsCache是有效数组
+        // Ensure groupsCache is a valid array
         if (Array.isArray(data)) {
             groupsCache = data;
         } else {
-            // 如果返回的不是数组，使用空数组（不打印警告，因为可能后端返回了错误格式但我们要优雅处理）
+            // If return is not an array, use empty array (no warning, as backend may return error format but we handle gracefully)
             groupsCache = [];
         }
 
@@ -3872,15 +3872,15 @@ async function loadGroups() {
             return;
         }
 
-        // 对分组进行排序：置顶的分组在前（后端已经排序，这里只需要按顺序显示）
+        // Sort groups: pinned groups first (backend already sorted; just display in order)
         const sortedGroups = [...groupsCache];
 
             sortedGroups.forEach(group => {
             const groupItem = document.createElement('div');
             groupItem.className = 'group-item';
-            // 高亮逻辑：
-            // 1. 如果当前在分组详情页面，只高亮当前分组（currentGroupId）
-            // 2. 如果不在分组详情页面，高亮当前对话所属的分组（currentConversationGroupId）
+            // Highlight logic:
+            // 1. If currently on group detail page, only highlight current group (currentGroupId)
+            // 2. If not on group detail page, highlight the group the current conversation belongs to (currentConversationGroupId)
             const shouldHighlight = currentGroupId 
                 ? (currentGroupId === group.id)
                 : (currentConversationGroupId === group.id);
@@ -3907,12 +3907,12 @@ async function loadGroups() {
             content.appendChild(icon);
             content.appendChild(name);
 
-            // 如果是置顶分组，添加图钉图标
+            // If it is a pinned group, add pin icon
             if (isPinned) {
                 const pinIcon = document.createElement('span');
                 pinIcon.className = 'group-item-pinned';
                 pinIcon.innerHTML = '📌';
-                pinIcon.title = '已置顶';
+                pinIcon.title = 'Pinned';
                 name.appendChild(pinIcon);
             }
             groupItem.appendChild(content);
@@ -3933,19 +3933,19 @@ async function loadGroups() {
             groupsList.appendChild(groupItem);
         });
     } catch (error) {
-        console.error('加载分组列表失败:', error);
+        console.error('Failed to load group list:', error);
     }
 }
 
-// 加载对话列表（修改为支持分组和置顶）
+// Load conversation list (modified to support grouping and pinning)
 async function loadConversationsWithGroups(searchQuery = '') {
     try {
-        // 总是重新加载分组列表和分组映射，确保缓存是最新的
-        // 这样可以正确处理分组被删除后的情况
+        // Always reload group list and group mapping to ensure cache is up to date
+        // This correctly handles the case where a group has been deleted
         await loadGroups();
         await loadConversationGroupMapping();
 
-        // 如果有搜索关键词，使用更大的limit以获取所有匹配结果
+        // If there is a search keyword, use larger limit to get all matching results
         const limit = (searchQuery && searchQuery.trim()) ? 1000 : 100;
         let url = `/api/conversations?limit=${limit}`;
         if (searchQuery && searchQuery.trim()) {
@@ -3958,14 +3958,14 @@ async function loadConversationsWithGroups(searchQuery = '') {
             return;
         }
 
-        // 保存滚动位置
+        // Save scroll position
         const sidebarContent = listContainer.closest('.sidebar-content');
         const savedScrollTop = sidebarContent ? sidebarContent.scrollTop : 0;
 
-        const emptyStateHtml = '<div style="padding: 20px; text-align: center; color: var(--text-muted); font-size: 0.875rem;">暂无历史对话</div>';
+        const emptyStateHtml = '<div style="padding: 20px; text-align: center; color: var(--text-muted); font-size: 0.875rem;">No conversation history</div>';
         listContainer.innerHTML = '';
 
-        // 如果响应不是200，显示空状态（友好处理，不显示错误）
+        // If the response is not 200, show empty state (handle gracefully, do not show error)
         if (!response.ok) {
             listContainer.innerHTML = emptyStateHtml;
             return;
@@ -3978,15 +3978,15 @@ async function loadConversationsWithGroups(searchQuery = '') {
             return;
         }
         
-        // 分离置顶和普通对话
+        // Separate pinned and normal conversations
         const pinnedConvs = [];
         const normalConvs = [];
         const hasSearchQuery = searchQuery && searchQuery.trim();
 
         conversations.forEach(conv => {
-            // 如果有搜索关键词，显示所有匹配的对话（全局搜索，包括分组中的）
+            // If there is a search keyword, show all matching conversations (global search, including grouped ones)
             if (hasSearchQuery) {
-                // 搜索时显示所有匹配的对话，不管是否在分组中
+                // During search, show all matching conversations regardless of group
                 if (conv.pinned) {
                     pinnedConvs.push(conv);
                 } else {
@@ -3995,11 +3995,11 @@ async function loadConversationsWithGroups(searchQuery = '') {
                 return;
             }
 
-            // 如果没有搜索关键词，使用原有逻辑
-            // "最近对话"列表应该只显示不在任何分组中的对话
-            // 无论是否在分组详情页，都不应该在"最近对话"中显示分组中的对话
+            // If no search keyword, use original logic
+            // "Recent conversations" list should only show conversations not in any group
+            // Regardless of group detail page, grouped conversations should not appear in "Recent conversations"
             if (conversationGroupMappingCache[conv.id]) {
-                // 对话在某个分组中，不应该显示在"最近对话"列表中
+                // Conversation is in a group, should not be shown in "Recent conversations" list
                 return;
             }
 
@@ -4010,7 +4010,7 @@ async function loadConversationsWithGroups(searchQuery = '') {
             }
         });
 
-        // 按时间排序
+        // Sort by time
         const sortByTime = (a, b) => {
             const timeA = a.updatedAt ? new Date(a.updatedAt) : new Date(0);
             const timeB = b.updatedAt ? new Date(b.updatedAt) : new Date(0);
@@ -4022,14 +4022,14 @@ async function loadConversationsWithGroups(searchQuery = '') {
 
         const fragment = document.createDocumentFragment();
 
-        // 添加置顶对话
+        // Add pinned conversations
         if (pinnedConvs.length > 0) {
             pinnedConvs.forEach(conv => {
                 fragment.appendChild(createConversationListItemWithMenu(conv, true));
             });
         }
 
-        // 添加普通对话
+        // Add normal conversations
         normalConvs.forEach(conv => {
             fragment.appendChild(createConversationListItemWithMenu(conv, false));
         });
@@ -4042,25 +4042,25 @@ async function loadConversationsWithGroups(searchQuery = '') {
         listContainer.appendChild(fragment);
         updateActiveConversation();
         
-        // 恢复滚动位置
+        // Restore scroll position
         if (sidebarContent) {
-            // 使用 requestAnimationFrame 确保 DOM 已经更新
+            // Use requestAnimationFrame to ensure DOM has been updated
             requestAnimationFrame(() => {
                 sidebarContent.scrollTop = savedScrollTop;
             });
         }
     } catch (error) {
-        console.error('加载对话列表失败:', error);
-        // 错误时显示空状态，而不是错误提示（更友好的用户体验）
+        console.error('Failed to load conversation list:', error);
+        // On error, show empty state rather than error prompt (better UX)
         const listContainer = document.getElementById('conversations-list');
         if (listContainer) {
-            const emptyStateHtml = '<div style="padding: 20px; text-align: center; color: var(--text-muted); font-size: 0.875rem;">暂无历史对话</div>';
+            const emptyStateHtml = '<div style="padding: 20px; text-align: center; color: var(--text-muted); font-size: 0.875rem;">No conversation history</div>';
             listContainer.innerHTML = emptyStateHtml;
         }
     }
 }
 
-// 创建带菜单的对话项
+// Create conversation item with menu
 function createConversationListItemWithMenu(conversation, isPinned) {
     const item = document.createElement('div');
     item.className = 'conversation-item';
@@ -4079,16 +4079,16 @@ function createConversationListItemWithMenu(conversation, isPinned) {
 
     const title = document.createElement('div');
     title.className = 'conversation-title';
-    const titleText = conversation.title || '未命名对话';
+    const titleText = conversation.title || 'Unnamed conversation';
     title.textContent = safeTruncateText(titleText, 60);
-    title.title = titleText; // 设置完整标题以便悬停查看
+    title.title = titleText; // Set full title for hover view
     titleWrapper.appendChild(title);
 
     if (isPinned) {
         const pinIcon = document.createElement('span');
         pinIcon.className = 'conversation-item-pinned';
         pinIcon.innerHTML = '📌';
-        pinIcon.title = '已置顶';
+        pinIcon.title = 'Pinned';
         titleWrapper.appendChild(pinIcon);
     }
 
@@ -4100,7 +4100,7 @@ function createConversationListItemWithMenu(conversation, isPinned) {
     time.textContent = formatConversationTimestamp(dateObj);
     contentWrapper.appendChild(time);
 
-    // 如果对话属于某个分组，显示分组标签
+    // If conversation belongs to a group, show group tag
     const groupId = conversationGroupMappingCache[conversation.id];
     if (groupId) {
         const group = groupsCache.find(g => g.id === groupId);
@@ -4108,7 +4108,7 @@ function createConversationListItemWithMenu(conversation, isPinned) {
             const groupTag = document.createElement('div');
             groupTag.className = 'conversation-group-tag';
             groupTag.innerHTML = `<span class="group-tag-icon">${group.icon || '📁'}</span><span class="group-tag-name">${group.name}</span>`;
-            groupTag.title = `分组: ${group.name}`;
+            groupTag.title = `Group: ${group.name}`;
             contentWrapper.appendChild(groupTag);
         }
     }
@@ -4137,25 +4137,25 @@ function createConversationListItemWithMenu(conversation, isPinned) {
     return item;
 }
 
-// 显示对话上下文菜单
+// Show conversation context menu
 async function showConversationContextMenu(event) {
     const menu = document.getElementById('conversation-context-menu');
     if (!menu) return;
 
-    // 先隐藏子菜单，确保每次打开菜单时子菜单都是关闭状态
+    // First hide submenu to ensure it is closed every time the menu is opened
     const submenu = document.getElementById('move-to-group-submenu');
     if (submenu) {
         submenu.style.display = 'none';
         submenuVisible = false;
     }
-    // 清除所有定时器
+    // Clear all timers
     clearSubmenuHideTimeout();
     clearSubmenuShowTimeout();
     submenuLoading = false;
 
     const convId = contextMenuConversationId;
     
-    // 更新攻击链菜单项的启用状态
+    // Update enabled state of attack chain menu item
     const attackChainMenuItem = document.getElementById('attack-chain-menu-item');
     if (attackChainMenuItem) {
         if (convId) {
@@ -4166,31 +4166,31 @@ async function showConversationContextMenu(event) {
                 attackChainMenuItem.style.opacity = '0.5';
                 attackChainMenuItem.style.cursor = 'not-allowed';
                 attackChainMenuItem.onclick = null;
-                attackChainMenuItem.title = '当前对话正在执行，请稍后再生成攻击链';
+                attackChainMenuItem.title = 'Current conversation is executing; please generate attack chain later';
             } else {
                 attackChainMenuItem.style.opacity = '1';
                 attackChainMenuItem.style.cursor = 'pointer';
                 attackChainMenuItem.onclick = showAttackChainFromContext;
-                attackChainMenuItem.title = '查看当前对话的攻击链';
+                attackChainMenuItem.title = 'View attack chain for current conversation';
             }
         } else {
             attackChainMenuItem.style.opacity = '0.5';
             attackChainMenuItem.style.cursor = 'not-allowed';
             attackChainMenuItem.onclick = null;
-            attackChainMenuItem.title = '请选择一个对话以查看攻击链';
+            attackChainMenuItem.title = 'Please select a conversation to view the attack chain';
         }
     }
     
-    // 先获取对话的置顶状态并更新菜单文本（在显示菜单之前）
+    // First get conversation pin state and update menu text (before showing menu)
     if (convId) {
         try {
             let isPinned = false;
-            // 检查对话是否真的在当前分组中
+            // Check if conversation is actually in the current group
             const conversationGroupId = conversationGroupMappingCache[convId];
             const isInCurrentGroup = currentGroupId && conversationGroupId === currentGroupId;
             
             if (isInCurrentGroup) {
-                // 对话在当前分组中，获取分组内置顶状态
+                // Conversation is in current group, get group-internal pin state
                 const response = await apiFetch(`/api/groups/${currentGroupId}/conversations`);
                 if (response.ok) {
                     const groupConvs = await response.json();
@@ -4200,7 +4200,7 @@ async function showConversationContextMenu(event) {
                     }
                 }
             } else {
-                // 不在分组详情页面，或者对话不在当前分组中，获取全局置顶状态
+                // Not on group detail page, or conversation not in current group, get global pin state
                 const response = await apiFetch(`/api/conversations/${convId}`);
                 if (response.ok) {
                     const conv = await response.json();
@@ -4208,67 +4208,67 @@ async function showConversationContextMenu(event) {
                 }
             }
             
-            // 更新菜单文本
+            // Update menu text
             const pinMenuText = document.getElementById('pin-conversation-menu-text');
             if (pinMenuText) {
-                pinMenuText.textContent = isPinned ? '取消置顶' : '置顶此对话';
+                pinMenuText.textContent = isPinned ? 'Unpin' : 'Pin this conversation';
             }
         } catch (error) {
-            console.error('获取对话置顶状态失败:', error);
-            // 如果获取失败，使用默认文本
+            console.error('Failed to get conversation pin state:', error);
+            // If fetch fails, use default text
             const pinMenuText = document.getElementById('pin-conversation-menu-text');
             if (pinMenuText) {
-                pinMenuText.textContent = '置顶此对话';
+                pinMenuText.textContent = 'Pin this conversation';
             }
         }
     } else {
-        // 如果没有对话ID，使用默认文本
+        // If no conversation ID, use default text
         const pinMenuText = document.getElementById('pin-conversation-menu-text');
         if (pinMenuText) {
-            pinMenuText.textContent = '置顶此对话';
+            pinMenuText.textContent = 'Pin this conversation';
         }
     }
 
-    // 在状态获取完成后再显示菜单
+    // Show menu after state retrieval is complete
     menu.style.display = 'block';
     menu.style.visibility = 'visible';
     menu.style.opacity = '1';
     
-    // 强制重排以获取正确尺寸
+    // Force reflow to get correct dimensions
     void menu.offsetHeight;
     
-    // 计算菜单位置，确保不超出屏幕
+    // Calculate menu position to ensure it does not overflow the screen
     const menuRect = menu.getBoundingClientRect();
     const viewportWidth = window.innerWidth;
     const viewportHeight = window.innerHeight;
     
-    // 获取子菜单的宽度（如果存在，重用之前获取的submenu变量）
-    const submenuWidth = submenu ? 180 : 0; // 子菜单宽度 + 间距
+    // Get submenu width (if exists, reuse previously obtained submenu variable)
+    const submenuWidth = submenu ? 180 : 0; // Submenu width + spacing
     
     let left = event.clientX;
     let top = event.clientY;
     
-    // 如果菜单会超出右边界，调整到左侧
-    // 考虑子菜单的宽度
+    // If menu would overflow right boundary, adjust to left side
+    // Consider submenu width
     if (left + menuRect.width + submenuWidth > viewportWidth) {
         left = event.clientX - menuRect.width;
-        // 如果调整后仍然超出，则放在按钮左侧
+        // If still overflows after adjustment, place on left side of button
         if (left < 0) {
             left = Math.max(8, event.clientX - menuRect.width - submenuWidth);
         }
     }
     
-    // 如果菜单会超出下边界，调整到上方
+    // If menu would overflow bottom boundary, adjust upward
     if (top + menuRect.height > viewportHeight) {
         top = Math.max(8, event.clientY - menuRect.height);
     }
     
-    // 确保不超出左边界
+    // Ensure does not overflow left boundary
     if (left < 0) {
         left = 8;
     }
     
-    // 确保不超出上边界
+    // Ensure does not overflow top boundary
     if (top < 0) {
         top = 8;
     }
@@ -4276,7 +4276,7 @@ async function showConversationContextMenu(event) {
     menu.style.left = left + 'px';
     menu.style.top = top + 'px';
     
-    // 如果菜单在右侧，子菜单应该在左侧显示
+    // If menu is on right side, submenu should display on left side
     if (submenu && left < event.clientX) {
         submenu.style.left = 'auto';
         submenu.style.right = '100%';
@@ -4289,15 +4289,15 @@ async function showConversationContextMenu(event) {
         submenu.style.marginRight = '0';
     }
 
-    // 点击外部关闭菜单
+    // Click outside to close menu
     const closeMenu = (e) => {
-        // 检查点击是否在主菜单或子菜单内
+        // Check if click is inside main menu or submenu
         const moveToGroupSubmenuEl = document.getElementById('move-to-group-submenu');
         const clickedInMenu = menu.contains(e.target);
         const clickedInSubmenu = moveToGroupSubmenuEl && moveToGroupSubmenuEl.contains(e.target);
         
         if (!clickedInMenu && !clickedInSubmenu) {
-            // 使用 closeContextMenu 确保同时关闭主菜单和子菜单
+            // Use closeContextMenu to ensure both main menu and submenu are closed
             closeContextMenu();
             document.removeEventListener('click', closeMenu);
         }
@@ -4307,23 +4307,23 @@ async function showConversationContextMenu(event) {
     }, 0);
 }
 
-// 显示分组上下文菜单
+// Show group context menu
 async function showGroupContextMenu(event, groupId) {
     const menu = document.getElementById('group-context-menu');
     if (!menu) return;
 
     contextMenuGroupId = groupId;
 
-    // 先获取分组的置顶状态并更新菜单文本（在显示菜单之前）
+    // First get group pin state and update menu text (before showing menu)
     try {
-        // 先从缓存中查找
+        // First look up from cache
         let group = groupsCache.find(g => g.id === groupId);
         let isPinned = false;
         
         if (group) {
             isPinned = group.pinned || false;
         } else {
-            // 如果缓存中没有，从API获取
+            // If not in cache, fetch from API
             const response = await apiFetch(`/api/groups/${groupId}`);
             if (response.ok) {
                 group = await response.json();
@@ -4331,29 +4331,29 @@ async function showGroupContextMenu(event, groupId) {
             }
         }
         
-        // 更新菜单文本
+        // Update menu text
         const pinMenuText = document.getElementById('pin-group-menu-text');
         if (pinMenuText) {
-            pinMenuText.textContent = isPinned ? '取消置顶' : '置顶此分组';
+            pinMenuText.textContent = isPinned ? 'Unpin' : 'Pin this group';
         }
     } catch (error) {
-        console.error('获取分组置顶状态失败:', error);
-        // 如果获取失败，使用默认文本
+        console.error('Failed to get group pin state:', error);
+        // If fetch fails, use default text
         const pinMenuText = document.getElementById('pin-group-menu-text');
         if (pinMenuText) {
-            pinMenuText.textContent = '置顶此分组';
+            pinMenuText.textContent = 'Pin this group';
         }
     }
 
-    // 在状态获取完成后再显示菜单
+    // Show menu after state retrieval is complete
     menu.style.display = 'block';
     menu.style.visibility = 'visible';
     menu.style.opacity = '1';
     
-    // 强制重排以获取正确尺寸
+    // Force reflow to get correct dimensions
     void menu.offsetHeight;
     
-    // 计算菜单位置，确保不超出屏幕
+    // Calculate menu position to ensure it does not overflow the screen
     const menuRect = menu.getBoundingClientRect();
     const viewportWidth = window.innerWidth;
     const viewportHeight = window.innerHeight;
@@ -4361,22 +4361,22 @@ async function showGroupContextMenu(event, groupId) {
     let left = event.clientX;
     let top = event.clientY;
     
-    // 如果菜单会超出右边界，调整到左侧
+    // If menu would overflow right boundary, adjust to left side
     if (left + menuRect.width > viewportWidth) {
         left = event.clientX - menuRect.width;
     }
     
-    // 如果菜单会超出下边界，调整到上方
+    // If menu would overflow bottom boundary, adjust upward
     if (top + menuRect.height > viewportHeight) {
         top = event.clientY - menuRect.height;
     }
     
-    // 确保不超出左边界
+    // Ensure does not overflow left boundary
     if (left < 0) {
         left = 8;
     }
     
-    // 确保不超出上边界
+    // Ensure does not overflow top boundary
     if (top < 0) {
         top = 8;
     }
@@ -4384,7 +4384,7 @@ async function showGroupContextMenu(event, groupId) {
     menu.style.left = left + 'px';
     menu.style.top = top + 'px';
 
-    // 点击外部关闭菜单
+    // Click outside to close menu
     const closeMenu = (e) => {
         if (!menu.contains(e.target)) {
             menu.style.display = 'none';
@@ -4396,12 +4396,12 @@ async function showGroupContextMenu(event, groupId) {
     }, 0);
 }
 
-// 重命名对话
+// Rename conversation
 async function renameConversation() {
     const convId = contextMenuConversationId;
     if (!convId) return;
 
-    const newTitle = prompt('请输入新标题:', '');
+    const newTitle = prompt('Please enter new title:', '');
     if (newTitle === null || !newTitle.trim()) {
         closeContextMenu();
         return;
@@ -4418,10 +4418,10 @@ async function renameConversation() {
 
         if (!response.ok) {
             const error = await response.json();
-            throw new Error(error.error || '更新失败');
+            throw new Error(error.error || 'Update failed');
         }
 
-        // 更新前端显示
+        // Update frontend display
         const item = document.querySelector(`[data-conversation-id="${convId}"]`);
         if (item) {
             const titleEl = item.querySelector('.conversation-title');
@@ -4430,7 +4430,7 @@ async function renameConversation() {
             }
         }
 
-        // 如果在分组详情页，也需要更新
+        // If on group detail page, also needs update
         const groupItem = document.querySelector(`.group-conversation-item[data-conversation-id="${convId}"]`);
         if (groupItem) {
             const groupTitleEl = groupItem.querySelector('.group-conversation-title');
@@ -4439,40 +4439,40 @@ async function renameConversation() {
             }
         }
 
-        // 重新加载对话列表
+        // Reload conversation list
         loadConversationsWithGroups();
     } catch (error) {
-        console.error('重命名对话失败:', error);
-        alert('重命名失败: ' + (error.message || '未知错误'));
+        console.error('Failed to rename conversation:', error);
+        alert('Rename failed: ' + (error.message || 'Unknown error'));
     }
 
     closeContextMenu();
 }
 
-// 置顶对话
+// Pin conversation
 async function pinConversation() {
     const convId = contextMenuConversationId;
     if (!convId) return;
 
     try {
-        // 检查对话是否真的在当前分组中
-        // 如果对话已经从分组移出，conversationGroupMappingCache 中不会有该对话的映射
-        // 或者映射的分组ID不等于当前分组ID
+        // Check if conversation is actually in the current group
+        // If conversation has been moved out of group, conversationGroupMappingCache will not have its mapping
+        // Or the mapped group ID does not equal the current group ID
         const conversationGroupId = conversationGroupMappingCache[convId];
         const isInCurrentGroup = currentGroupId && conversationGroupId === currentGroupId;
         
-        // 如果当前在分组详情页面，且对话确实在当前分组中，使用分组内置顶
+        // If currently on group detail page and conversation is in the current group, use group-internal pin
         if (isInCurrentGroup) {
-            // 获取当前对话在分组中的置顶状态
+            // Get pin state of current conversation in the group
             const response = await apiFetch(`/api/groups/${currentGroupId}/conversations`);
             const groupConvs = await response.json();
             const conv = groupConvs.find(c => c.id === convId);
             
-            // 如果找不到对话，说明可能有问题，使用默认值
+            // If conversation not found, there may be an issue; use default value
             const currentPinned = conv && conv.groupPinned !== undefined ? conv.groupPinned : false;
             const newPinned = !currentPinned;
 
-            // 更新分组内置顶状态
+            // Update group-internal pin state
             await apiFetch(`/api/groups/${currentGroupId}/conversations/${convId}/pinned`, {
                 method: 'PUT',
                 headers: {
@@ -4481,15 +4481,15 @@ async function pinConversation() {
                 body: JSON.stringify({ pinned: newPinned }),
             });
 
-            // 重新加载分组对话
+            // Reload group conversations
             loadGroupConversations(currentGroupId);
         } else {
-            // 不在分组详情页面，或者对话不在当前分组中，使用全局置顶
+            // Not on group detail page, or conversation not in current group; use global pin
             const response = await apiFetch(`/api/conversations/${convId}`);
             const conv = await response.json();
             const newPinned = !conv.pinned;
 
-            // 更新全局置顶状态
+            // Update global pin state
             await apiFetch(`/api/conversations/${convId}/pinned`, {
                 method: 'PUT',
                 headers: {
@@ -4501,43 +4501,43 @@ async function pinConversation() {
             loadConversationsWithGroups();
         }
     } catch (error) {
-        console.error('置顶对话失败:', error);
-        alert('置顶失败: ' + (error.message || '未知错误'));
+        console.error('Failed to pin conversation:', error);
+        alert('Pin failed: ' + (error.message || 'Unknown error'));
     }
 
     closeContextMenu();
 }
 
-// 显示移动到分组子菜单
+// Show move-to-group submenu
 async function showMoveToGroupSubmenu() {
     const submenu = document.getElementById('move-to-group-submenu');
     if (!submenu) return;
 
-    // 如果子菜单已经显示，不需要重复渲染
+    // If submenu is already shown, no need to re-render
     if (submenuVisible && submenu.style.display === 'block') {
         return;
     }
 
-    // 如果正在加载中，避免重复调用
+    // If loading, avoid duplicate calls
     if (submenuLoading) {
         return;
     }
 
-    // 清除隐藏定时器
+    // Clear hide timer
     clearSubmenuHideTimeout();
     
-    // 标记为加载中
+    // Mark as loading
     submenuLoading = true;
     submenu.innerHTML = '';
 
-    // 确保分组列表已加载 - 强制重新加载以确保数据是最新的
+    // Ensure group list is loaded - force reload to ensure data is up to date
     try {
-        // 如果缓存为空，强制加载
+        // If cache is empty, force load
         if (!Array.isArray(groupsCache) || groupsCache.length === 0) {
             await loadGroups();
         } else {
-            // 即使缓存不为空，也尝试刷新一次，确保数据是最新的
-            // 但使用静默方式，不显示错误
+            // Even if cache is not empty, try to refresh once to ensure data is up to date
+            // But use silent mode, do not show errors
             try {
                 const response = await apiFetch('/api/groups');
                 if (response.ok) {
@@ -4547,28 +4547,28 @@ async function showMoveToGroupSubmenu() {
                     }
                 }
             } catch (err) {
-                // 如果刷新失败，使用缓存的数据
-                console.warn('刷新分组列表失败，使用缓存数据:', err);
+                // If refresh fails, use cached data
+                console.warn('Failed to refresh group list, using cached data:', err);
             }
         }
         
-        // 再次验证缓存
+        // Validate cache again
         if (!Array.isArray(groupsCache)) {
-            console.warn('groupsCache 不是有效数组，重置为空数组');
+            console.warn('groupsCache is not a valid array, resetting to empty array');
             groupsCache = [];
-            // 如果仍然无效，尝试重新加载
+            // If still invalid, try to reload
             if (groupsCache.length === 0) {
                 await loadGroups();
             }
         }
     } catch (error) {
-        console.error('加载分组列表失败:', error);
-        // 即使加载失败，也继续显示菜单，使用现有缓存
+        console.error('Failed to load group list:', error);
+        // Even if load fails, continue to show menu using existing cache
     }
 
-    // 如果当前在分组详情页面，显示"移出本组"选项
+    // If currently on group detail page, show "Remove from group" option
     if (currentGroupId && contextMenuConversationId) {
-        // 检查对话是否在当前分组中
+        // Check if conversation is in the current group
         const convInGroup = conversationGroupMappingCache[contextMenuConversationId] === currentGroupId;
         if (convInGroup) {
             const removeItem = document.createElement('div');
@@ -4578,41 +4578,41 @@ async function showMoveToGroupSubmenu() {
                     <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                     <path d="M9 12l6 6M15 12l-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
-                <span>移出本组</span>
+                <span>Remove from group</span>
             `;
             removeItem.onclick = () => {
                 removeConversationFromGroup(contextMenuConversationId, currentGroupId);
             };
             submenu.appendChild(removeItem);
             
-            // 添加分隔线
+            // Add divider
             const divider = document.createElement('div');
             divider.className = 'context-menu-divider';
             submenu.appendChild(divider);
         }
     }
 
-    // 验证 groupsCache 是否为有效数组
+    // Validate if groupsCache is a valid array
     if (!Array.isArray(groupsCache)) {
-        console.warn('groupsCache 不是有效数组，重置为空数组');
+        console.warn('groupsCache is not a valid array, resetting to empty array');
         groupsCache = [];
     }
 
-    // 如果有分组，显示所有分组（排除对话已所在的分组）
+    // If there are groups, show all groups (excluding the one the conversation is already in)
     if (groupsCache.length > 0) {
-        // 检查对话当前所在的分组ID
+        // Check the group ID the conversation currently belongs to
         const conversationCurrentGroupId = contextMenuConversationId 
             ? conversationGroupMappingCache[contextMenuConversationId] 
             : null;
         
         groupsCache.forEach(group => {
-            // 验证分组对象是否有效
+            // Validate if group object is valid
             if (!group || !group.id || !group.name) {
-                console.warn('无效的分组对象:', group);
+                console.warn('Invalid group object:', group);
                 return;
             }
             
-            // 如果对话已经在当前分组中，不显示该分组（因为已经在里面了）
+            // If conversation is already in this group, do not show it (already there)
             if (conversationCurrentGroupId && group.id === conversationCurrentGroupId) {
                 return;
             }
@@ -4631,18 +4631,18 @@ async function showMoveToGroupSubmenu() {
             submenu.appendChild(item);
         });
     } else {
-        // 如果仍然没有分组，记录日志以便调试
-        console.warn('showMoveToGroupSubmenu: groupsCache 为空，无法显示分组列表');
+        // If still no groups, log for debugging
+        console.warn('showMoveToGroupSubmenu: groupsCache is empty, cannot show group list');
     }
 
-    // 始终显示"创建分组"选项
+    // Always show "Create group" option
     const addItem = document.createElement('div');
     addItem.className = 'context-submenu-item add-group-item';
     addItem.innerHTML = `
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
             <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
-        <span>+ 新增分组</span>
+        <span>+ New Group</span>
     `;
     addItem.onclick = () => {
         showCreateGroupModal(true);
@@ -4653,13 +4653,13 @@ async function showMoveToGroupSubmenu() {
     submenuVisible = true;
     submenuLoading = false;
     
-    // 计算子菜单位置，防止溢出
+    // Calculate submenu position to prevent overflow
     setTimeout(() => {
         const submenuRect = submenu.getBoundingClientRect();
         const viewportWidth = window.innerWidth;
         const viewportHeight = window.innerHeight;
         
-        // 如果子菜单超出右边界，调整到左侧
+        // If submenu overflows right boundary, adjust to left side
         if (submenuRect.right > viewportWidth) {
             submenu.style.left = 'auto';
             submenu.style.right = '100%';
@@ -4667,7 +4667,7 @@ async function showMoveToGroupSubmenu() {
             submenu.style.marginRight = '4px';
         }
         
-        // 如果子菜单超出下边界，调整位置
+        // If submenu overflows bottom boundary, adjust position
         if (submenuRect.bottom > viewportHeight) {
             const overflow = submenuRect.bottom - viewportHeight;
             const currentTop = parseInt(submenu.style.top) || 0;
@@ -4676,16 +4676,16 @@ async function showMoveToGroupSubmenu() {
     }, 0);
 }
 
-// 隐藏移动到分组子菜单的定时器
+// Timer for hiding move-to-group submenu
 let submenuHideTimeout = null;
-// 显示子菜单的防抖定时器
+// Debounce timer for showing submenu
 let submenuShowTimeout = null;
-// 子菜单是否正在加载中
+// Whether submenu is loading
 let submenuLoading = false;
-// 子菜单是否已显示
+// Whether submenu is shown
 let submenuVisible = false;
 
-// 隐藏移动到分组子菜单
+// Hide move-to-group submenu
 function hideMoveToGroupSubmenu() {
     const submenu = document.getElementById('move-to-group-submenu');
     if (submenu) {
@@ -4694,7 +4694,7 @@ function hideMoveToGroupSubmenu() {
     }
 }
 
-// 清除隐藏子菜单的定时器
+// Clear timer for hiding submenu
 function clearSubmenuHideTimeout() {
     if (submenuHideTimeout) {
         clearTimeout(submenuHideTimeout);
@@ -4702,7 +4702,7 @@ function clearSubmenuHideTimeout() {
     }
 }
 
-// 清除显示子菜单的定时器
+// Clear timer for showing submenu
 function clearSubmenuShowTimeout() {
     if (submenuShowTimeout) {
         clearTimeout(submenuShowTimeout);
@@ -4710,53 +4710,53 @@ function clearSubmenuShowTimeout() {
     }
 }
 
-// 处理鼠标进入"移动到分组"菜单项（带防抖）
+// Handle mouse enter "Move to group" menu item (with debounce)
 function handleMoveToGroupSubmenuEnter() {
-    // 清除隐藏定时器
+    // Clear hide timer
     clearSubmenuHideTimeout();
     
-    // 如果子菜单已经显示，不需要重复调用
+    // If submenu is already shown, no need to call again
     const submenu = document.getElementById('move-to-group-submenu');
     if (submenu && submenuVisible && submenu.style.display === 'block') {
         return;
     }
     
-    // 清除之前的显示定时器
+    // Clear previous show timer
     clearSubmenuShowTimeout();
     
-    // 使用防抖延迟显示，避免频繁触发
+    // Use debounce delay for showing to avoid frequent triggers
     submenuShowTimeout = setTimeout(() => {
         showMoveToGroupSubmenu();
         submenuShowTimeout = null;
     }, 100);
 }
 
-// 处理鼠标离开"移动到分组"菜单项
+// Handle mouse leave "Move to group" menu item
 function handleMoveToGroupSubmenuLeave(event) {
     const submenu = document.getElementById('move-to-group-submenu');
     if (!submenu) return;
     
-    // 清除显示定时器
+    // Clear show timer
     clearSubmenuShowTimeout();
     
-    // 检查鼠标是否移动到子菜单
+    // Check if mouse moved to submenu
     const relatedTarget = event.relatedTarget;
     if (relatedTarget && submenu.contains(relatedTarget)) {
-        // 鼠标移动到子菜单，不清除
+        // Mouse moved to submenu, do not clear
         return;
     }
     
-    // 清除之前的隐藏定时器
+    // Clear previous hide timer
     clearSubmenuHideTimeout();
     
-    // 延迟隐藏，给用户时间移动到子菜单
+    // Delay hiding to give user time to move to submenu
     submenuHideTimeout = setTimeout(() => {
         hideMoveToGroupSubmenu();
         submenuHideTimeout = null;
     }, 200);
 }
 
-// 移动对话到分组
+// Move conversation to group
 async function moveConversationToGroup(convId, groupId) {
     try {
         await apiFetch('/api/groups/conversations', {
@@ -4770,113 +4770,113 @@ async function moveConversationToGroup(convId, groupId) {
             }),
         });
 
-        // 更新缓存
+        // Update cache
         const oldGroupId = conversationGroupMappingCache[convId];
         conversationGroupMappingCache[convId] = groupId;
         
-        // 将新移动的对话添加到待保留映射中，防止后端API延迟导致映射丢失
+        // Add newly moved conversation to pending-preserve mapping to prevent mapping loss due to backend API delay
         pendingGroupMappings[convId] = groupId;
         
-        // 如果移动的是当前对话，更新 currentConversationGroupId
+        // If the moved conversation is the current one, update currentConversationGroupId
         if (currentConversationId === convId) {
             currentConversationGroupId = groupId;
         }
         
-        // 如果当前在分组详情页面，重新加载分组对话
+        // If currently on group detail page, reload group conversations
         if (currentGroupId) {
-            // 如果从当前分组移出，或者移动到当前分组，都需要重新加载
+            // If moved out of or into current group, both require reload
             if (currentGroupId === oldGroupId || currentGroupId === groupId) {
                 await loadGroupConversations(currentGroupId);
             }
         }
         
-        // 无论是否在分组详情页面，都需要刷新最近对话列表
-        // 因为最近对话列表会根据分组映射缓存来过滤显示，需要立即更新
-        // loadConversationsWithGroups 内部会调用 loadConversationGroupMapping，
-        // loadConversationGroupMapping 会保留 pendingGroupMappings 中的映射
+        // Regardless of group detail page, need to refresh recent conversation list
+        // Because recent conversation list filters based on group mapping cache; needs immediate update
+        // loadConversationsWithGroups internally calls loadConversationGroupMapping,
+        // loadConversationGroupMapping retains mappings in pendingGroupMappings
         await loadConversationsWithGroups();
         
-        // 注意：pendingGroupMappings 中的映射会在下次 loadConversationGroupMapping 
-        // 成功从后端加载时自动清理（在 loadConversationGroupMapping 中处理）
+        // Note: mappings in pendingGroupMappings will be cleaned up next time loadConversationGroupMapping 
+        // successfully loads from backend (handled in loadConversationGroupMapping)
         
-        // 刷新分组列表，更新高亮状态
+        // Refresh group list to update highlight state
         await loadGroups();
     } catch (error) {
-        console.error('移动对话到分组失败:', error);
-        alert('移动失败: ' + (error.message || '未知错误'));
+        console.error('Failed to move conversation to group:', error);
+        alert('Move failed: ' + (error.message || 'Unknown error'));
     }
 
     closeContextMenu();
 }
 
-// 从分组中移除对话
+// Remove conversation from group
 async function removeConversationFromGroup(convId, groupId) {
     try {
         await apiFetch(`/api/groups/${groupId}/conversations/${convId}`, {
             method: 'DELETE',
         });
 
-        // 更新缓存 - 立即删除，确保后续加载时能正确识别
+        // Update cache - delete immediately to ensure correct identification on subsequent loads
         delete conversationGroupMappingCache[convId];
-        // 同时从待保留映射中移除
+        // Also remove from pending-preserve mapping
         delete pendingGroupMappings[convId];
         
-        // 如果移除的是当前对话，清除 currentConversationGroupId
+        // If the removed conversation is the current one, clear currentConversationGroupId
         if (currentConversationId === convId) {
             currentConversationGroupId = null;
         }
         
-        // 如果当前在分组详情页面，重新加载分组对话
+        // If currently on group detail page, reload group conversations
         if (currentGroupId === groupId) {
             await loadGroupConversations(groupId);
         }
         
-        // 重新加载分组映射，确保缓存是最新的
+        // Reload group mapping to ensure cache is up to date
         await loadConversationGroupMapping();
         
-        // 刷新分组列表，更新高亮状态
+        // Refresh group list to update highlight state
         await loadGroups();
         
-        // 刷新最近对话列表，让移出的对话立即显示
-        // 使用临时变量保存 currentGroupId，然后临时设置为 null，确保显示所有不在分组的对话
+        // Refresh recent conversation list to immediately show the removed conversation
+        // Use temporary variable to save currentGroupId, then temporarily set to null, to show all conversations not in groups
         const savedGroupId = currentGroupId;
         currentGroupId = null;
         await loadConversationsWithGroups();
         currentGroupId = savedGroupId;
     } catch (error) {
-        console.error('从分组中移除对话失败:', error);
-        alert('移除失败: ' + (error.message || '未知错误'));
+        console.error('Failed to remove conversation from group:', error);
+        alert('Remove failed: ' + (error.message || 'Unknown error'));
     }
 
     closeContextMenu();
 }
 
-// 加载对话分组映射
+// Load conversation group mapping
 async function loadConversationGroupMapping() {
     try {
-        // 获取所有分组，然后获取每个分组的对话
+        // Get all groups, then get conversations for each group
         let groups;
         if (Array.isArray(groupsCache) && groupsCache.length > 0) {
             groups = groupsCache;
         } else {
             const response = await apiFetch('/api/groups');
             if (!response.ok) {
-                // 如果API请求失败，使用空数组，不打印警告（这是正常错误处理）
+                // If API request fails, use empty array and do not print warning (normal error handling)
                 groups = [];
             } else {
                 groups = await response.json();
-                // 确保groups是有效数组，只在真正异常时才打印警告
+                // Ensure groups is a valid array; only print warning on truly exceptional cases
                 if (!Array.isArray(groups)) {
-                    // 只在返回的不是数组且不是null/undefined时才打印警告（可能是后端返回了错误格式）
+                    // Only print warning when return is not array and not null/undefined (backend may have returned error format)
                     if (groups !== null && groups !== undefined) {
-                        console.warn('loadConversationGroupMapping: groups不是有效数组，使用空数组', groups);
+                        console.warn('loadConversationGroupMapping: groups is not a valid array, using empty array', groups);
                     }
                     groups = [];
                 }
             }
         }
         
-        // 保存待保留的映射
+        // Save pending-preserve mappings
         const preservedMappings = { ...pendingGroupMappings };
         
         conversationGroupMappingCache = {};
@@ -4884,11 +4884,11 @@ async function loadConversationGroupMapping() {
         for (const group of groups) {
             const response = await apiFetch(`/api/groups/${group.id}/conversations`);
             const conversations = await response.json();
-            // 确保conversations是有效数组
+            // Ensure conversations is a valid array
             if (Array.isArray(conversations)) {
                 conversations.forEach(conv => {
                     conversationGroupMappingCache[conv.id] = group.id;
-                    // 如果这个对话在待保留映射中，从待保留映射中移除（因为已经从后端加载了）
+                    // If this conversation is in pending-preserve mapping, remove it (since it has been loaded from backend)
                     if (preservedMappings[conv.id] === group.id) {
                         delete pendingGroupMappings[conv.id];
                     }
@@ -4896,14 +4896,14 @@ async function loadConversationGroupMapping() {
             }
         }
         
-        // 恢复待保留的映射（这些是后端API尚未同步的映射）
+        // Restore pending-preserve mappings (these are mappings not yet synced by backend API)
         Object.assign(conversationGroupMappingCache, preservedMappings);
     } catch (error) {
-        console.error('加载对话分组映射失败:', error);
+        console.error('Failed to load conversation group mapping:', error);
     }
 }
 
-// 从上下文菜单查看攻击链
+// View attack chain from context menu
 function showAttackChainFromContext() {
     const convId = contextMenuConversationId;
     if (!convId) return;
@@ -4912,18 +4912,18 @@ function showAttackChainFromContext() {
     showAttackChain(convId);
 }
 
-// 从上下文菜单删除对话
+// Delete conversation from context menu
 function deleteConversationFromContext() {
     const convId = contextMenuConversationId;
     if (!convId) return;
 
-    if (confirm('确定要删除此对话吗？')) {
-        deleteConversation(convId, true); // 跳过内部确认，因为这里已经确认过了
+    if (confirm('Are you sure you want to delete this conversation?')) {
+        deleteConversation(convId, true); // Skip internal confirmation since already confirmed here
     }
     closeContextMenu();
 }
 
-// 关闭上下文菜单
+// Close context menu
 function closeContextMenu() {
     const menu = document.getElementById('conversation-context-menu');
     if (menu) {
@@ -4934,21 +4934,21 @@ function closeContextMenu() {
         submenu.style.display = 'none';
         submenuVisible = false;
     }
-    // 清除所有定时器
+    // Clear all timers
     clearSubmenuHideTimeout();
     clearSubmenuShowTimeout();
     submenuLoading = false;
     contextMenuConversationId = null;
 }
 
-// 显示批量管理模态框
+// Show bulk management modal
 let allConversationsForBatch = [];
 
 async function showBatchManageModal() {
     try {
         const response = await apiFetch('/api/conversations?limit=1000');
         
-        // 如果响应不是200，使用空数组（友好处理，不显示错误）
+        // If response is not 200, use empty array (handle gracefully, do not show error)
         if (!response.ok) {
             allConversationsForBatch = [];
         } else {
@@ -4967,8 +4967,8 @@ async function showBatchManageModal() {
             modal.style.display = 'flex';
         }
     } catch (error) {
-        console.error('加载对话列表失败:', error);
-        // 错误时使用空数组，不显示错误提示（更友好的用户体验）
+        console.error('Failed to load conversation list:', error);
+        // On error, use empty array and do not show error prompt (better UX)
         allConversationsForBatch = [];
         const modal = document.getElementById('batch-manage-modal');
         const countEl = document.getElementById('batch-manage-count');
@@ -4982,46 +4982,46 @@ async function showBatchManageModal() {
     }
 }
 
-// 安全截断中文字符串，避免在汉字中间截断
+// Safely truncate strings to avoid truncating in the middle of a character
 function safeTruncateText(text, maxLength = 50) {
     if (!text || typeof text !== 'string') {
         return text || '';
     }
     
-    // 使用 Array.from 将字符串转换为字符数组（正确处理 Unicode 代理对）
+    // Use Array.from to convert string to character array (correctly handles Unicode surrogate pairs)
     const chars = Array.from(text);
     
-    // 如果文本长度未超过限制，直接返回
+    // If text length does not exceed the limit, return directly
     if (chars.length <= maxLength) {
         return text;
     }
     
-    // 截断到最大长度（基于字符数，而不是代码单元）
+    // Truncate to max length (based on character count, not code units)
     let truncatedChars = chars.slice(0, maxLength);
     
-    // 尝试在标点符号或空格处截断，使截断更自然
-    // 在截断点往前查找合适的断点（不超过20%的长度）
+    // Try to truncate at punctuation marks or spaces for more natural truncation
+    // Search backward from truncation point for a suitable break (no more than 20% of length)
     const searchRange = Math.floor(maxLength * 0.2);
     const breakChars = ['，', '。', '、', ' ', ',', '.', ';', ':', '!', '?', '！', '？', '/', '\\', '-', '_'];
     let bestBreakPos = truncatedChars.length;
     
     for (let i = truncatedChars.length - 1; i >= truncatedChars.length - searchRange && i >= 0; i--) {
         if (breakChars.includes(truncatedChars[i])) {
-            bestBreakPos = i + 1; // 在标点符号后断开
+            bestBreakPos = i + 1; // Break after punctuation mark
             break;
         }
     }
     
-    // 如果找到合适的断点，使用它；否则使用原截断位置
+    // If a suitable break is found, use it; otherwise use the original truncation position
     if (bestBreakPos < truncatedChars.length) {
         truncatedChars = truncatedChars.slice(0, bestBreakPos);
     }
     
-    // 将字符数组转换回字符串，并添加省略号
+    // Convert character array back to string and add ellipsis
     return truncatedChars.join('') + '...';
 }
 
-// 渲染批量管理对话列表
+// Render bulk management conversation list
 function renderBatchConversations(filtered = null) {
     const list = document.getElementById('batch-conversations-list');
     if (!list) return;
@@ -5041,11 +5041,11 @@ function renderBatchConversations(filtered = null) {
 
         const name = document.createElement('div');
         name.className = 'batch-table-col-name';
-        const originalTitle = conv.title || '未命名对话';
-        // 使用安全截断函数，限制最大长度为45个字符（留出空间显示省略号）
+        const originalTitle = conv.title || 'Unnamed conversation';
+        // Use safe truncation function, max length 45 characters (to leave space for ellipsis)
         const truncatedTitle = safeTruncateText(originalTitle, 45);
         name.textContent = truncatedTitle;
-        // 设置title属性以显示完整文本（鼠标悬停时）
+        // Set title attribute to show full text (on mouse hover)
         name.title = originalTitle;
 
         const time = document.createElement('div');
@@ -5076,7 +5076,7 @@ function renderBatchConversations(filtered = null) {
     });
 }
 
-// 筛选批量管理对话
+// Filter bulk management conversations
 function filterBatchConversations(query) {
     if (!query || !query.trim()) {
         renderBatchConversations();
@@ -5091,7 +5091,7 @@ function filterBatchConversations(query) {
     renderBatchConversations(filtered);
 }
 
-// 全选/取消全选
+// Select all / deselect all
 function toggleSelectAllBatch() {
     const selectAll = document.getElementById('batch-select-all');
     const checkboxes = document.querySelectorAll('.batch-conversation-checkbox');
@@ -5101,15 +5101,15 @@ function toggleSelectAllBatch() {
     });
 }
 
-// 删除选中的对话
+// Delete selected conversations
 async function deleteSelectedConversations() {
     const checkboxes = document.querySelectorAll('.batch-conversation-checkbox:checked');
     if (checkboxes.length === 0) {
-        alert('请先选择要删除的对话');
+        alert('Please select conversations to delete first');
         return;
     }
 
-    if (!confirm(`确定要删除选中的 ${checkboxes.length} 条对话吗？`)) {
+    if (!confirm(`Are you sure you want to delete the selected ${checkboxes.length} conversation(s)?`)) {
         return;
     }
 
@@ -5117,17 +5117,17 @@ async function deleteSelectedConversations() {
     
     try {
         for (const id of ids) {
-            await deleteConversation(id, true); // 跳过内部确认，因为批量删除时已经确认过了
+            await deleteConversation(id, true); // Skip internal confirmation since already confirmed for bulk delete
         }
         closeBatchManageModal();
         loadConversationsWithGroups();
     } catch (error) {
-        console.error('删除失败:', error);
-        alert('删除失败: ' + (error.message || '未知错误'));
+        console.error('Delete failed:', error);
+        alert('Delete failed: ' + (error.message || 'Unknown error'));
     }
 }
 
-// 关闭批量管理模态框
+// Close bulk management modal
 function closeBatchManageModal() {
     const modal = document.getElementById('batch-manage-modal');
     if (modal) {
@@ -5140,7 +5140,7 @@ function closeBatchManageModal() {
     allConversationsForBatch = [];
 }
 
-// 显示创建分组模态框
+// Show create group modal
 function showCreateGroupModal(andMoveConversation = false) {
     const modal = document.getElementById('create-group-modal');
     const input = document.getElementById('create-group-name-input');
@@ -5151,15 +5151,15 @@ function showCreateGroupModal(andMoveConversation = false) {
     if (input) {
         input.value = '';
     }
-    // 重置图标为默认值
+    // Reset icon to default value
     if (iconBtn) {
         iconBtn.textContent = '📁';
     }
-    // 清空自定义图标输入框
+    // Clear custom icon input box
     if (customInput) {
         customInput.value = '';
     }
-    // 关闭图标选择器
+    // Close icon selector
     if (iconPicker) {
         iconPicker.style.display = 'none';
     }
@@ -5172,7 +5172,7 @@ function showCreateGroupModal(andMoveConversation = false) {
     }
 }
 
-// 关闭创建分组模态框
+// Close create group modal
 function closeCreateGroupModal() {
     const modal = document.getElementById('create-group-modal');
     if (modal) {
@@ -5182,24 +5182,24 @@ function closeCreateGroupModal() {
     if (input) {
         input.value = '';
     }
-    // 重置图标为默认值
+    // Reset icon to default value
     const iconBtn = document.getElementById('create-group-icon-btn');
     if (iconBtn) {
         iconBtn.textContent = '📁';
     }
-    // 清空自定义图标输入框
+    // Clear custom icon input box
     const customInput = document.getElementById('custom-icon-input');
     if (customInput) {
         customInput.value = '';
     }
-    // 关闭图标选择器
+    // Close icon selector
     const iconPicker = document.getElementById('group-icon-picker');
     if (iconPicker) {
         iconPicker.style.display = 'none';
     }
 }
 
-// 选择建议标签
+// Select suggested tag
 function selectSuggestion(name) {
     const input = document.getElementById('create-group-name-input');
     if (input) {
@@ -5208,7 +5208,7 @@ function selectSuggestion(name) {
     }
 }
 
-// 切换图标选择器显示状态
+// Toggle icon selector display state
 function toggleGroupIconPicker() {
     const picker = document.getElementById('group-icon-picker');
     if (picker) {
@@ -5217,25 +5217,25 @@ function toggleGroupIconPicker() {
     }
 }
 
-// 选择分组图标
+// Select group icon
 function selectGroupIcon(icon) {
     const iconBtn = document.getElementById('create-group-icon-btn');
     if (iconBtn) {
         iconBtn.textContent = icon;
     }
-    // 清空自定义输入框
+    // Clear custom input box
     const customInput = document.getElementById('custom-icon-input');
     if (customInput) {
         customInput.value = '';
     }
-    // 关闭选择器
+    // Close selector
     const picker = document.getElementById('group-icon-picker');
     if (picker) {
         picker.style.display = 'none';
     }
 }
 
-// 应用自定义图标
+// Apply custom icon
 function applyCustomIcon() {
     const customInput = document.getElementById('custom-icon-input');
     if (!customInput) return;
@@ -5250,7 +5250,7 @@ function applyCustomIcon() {
         iconBtn.textContent = customIcon;
     }
     
-    // 清空输入框并关闭选择器
+    // Clear input box and close selector
     customInput.value = '';
     const picker = document.getElementById('group-icon-picker');
     if (picker) {
@@ -5258,7 +5258,7 @@ function applyCustomIcon() {
     }
 }
 
-// 自定义图标输入框回车键处理
+// Handle Enter key in custom icon input box
 document.addEventListener('DOMContentLoaded', function() {
     const customInput = document.getElementById('custom-icon-input');
     if (customInput) {
@@ -5271,21 +5271,21 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 });
 
-// 点击外部关闭图标选择器
+// Click outside to close icon selector
 document.addEventListener('click', function(event) {
     const picker = document.getElementById('group-icon-picker');
     const iconBtn = document.getElementById('create-group-icon-btn');
     if (picker && iconBtn) {
-        // 如果点击的不是图标按钮和选择器本身，则关闭选择器
+        // If click is not on icon button or selector itself, close selector
         if (!picker.contains(event.target) && !iconBtn.contains(event.target)) {
             picker.style.display = 'none';
         }
     }
 });
 
-// 创建分组
+// Create group
 async function createGroup(event) {
-    // 阻止事件冒泡
+    // Prevent event bubbling
     if (event) {
         event.preventDefault();
         event.stopPropagation();
@@ -5293,17 +5293,17 @@ async function createGroup(event) {
 
     const input = document.getElementById('create-group-name-input');
     if (!input) {
-        console.error('找不到输入框');
+        console.error('Input box not found');
         return;
     }
 
     const name = input.value.trim();
     if (!name) {
-        alert('请输入分组名称');
+        alert('Please enter a group name');
         return;
     }
 
-    // 前端校验：检查名称是否已存在
+    // Frontend validation: check if name already exists
     try {
         let groups;
         if (Array.isArray(groupsCache) && groupsCache.length > 0) {
@@ -5313,21 +5313,21 @@ async function createGroup(event) {
             groups = await response.json();
         }
         
-        // 确保groups是有效数组
+        // Ensure groups is a valid array
         if (!Array.isArray(groups)) {
             groups = [];
         }
         
         const nameExists = groups.some(g => g.name === name);
         if (nameExists) {
-            alert('分组名称已存在，请使用其他名称');
+            alert('Group name already exists. Please choose a different name.');
             return;
         }
     } catch (error) {
-        console.error('检查分组名称失败:', error);
+        console.error('Failed to check group name:', error);
     }
 
-    // 获取选中的图标
+    // Get selected icon
     const iconBtn = document.getElementById('create-group-icon-btn');
     const selectedIcon = iconBtn ? iconBtn.textContent.trim() : '📁';
 
@@ -5345,16 +5345,16 @@ async function createGroup(event) {
 
         if (!response.ok) {
             const error = await response.json();
-            if (error.error && error.error.includes('已存在')) {
-                alert('分组名称已存在，请使用其他名称');
+            if (error.error && error.error.includes('already exists')) {
+                alert('Group name already exists. Please choose a different name.');
                 return;
             }
-            throw new Error(error.error || '创建失败');
+            throw new Error(error.error || 'Create failed');
         }
 
         const newGroup = await response.json();
         
-        // 检查"移动到分组"子菜单是否打开
+        // Check if "Move to group" submenu is open
         const submenu = document.getElementById('move-to-group-submenu');
         const isSubmenuOpen = submenu && submenu.style.display !== 'none';
 
@@ -5369,21 +5369,21 @@ async function createGroup(event) {
             moveConversationToGroup(contextMenuConversationId, newGroup.id);
         }
 
-        // 如果子菜单是打开的，刷新它，让新创建的分组立即显示
+        // If submenu is open, refresh it to immediately show newly created group
         if (isSubmenuOpen) {
             await showMoveToGroupSubmenu();
         }
     } catch (error) {
-        console.error('创建分组失败:', error);
-        alert('创建失败: ' + (error.message || '未知错误'));
+        console.error('Failed to create group:', error);
+        alert('Create failed: ' + (error.message || 'Unknown error'));
     }
 }
 
-// 进入分组详情
+// Enter group detail
 async function enterGroupDetail(groupId) {
     currentGroupId = groupId;
-    // 进入分组详情页面时，清除当前对话所属的分组ID，避免高亮冲突
-    // 因为此时用户是在查看分组详情，而不是在查看分组中的某个对话
+    // When entering group detail page, clear current conversation group ID to avoid highlight conflict
+    // Because at this point the user is viewing group details, not a conversation within the group
     currentConversationGroupId = null;
     
     try {
@@ -5395,36 +5395,36 @@ async function enterGroupDetail(groupId) {
             return;
         }
 
-        // 显示分组详情页，隐藏对话界面，但保持侧边栏可见
+        // Show group detail page, hide conversation view, but keep sidebar visible
         const sidebar = document.querySelector('.conversation-sidebar');
         const groupDetailPage = document.getElementById('group-detail-page');
         const chatContainer = document.querySelector('.chat-container');
         const titleEl = document.getElementById('group-detail-title');
 
-        // 保持侧边栏可见
+        // Keep sidebar visible
         if (sidebar) sidebar.style.display = 'flex';
-        // 隐藏对话界面，显示分组详情页
+        // Hide conversation view, show group detail page
         if (chatContainer) chatContainer.style.display = 'none';
         if (groupDetailPage) groupDetailPage.style.display = 'flex';
         if (titleEl) titleEl.textContent = group.name;
 
-        // 刷新分组列表，确保当前分组高亮显示
+        // Refresh group list to ensure current group is highlighted
         await loadGroups();
 
-        // 加载分组对话（如果有搜索查询则使用搜索查询）
+        // Load group conversations (use search query if there is one)
         loadGroupConversations(groupId, currentGroupSearchQuery);
     } catch (error) {
-        console.error('加载分组失败:', error);
+        console.error('Failed to load group:', error);
         currentGroupId = null;
     }
 }
 
-// 退出分组详情
+// Exit group detail
 function exitGroupDetail() {
     currentGroupId = null;
-    currentGroupSearchQuery = ''; // 清除搜索状态
+    currentGroupSearchQuery = ''; // Clear search state
     
-    // 隐藏搜索框并清除搜索内容
+    // Hide search box and clear search content
     const searchContainer = document.getElementById('group-search-container');
     const searchInput = document.getElementById('group-search-input');
     if (searchContainer) searchContainer.style.display = 'none';
@@ -5434,16 +5434,16 @@ function exitGroupDetail() {
     const groupDetailPage = document.getElementById('group-detail-page');
     const chatContainer = document.querySelector('.chat-container');
 
-    // 保持侧边栏可见
+    // Keep sidebar visible
     if (sidebar) sidebar.style.display = 'flex';
-    // 隐藏分组详情页，显示对话界面
+    // Hide group detail page, show conversation view
     if (groupDetailPage) groupDetailPage.style.display = 'none';
     if (chatContainer) chatContainer.style.display = 'flex';
 
     loadConversationsWithGroups();
 }
 
-// 加载分组中的对话
+// Load conversations in group
 async function loadGroupConversations(groupId, searchQuery = '') {
     try {
         if (!groupId) {
@@ -5451,26 +5451,26 @@ async function loadGroupConversations(groupId, searchQuery = '') {
             return;
         }
         
-        // 确保分组映射已加载
+        // Ensure group mapping is loaded
         if (Object.keys(conversationGroupMappingCache).length === 0) {
             await loadConversationGroupMapping();
         }
         
-        // 先清空列表，避免显示旧数据
+        // First clear list to avoid showing stale data
         const list = document.getElementById('group-conversations-list');
         if (!list) {
             console.error('group-conversations-list element not found');
             return;
         }
         
-        // 显示加载状态
+        // Show loading state
         if (searchQuery) {
-            list.innerHTML = '<div style="padding: 40px; text-align: center; color: var(--text-muted);">搜索中...</div>';
+            list.innerHTML = '<div style="padding: 40px; text-align: center; color: var(--text-muted);">Searching...</div>';
         } else {
-            list.innerHTML = '<div style="padding: 40px; text-align: center; color: var(--text-muted);">加载中...</div>';
+            list.innerHTML = '<div style="padding: 40px; text-align: center; color: var(--text-muted);">Loading...</div>';
         }
 
-        // 构建URL，如果有搜索关键词则添加search参数
+        // Build URL; if search keyword exists, add search parameter
         let url = `/api/groups/${groupId}/conversations`;
         if (searchQuery && searchQuery.trim()) {
             url += '?search=' + encodeURIComponent(searchQuery.trim());
@@ -5479,56 +5479,56 @@ async function loadGroupConversations(groupId, searchQuery = '') {
         const response = await apiFetch(url);
         if (!response.ok) {
             console.error(`Failed to load conversations for group ${groupId}:`, response.statusText);
-            list.innerHTML = '<div style="padding: 40px; text-align: center; color: var(--text-muted);">加载失败，请重试</div>';
+            list.innerHTML = '<div style="padding: 40px; text-align: center; color: var(--text-muted);">Load failed, please retry</div>';
             return;
         }
         
         let groupConvs = await response.json();
         
-        // 处理 null 或 undefined 的情况，将其视为空数组
+        // Handle null or undefined cases, treat as empty array
         if (!groupConvs) {
             groupConvs = [];
         }
         
-        // 验证返回的数据类型
+        // Validate returned data type
         if (!Array.isArray(groupConvs)) {
             console.error(`Invalid response for group ${groupId}:`, groupConvs);
-            list.innerHTML = '<div style="padding: 40px; text-align: center; color: var(--text-muted);">数据格式错误</div>';
+            list.innerHTML = '<div style="padding: 40px; text-align: center; color: var(--text-muted);">Data format error</div>';
             return;
         }
         
-        // 更新分组映射缓存（只更新当前分组的对话）
-        // 先清理该分组之前的映射（如果有对话被移出）
+        // Update group mapping cache (only update conversations in current group)
+        // First clean up previous mappings for this group (if any conversations were moved out)
         Object.keys(conversationGroupMappingCache).forEach(convId => {
             if (conversationGroupMappingCache[convId] === groupId) {
-                // 如果这个对话不在新的列表中，说明已被移出
+                // If this conversation is not in the new list, it has been moved out
                 if (!groupConvs.find(c => c.id === convId)) {
                     delete conversationGroupMappingCache[convId];
                 }
             }
         });
         
-        // 更新当前分组的对话映射
+        // Update conversation mapping for the current group
         groupConvs.forEach(conv => {
             conversationGroupMappingCache[conv.id] = groupId;
         });
 
-        // 再次清空列表（清除"加载中"提示）
+        // Clear list again (clear "Loading" prompt)
         list.innerHTML = '';
 
         if (groupConvs.length === 0) {
             if (searchQuery && searchQuery.trim()) {
-                list.innerHTML = '<div style="padding: 40px; text-align: center; color: var(--text-muted);">未找到匹配的对话</div>';
+                list.innerHTML = '<div style="padding: 40px; text-align: center; color: var(--text-muted);">No matching conversations found</div>';
             } else {
-                list.innerHTML = '<div style="padding: 40px; text-align: center; color: var(--text-muted);">该分组暂无对话</div>';
+                list.innerHTML = '<div style="padding: 40px; text-align: center; color: var(--text-muted);">This group has no conversations</div>';
             }
             return;
         }
 
-        // 加载每个对话的详细信息以获取消息
+        // Load detailed information for each conversation to get messages
         for (const conv of groupConvs) {
             try {
-                // 验证对话ID存在
+                // Validate conversation ID exists
                 if (!conv.id) {
                     console.warn('Conversation missing id:', conv);
                     continue;
@@ -5545,15 +5545,15 @@ async function loadGroupConversations(groupId, searchQuery = '') {
                 const item = document.createElement('div');
                 item.className = 'group-conversation-item';
                 item.dataset.conversationId = conv.id;
-                // 只有在分组详情页面且对话ID匹配时才显示active状态
-                // 如果不在分组详情页面，不应该显示active状态
+                // Only show active state when on group detail page and conversation ID matches
+                // If not on group detail page, should not show active state
                 if (currentGroupId && conv.id === currentConversationId) {
                     item.classList.add('active');
                 } else {
                     item.classList.remove('active');
                 }
 
-                // 创建内容包装器
+                // Create content wrapper
                 const contentWrapper = document.createElement('div');
                 contentWrapper.className = 'group-conversation-content-wrapper';
 
@@ -5564,17 +5564,17 @@ async function loadGroupConversations(groupId, searchQuery = '') {
 
                 const title = document.createElement('div');
                 title.className = 'group-conversation-title';
-                const titleText = fullConv.title || conv.title || '未命名对话';
+                const titleText = fullConv.title || conv.title || 'Unnamed conversation';
                 title.textContent = safeTruncateText(titleText, 60);
-                title.title = titleText; // 设置完整标题以便悬停查看
+                title.title = titleText; // Set full title for hover view
                 titleWrapper.appendChild(title);
 
-                // 如果对话在分组中置顶，显示置顶图标
+                // If conversation is pinned in the group, show pin icon
                 if (conv.groupPinned) {
                     const pinIcon = document.createElement('span');
                     pinIcon.className = 'conversation-item-pinned';
                     pinIcon.innerHTML = '📌';
-                    pinIcon.title = '在分组中已置顶';
+                    pinIcon.title = 'Pinned in group';
                     titleWrapper.appendChild(pinIcon);
                 }
 
@@ -5593,7 +5593,7 @@ async function loadGroupConversations(groupId, searchQuery = '') {
 
                 contentWrapper.appendChild(timeWrapper);
 
-                // 如果有第一条消息，显示内容预览
+                // If there is a first message, show content preview
                 if (fullConv.messages && fullConv.messages.length > 0) {
                     const firstMsg = fullConv.messages.find(m => m.role === 'user' && m.content);
                     if (firstMsg && firstMsg.content) {
@@ -5610,7 +5610,7 @@ async function loadGroupConversations(groupId, searchQuery = '') {
 
                 item.appendChild(contentWrapper);
 
-                // 添加三个点菜单按钮
+                // Add three-dot menu button
                 const menuBtn = document.createElement('button');
                 menuBtn.className = 'conversation-item-menu';
                 menuBtn.innerHTML = '⋯';
@@ -5624,7 +5624,7 @@ async function loadGroupConversations(groupId, searchQuery = '') {
                 item.onclick = (e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    // 切换到对话界面，但保持分组详情状态
+                    // Switch to conversation view but keep group detail state
                     const groupDetailPage = document.getElementById('group-detail-page');
                     const chatContainer = document.querySelector('.chat-container');
                     if (groupDetailPage) groupDetailPage.style.display = 'none';
@@ -5634,15 +5634,15 @@ async function loadGroupConversations(groupId, searchQuery = '') {
 
                 list.appendChild(item);
             } catch (err) {
-                console.error(`加载对话 ${conv.id} 失败:`, err);
+                console.error(`Failed to load conversation ${conv.id}:`, err);
             }
         }
     } catch (error) {
-        console.error('加载分组对话失败:', error);
+        console.error('Failed to load group conversations:', error);
     }
 }
 
-// 编辑分组
+// Edit group
 async function editGroup() {
     if (!currentGroupId) return;
 
@@ -5651,12 +5651,12 @@ async function editGroup() {
         const group = await response.json();
         if (!group) return;
 
-        const newName = prompt('请输入新名称:', group.name);
+        const newName = prompt('Please enter new name:', group.name);
         if (newName === null || !newName.trim()) return;
 
         const trimmedName = newName.trim();
         
-        // 前端校验：检查名称是否已存在（排除当前分组）
+        // Frontend validation: check if name already exists (excluding current group)
         let groups;
         if (Array.isArray(groupsCache) && groupsCache.length > 0) {
             groups = groupsCache;
@@ -5665,14 +5665,14 @@ async function editGroup() {
             groups = await response.json();
         }
         
-        // 确保groups是有效数组
+        // Ensure groups is a valid array
         if (!Array.isArray(groups)) {
             groups = [];
         }
         
         const nameExists = groups.some(g => g.name === trimmedName && g.id !== currentGroupId);
         if (nameExists) {
-            alert('分组名称已存在，请使用其他名称');
+            alert('Group name already exists. Please choose a different name.');
             return;
         }
 
@@ -5689,11 +5689,11 @@ async function editGroup() {
 
         if (!updateResponse.ok) {
             const error = await updateResponse.json();
-            if (error.error && error.error.includes('已存在')) {
-                alert('分组名称已存在，请使用其他名称');
+            if (error.error && error.error.includes('already exists')) {
+                alert('Group name already exists. Please choose a different name.');
                 return;
             }
-            throw new Error(error.error || '更新失败');
+            throw new Error(error.error || 'Update failed');
         }
 
         loadGroups();
@@ -5703,16 +5703,16 @@ async function editGroup() {
             titleEl.textContent = trimmedName;
         }
     } catch (error) {
-        console.error('编辑分组失败:', error);
-        alert('编辑失败: ' + (error.message || '未知错误'));
+        console.error('Failed to edit group:', error);
+        alert('Edit failed: ' + (error.message || 'Unknown error'));
     }
 }
 
-// 删除分组
+// Delete group
 async function deleteGroup() {
     if (!currentGroupId) return;
 
-    if (!confirm('确定要删除此分组吗？分组中的对话不会被删除，但会从分组中移除。')) {
+    if (!confirm('Are you sure you want to delete this group? Conversations in the group will not be deleted but will be removed from the group.')) {
         return;
     }
 
@@ -5721,7 +5721,7 @@ async function deleteGroup() {
             method: 'DELETE',
         });
 
-        // 更新缓存
+        // Update cache
         groupsCache = groupsCache.filter(g => g.id !== currentGroupId);
         Object.keys(conversationGroupMappingCache).forEach(convId => {
             if (conversationGroupMappingCache[convId] === currentGroupId) {
@@ -5729,10 +5729,10 @@ async function deleteGroup() {
             }
         });
 
-        // 如果"移动到分组"子菜单是打开的，刷新它
+        // If "Move to group" submenu is open, refresh it
         const submenu = document.getElementById('move-to-group-submenu');
         if (submenu && submenu.style.display !== 'none') {
-            // 子菜单是打开的，重新加载分组列表并刷新子菜单
+            // Submenu is open; reload group list and refresh submenu
             await loadGroups();
             await showMoveToGroupSubmenu();
         } else {
@@ -5740,15 +5740,15 @@ async function deleteGroup() {
             await loadGroups();
         }
         
-        // 刷新对话列表，确保之前被分组的对话能立即显示
+        // Refresh conversation list to ensure previously grouped conversations appear immediately
         await loadConversationsWithGroups();
     } catch (error) {
-        console.error('删除分组失败:', error);
-        alert('删除失败: ' + (error.message || '未知错误'));
+        console.error('Failed to delete group:', error);
+        alert('Delete failed: ' + (error.message || 'Unknown error'));
     }
 }
 
-// 从上下文菜单重命名分组
+// Rename group from context menu
 async function renameGroupFromContext() {
     const groupId = contextMenuGroupId;
     if (!groupId) return;
@@ -5758,7 +5758,7 @@ async function renameGroupFromContext() {
         const group = await response.json();
         if (!group) return;
 
-        const newName = prompt('请输入新名称:', group.name);
+        const newName = prompt('Please enter new name:', group.name);
         if (newName === null || !newName.trim()) {
             closeGroupContextMenu();
             return;
@@ -5766,7 +5766,7 @@ async function renameGroupFromContext() {
 
         const trimmedName = newName.trim();
         
-        // 前端校验：检查名称是否已存在（排除当前分组）
+        // Frontend validation: check if name already exists (excluding current group)
         let groups;
         if (Array.isArray(groupsCache) && groupsCache.length > 0) {
             groups = groupsCache;
@@ -5775,14 +5775,14 @@ async function renameGroupFromContext() {
             groups = await response.json();
         }
         
-        // 确保groups是有效数组
+        // Ensure groups is a valid array
         if (!Array.isArray(groups)) {
             groups = [];
         }
         
         const nameExists = groups.some(g => g.name === trimmedName && g.id !== groupId);
         if (nameExists) {
-            alert('分组名称已存在，请使用其他名称');
+            alert('Group name already exists. Please choose a different name.');
             return;
         }
 
@@ -5799,16 +5799,16 @@ async function renameGroupFromContext() {
 
         if (!updateResponse.ok) {
             const error = await updateResponse.json();
-            if (error.error && error.error.includes('已存在')) {
-                alert('分组名称已存在，请使用其他名称');
+            if (error.error && error.error.includes('already exists')) {
+                alert('Group name already exists. Please choose a different name.');
                 return;
             }
-            throw new Error(error.error || '更新失败');
+            throw new Error(error.error || 'Update failed');
         }
 
         loadGroups();
         
-        // 如果当前在分组详情页，更新标题
+        // If currently on group detail page, update title
         if (currentGroupId === groupId) {
             const titleEl = document.getElementById('group-detail-title');
             if (titleEl) {
@@ -5816,27 +5816,27 @@ async function renameGroupFromContext() {
             }
         }
     } catch (error) {
-        console.error('重命名分组失败:', error);
-        alert('重命名失败: ' + (error.message || '未知错误'));
+        console.error('Failed to rename group:', error);
+        alert('Rename failed: ' + (error.message || 'Unknown error'));
     }
 
     closeGroupContextMenu();
 }
 
-// 从上下文菜单置顶分组
+// Pin group from context menu
 async function pinGroupFromContext() {
     const groupId = contextMenuGroupId;
     if (!groupId) return;
 
     try {
-        // 获取当前分组信息
+        // Get current group information
         const response = await apiFetch(`/api/groups/${groupId}`);
         const group = await response.json();
         if (!group) return;
 
         const newPinnedState = !group.pinned;
 
-        // 调用 API 更新置顶状态
+        // Call API to update pin state
         const updateResponse = await apiFetch(`/api/groups/${groupId}/pinned`, {
             method: 'PUT',
             headers: {
@@ -5849,25 +5849,25 @@ async function pinGroupFromContext() {
 
         if (!updateResponse.ok) {
             const error = await updateResponse.json();
-            throw new Error(error.error || '更新失败');
+            throw new Error(error.error || 'Update failed');
         }
 
-        // 重新加载分组列表以更新显示顺序
+        // Reload group list to update display order
         loadGroups();
     } catch (error) {
-        console.error('置顶分组失败:', error);
-        alert('置顶失败: ' + (error.message || '未知错误'));
+        console.error('Failed to pin group:', error);
+        alert('Pin failed: ' + (error.message || 'Unknown error'));
     }
 
     closeGroupContextMenu();
 }
 
-// 从上下文菜单删除分组
+// Delete group from context menu
 async function deleteGroupFromContext() {
     const groupId = contextMenuGroupId;
     if (!groupId) return;
 
-    if (!confirm('确定要删除此分组吗？分组中的对话不会被删除，但会从分组中移除。')) {
+    if (!confirm('Are you sure you want to delete this group? Conversations in the group will not be deleted but will be removed from the group.')) {
         closeGroupContextMenu();
         return;
     }
@@ -5877,7 +5877,7 @@ async function deleteGroupFromContext() {
             method: 'DELETE',
         });
 
-        // 更新缓存
+        // Update cache
         groupsCache = groupsCache.filter(g => g.id !== groupId);
         Object.keys(conversationGroupMappingCache).forEach(convId => {
             if (conversationGroupMappingCache[convId] === groupId) {
@@ -5885,31 +5885,31 @@ async function deleteGroupFromContext() {
             }
         });
 
-        // 如果"移动到分组"子菜单是打开的，刷新它
+        // If "Move to group" submenu is open, refresh it
         const submenu = document.getElementById('move-to-group-submenu');
         if (submenu && submenu.style.display !== 'none') {
-            // 子菜单是打开的，重新加载分组列表并刷新子菜单
+            // Submenu is open; reload group list and refresh submenu
             await loadGroups();
             await showMoveToGroupSubmenu();
         } else {
-            // 如果当前在分组详情页，退出详情页
+            // If currently on group detail page, exit detail page
             if (currentGroupId === groupId) {
                 exitGroupDetail();
             }
             await loadGroups();
         }
         
-        // 刷新对话列表，确保之前被分组的对话能立即显示
+        // Refresh conversation list to ensure previously grouped conversations appear immediately
         await loadConversationsWithGroups();
     } catch (error) {
-        console.error('删除分组失败:', error);
-        alert('删除失败: ' + (error.message || '未知错误'));
+        console.error('Failed to delete group:', error);
+        alert('Delete failed: ' + (error.message || 'Unknown error'));
     }
 
     closeGroupContextMenu();
 }
 
-// 关闭分组上下文菜单
+// Close group context menu
 function closeGroupContextMenu() {
     const menu = document.getElementById('group-context-menu');
     if (menu) {
@@ -5919,11 +5919,11 @@ function closeGroupContextMenu() {
 }
 
 
-// 分组搜索相关变量
+// Group search related variables
 let groupSearchTimer = null;
 let currentGroupSearchQuery = '';
 
-// 切换分组搜索框显示/隐藏
+// Toggle group search box show/hide
 function toggleGroupSearch() {
     const searchContainer = document.getElementById('group-search-container');
     const searchInput = document.getElementById('group-search-input');
@@ -5939,16 +5939,16 @@ function toggleGroupSearch() {
     }
 }
 
-// 处理分组搜索输入
+// Handle group search input
 function handleGroupSearchInput(event) {
-    // 支持回车键搜索
+    // Support Enter key for search
     if (event.key === 'Enter') {
         event.preventDefault();
         performGroupSearch();
         return;
     }
     
-    // 支持ESC键关闭搜索
+    // Support ESC key to close search
     if (event.key === 'Escape') {
         clearGroupSearch();
         toggleGroupSearch();
@@ -5962,22 +5962,22 @@ function handleGroupSearchInput(event) {
     
     const query = searchInput.value.trim();
     
-    // 显示/隐藏清除按钮
+    // Show/hide clear button
     if (clearBtn) {
         clearBtn.style.display = query ? 'block' : 'none';
     }
     
-    // 防抖搜索
+    // Debounce search
     if (groupSearchTimer) {
         clearTimeout(groupSearchTimer);
     }
     
     groupSearchTimer = setTimeout(() => {
         performGroupSearch();
-    }, 300); // 300ms 防抖
+    }, 300); // 300ms debounce
 }
 
-// 执行分组搜索
+// Execute group search
 async function performGroupSearch() {
     const searchInput = document.getElementById('group-search-input');
     if (!searchInput || !currentGroupId) return;
@@ -5985,11 +5985,11 @@ async function performGroupSearch() {
     const query = searchInput.value.trim();
     currentGroupSearchQuery = query;
     
-    // 加载搜索结果
+    // Load search results
     await loadGroupConversations(currentGroupId, query);
 }
 
-// 清除分组搜索
+// Clear group search
 function clearGroupSearch() {
     const searchInput = document.getElementById('group-search-input');
     const clearBtn = document.getElementById('group-search-clear-btn');
@@ -6003,18 +6003,18 @@ function clearGroupSearch() {
     
     currentGroupSearchQuery = '';
     
-    // 重新加载分组对话（不搜索）
+    // Reload group conversations (without search)
     if (currentGroupId) {
         loadGroupConversations(currentGroupId, '');
     }
 }
 
-// 初始化时加载分组
+// Load groups on initialization
 document.addEventListener('DOMContentLoaded', async () => {
     await loadGroups();
-    // 替换原来的loadConversations调用
+    // Replace original loadConversations call
     if (typeof loadConversations === 'function') {
-        // 保留原函数，但使用新函数
+        // Retain original function but use new one
         const originalLoad = loadConversations;
         loadConversations = function(...args) {
             loadConversationsWithGroups(...args);
@@ -6022,14 +6022,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     await loadConversationsWithGroups();
     
-    // 添加页面焦点时自动刷新对话列表的功能
-    // 这样当通过OpenAPI创建对话后，切换回页面时能自动看到新对话
+    // Add auto-refresh conversation list on page focus
+    // So when a conversation is created via OpenAPI, switching back to the page shows the new conversation
     let lastFocusTime = Date.now();
-    const CONVERSATION_REFRESH_INTERVAL = 30000; // 30秒内最多刷新一次，避免过于频繁
+    const CONVERSATION_REFRESH_INTERVAL = 30000; // Refresh at most once per 30 seconds to avoid excessive frequency
     
     window.addEventListener('focus', () => {
         const now = Date.now();
-        // 如果距离上次刷新超过30秒，才刷新对话列表
+        // Only refresh conversation list if more than 30 seconds have passed since last refresh
         if (now - lastFocusTime > CONVERSATION_REFRESH_INTERVAL) {
             lastFocusTime = now;
             if (typeof loadConversationsWithGroups === 'function') {
@@ -6038,10 +6038,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     });
     
-    // 监听页面可见性变化（当用户切换标签页回来时）
+    // Listen for page visibility changes (when user switches back to the tab)
     document.addEventListener('visibilitychange', () => {
         if (!document.hidden) {
-            // 页面变为可见时，检查是否需要刷新
+            // When page becomes visible, check if refresh is needed
             const now = Date.now();
             if (now - lastFocusTime > CONVERSATION_REFRESH_INTERVAL) {
                 lastFocusTime = now;
