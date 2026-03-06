@@ -194,14 +194,25 @@ func (pm *PersistentMemory) StoreFull(key, value string, category MemoryCategory
 	now := time.Now().UTC()
 
 	// Check for existing entry.
-	// When entity is provided, upsert by (key, entity) to avoid cross-entity overwrite.
-	// When entity is empty, keep backward-compatible behavior for non-entity keys.
+	// Upsert scope rules:
+	//  1) entity set: (key, entity)
+	//  2) no entity + conversation set: (key, conversation_id, empty entity)
+	//  3) no entity + no conversation: (key, category, empty entity, empty conversation)
+	// This avoids cross-context overwrites for generic keys.
 	var existingID string
 	var err error
 	if strings.TrimSpace(entity) != "" {
 		err = pm.db.QueryRow("SELECT id FROM agent_memories WHERE key = ? AND entity = ? LIMIT 1", key, entity).Scan(&existingID)
+	} else if strings.TrimSpace(conversationID) != "" {
+		err = pm.db.QueryRow(
+			"SELECT id FROM agent_memories WHERE key = ? AND conversation_id = ? AND (entity = '' OR entity IS NULL) LIMIT 1",
+			key, conversationID,
+		).Scan(&existingID)
 	} else {
-		err = pm.db.QueryRow("SELECT id FROM agent_memories WHERE key = ? AND (entity = '' OR entity IS NULL) LIMIT 1", key).Scan(&existingID)
+		err = pm.db.QueryRow(
+			"SELECT id FROM agent_memories WHERE key = ? AND category = ? AND (conversation_id = '' OR conversation_id IS NULL) AND (entity = '' OR entity IS NULL) LIMIT 1",
+			key, string(category),
+		).Scan(&existingID)
 	}
 	if err != nil && err != sql.ErrNoRows {
 		return nil, fmt.Errorf("query existing memory: %w", err)
@@ -407,20 +418,24 @@ func (pm *PersistentMemory) List(category MemoryCategory, limit int) ([]*MemoryE
 	excludeStatuses := []interface{}{string(MemoryStatusDisproven), string(MemoryStatusFalsePositive)}
 
 	if category != "" {
+		args := []interface{}{string(category)}
+		args = append(args, excludeStatuses...)
+		args = append(args, limit)
 		rows, err = pm.db.Query(
 			`SELECT id, key, value, category, status, entity, confidence, conversation_id, created_at, updated_at
 			 FROM agent_memories
 			 WHERE category = ? AND status NOT IN (?, ?)
 			 ORDER BY updated_at DESC LIMIT ?`,
-			append([]interface{}{string(category)}, append(excludeStatuses, limit)...)...,
+			args...,
 		)
 	} else {
+		args := append(excludeStatuses, limit)
 		rows, err = pm.db.Query(
 			`SELECT id, key, value, category, status, entity, confidence, conversation_id, created_at, updated_at
 			 FROM agent_memories
 			 WHERE status NOT IN (?, ?)
 			 ORDER BY updated_at DESC LIMIT ?`,
-			append(excludeStatuses, limit)...,
+			args...,
 		)
 	}
 
@@ -654,7 +669,7 @@ func (pm *PersistentMemory) Delete(id string) error {
 // and entity, highlights status, and separates dismissed findings from active ones.
 // Returns an empty string when there are no memories.
 func (pm *PersistentMemory) BuildContextBlock() string {
-	entries, err := pm.ListAll("", 200)
+	entries, err := pm.ListAll("", 120)
 	if err != nil || len(entries) == 0 {
 		return ""
 	}
@@ -676,7 +691,7 @@ func (pm *PersistentMemory) BuildContextBlock() string {
 
 	var sb strings.Builder
 	sb.WriteString("<persistent_memory>\n")
-	sb.WriteString("The following facts were remembered from previous sessions or earlier in this session:\n")
+	sb.WriteString("Prior memory relevant to ongoing tasks (most recent first):\n")
 
 	// ── Active / Confirmed entries ──────────────────────────────────────────
 	// Primary categories to show prominently.
@@ -711,7 +726,12 @@ func (pm *PersistentMemory) BuildContextBlock() string {
 			continue
 		}
 		sb.WriteString(fmt.Sprintf("\n[%s]\n", strings.ToUpper(string(cat))))
-		for _, item := range items {
+		maxPerCategory := 8
+		if len(items) < maxPerCategory {
+			maxPerCategory = len(items)
+		}
+		for i := 0; i < maxPerCategory; i++ {
+			item := items[i]
 			statusTag := ""
 			if item.Status == MemoryStatusConfirmed {
 				statusTag = " ✓"
@@ -724,16 +744,27 @@ func (pm *PersistentMemory) BuildContextBlock() string {
 			if item.Entity != "" {
 				entityTag = fmt.Sprintf(" [entity:%s]", item.Entity)
 			}
-			sb.WriteString(fmt.Sprintf("  • %s: %s%s%s%s  (id:%s)\n",
-				item.Key, item.Value, statusTag, confidenceTag, entityTag, item.ID))
+			sb.WriteString(fmt.Sprintf("  • %s: %s%s%s%s\n",
+				item.Key, item.Value, statusTag, confidenceTag, entityTag))
+		}
+		if len(items) > maxPerCategory {
+			sb.WriteString(fmt.Sprintf("  • ... %d more %s entries\n", len(items)-maxPerCategory, cat))
 		}
 	}
 
 	// ── Tool runs: compact list to prevent repeated execution ───────────────
 	if len(toolRunEntries) > 0 {
 		sb.WriteString("\n[COMPLETED TOOL RUNS — do not repeat these unless necessary]\n")
-		for _, item := range toolRunEntries {
-			sb.WriteString(fmt.Sprintf("  • %s: %s  (id:%s)\n", item.Key, item.Value, item.ID))
+		maxToolRuns := 12
+		if len(toolRunEntries) < maxToolRuns {
+			maxToolRuns = len(toolRunEntries)
+		}
+		for i := 0; i < maxToolRuns; i++ {
+			item := toolRunEntries[i]
+			sb.WriteString(fmt.Sprintf("  • %s: %s\n", item.Key, item.Value))
+		}
+		if len(toolRunEntries) > maxToolRuns {
+			sb.WriteString(fmt.Sprintf("  • ... %d more completed tool runs\n", len(toolRunEntries)-maxToolRuns))
 		}
 	}
 
@@ -746,10 +777,15 @@ func (pm *PersistentMemory) BuildContextBlock() string {
 		sort.Strings(entities)
 
 		sb.WriteString("\n[ENTITY SNAPSHOT]\n")
-		for _, entity := range entities {
+		maxEntities := 12
+		if len(entities) < maxEntities {
+			maxEntities = len(entities)
+		}
+		for i := 0; i < maxEntities; i++ {
+			entity := entities[i]
 			entityItems := byEntityActive[entity]
 			sb.WriteString(fmt.Sprintf("  • %s:\n", entity))
-			limit := 3
+			limit := 2
 			if len(entityItems) < limit {
 				limit = len(entityItems)
 			}
@@ -761,18 +797,29 @@ func (pm *PersistentMemory) BuildContextBlock() string {
 				sb.WriteString(fmt.Sprintf("      - ... %d more entries\n", len(entityItems)-limit))
 			}
 		}
+		if len(entities) > maxEntities {
+			sb.WriteString(fmt.Sprintf("  • ... %d more entities\n", len(entities)-maxEntities))
+		}
 	}
 
 	// ── Dismissed / disproven findings ──────────────────────────────────────
 	if len(dismissed) > 0 {
 		sb.WriteString("\n[DISMISSED FINDINGS — false positives and disproven entries, do not re-investigate]\n")
-		for _, item := range dismissed {
+		maxDismissed := 20
+		if len(dismissed) < maxDismissed {
+			maxDismissed = len(dismissed)
+		}
+		for i := 0; i < maxDismissed; i++ {
+			item := dismissed[i]
 			statusLabel := "disproven"
 			if item.Status == MemoryStatusFalsePositive {
 				statusLabel = "false-positive"
 			}
-			sb.WriteString(fmt.Sprintf("  ✗ [%s][%s] %s: %s  (id:%s)\n",
-				statusLabel, string(item.Category), item.Key, item.Value, item.ID))
+			sb.WriteString(fmt.Sprintf("  ✗ [%s][%s] %s: %s\n",
+				statusLabel, string(item.Category), item.Key, item.Value))
+		}
+		if len(dismissed) > maxDismissed {
+			sb.WriteString(fmt.Sprintf("  ✗ ... %d more dismissed entries\n", len(dismissed)-maxDismissed))
 		}
 	}
 
