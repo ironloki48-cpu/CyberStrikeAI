@@ -11,7 +11,7 @@ import (
 	"github.com/creack/pty"
 )
 
-const ptyCols = 120
+const ptyCols = 256
 const ptyRows = 40
 
 // runCommandStreamImpl 在 Unix 下用 PTY 执行，使 ping 等命令按终端宽度排版（isatty 为真）

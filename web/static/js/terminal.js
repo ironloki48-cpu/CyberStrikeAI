@@ -100,7 +100,22 @@
 
             ws.onmessage = function (ev) {
                 if (!tab.term) return;
-                tab.term.write(ev.data);
+                // 处理二进制消息和文本消息
+                if (ev.data instanceof ArrayBuffer) {
+                    var decoder = new TextDecoder('utf-8');
+                    tab.term.write(decoder.decode(ev.data));
+                } else if (ev.data instanceof Blob) {
+                    // Blob 类型，需要异步读取
+                    var reader = new FileReader();
+                    reader.onload = function () {
+                        var decoder = new TextDecoder('utf-8');
+                        tab.term.write(decoder.decode(reader.result));
+                    };
+                    reader.readAsArrayBuffer(ev.data);
+                } else {
+                    // 字符串类型
+                    tab.term.write(ev.data);
+                }
             };
 
             ws.onclose = function () {

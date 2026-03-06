@@ -96,7 +96,7 @@ func (h *TerminalHandler) RunCommand(c *gin.Context) {
 	} else {
 		cmd = exec.CommandContext(ctx, shell, "-c", cmdStr)
 		// 无 TTY 时设置 COLUMNS/TERM，使 ping 等工具的 usage 排版与真实终端一致
-		cmd.Env = append(os.Environ(), "COLUMNS=120", "LINES=40", "TERM=xterm-256color")
+		cmd.Env = append(os.Environ(), "COLUMNS=256", "LINES=40", "TERM=xterm-256color")
 	}
 
 	if req.Cwd != "" {
@@ -218,7 +218,7 @@ func (h *TerminalHandler) RunCommandStream(c *gin.Context) {
 		cmd = exec.CommandContext(ctx, "cmd", "/c", cmdStr)
 	} else {
 		cmd = exec.CommandContext(ctx, shell, "-c", cmdStr)
-		cmd.Env = append(os.Environ(), "COLUMNS=120", "LINES=40", "TERM=xterm-256color")
+		cmd.Env = append(os.Environ(), "COLUMNS=256", "LINES=40", "TERM=xterm-256color")
 	}
 	if req.Cwd != "" {
 		absCwd, err := filepath.Abs(req.Cwd)
