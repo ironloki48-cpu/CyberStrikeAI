@@ -5,8 +5,6 @@
 # CyberStrikeAI
 
 
-[Chinese](README_CN.md) | [English](README.md)
-
 CyberStrikeAI is an **AI-native security testing platform** built in Go. It integrates 100+ security tools, an intelligent orchestration engine, role-based testing with predefined security roles, a skills system with specialized testing skills, and comprehensive lifecycle management capabilities. Through native MCP protocol and AI agents, it enables end-to-end automation from conversational commands to vulnerability discovery, attack-chain analysis, knowledge retrieval, and result visualization—delivering an auditable, traceable, and collaborative testing environment for security teams.
 
 
@@ -669,25 +667,6 @@ Use external Burp-based MCP server for authenticated traffic replay, then pass f
 Compress the 5 MB nuclei report, summarize critical CVEs, and attach the artifact to the conversation.
 Build an attack chain for the latest engagement and export the node list with severity >= high.
 ```
-
-## 404Starlink 
-
-<img src="./images/404StarLinkLogo.png" width="30%">
-
-CyberStrikeAI has joined [404Starlink](https://github.com/knownsec/404StarLink)
-
-## TCH Top-Ranked Intelligent Pentest Project  
-<div align="left">
-  <a href="https://zc.tencent.com/competition/competitionHackathon?code=cha004" target="_blank">
-    <img src="./images/tch.png" alt="TCH Top-Ranked Intelligent Pentest Project" width="30%">
-  </a>
-</div>
-
-## Stargazers over time
-![Stargazers over time](https://starchart.cc/cybersecua/CyberStrikeAI.svg)
-
-
----
 
 ## ⚠️ Disclaimer
 
