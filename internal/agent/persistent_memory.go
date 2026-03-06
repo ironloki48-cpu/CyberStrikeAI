@@ -113,19 +113,46 @@ func (pm *PersistentMemory) migrate() error {
 		return err
 	}
 
-	// Add new columns if they don't exist yet (safe for existing databases).
-	alterStatements := []string{
-		`ALTER TABLE agent_memories ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`,
-		`ALTER TABLE agent_memories ADD COLUMN entity TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE agent_memories ADD COLUMN confidence TEXT NOT NULL DEFAULT 'medium'`,
+	// Query existing columns first to keep migration idempotent without relying
+	// on driver-specific error message text.
+	existingColumns := make(map[string]struct{})
+	columnRows, err := pm.db.Query(`PRAGMA table_info('agent_memories')`)
+	if err != nil {
+		return fmt.Errorf("query table info for agent_memories: %w", err)
 	}
-	for _, stmt := range alterStatements {
-		_, err := pm.db.Exec(stmt)
-		if err != nil {
-			// SQLite returns an error if column already exists; ignore it.
-			if !strings.Contains(err.Error(), "duplicate column name") {
-				pm.logger.Warn("schema migration warning", zap.String("stmt", stmt), zap.Error(err))
-			}
+	for columnRows.Next() {
+		var (
+			cid        int
+			name       string
+			typ        string
+			notNull    int
+			defaultVal sql.NullString
+			pk         int
+		)
+		if scanErr := columnRows.Scan(&cid, &name, &typ, &notNull, &defaultVal, &pk); scanErr != nil {
+			_ = columnRows.Close()
+			return fmt.Errorf("scan table info for agent_memories: %w", scanErr)
+		}
+		existingColumns[strings.ToLower(strings.TrimSpace(name))] = struct{}{}
+	}
+	if rowsErr := columnRows.Err(); rowsErr != nil {
+		_ = columnRows.Close()
+		return fmt.Errorf("iterate table info for agent_memories: %w", rowsErr)
+	}
+	_ = columnRows.Close()
+
+	// Add newly introduced columns only when missing.
+	requiredColumns := map[string]string{
+		"status":     `ALTER TABLE agent_memories ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`,
+		"entity":     `ALTER TABLE agent_memories ADD COLUMN entity TEXT NOT NULL DEFAULT ''`,
+		"confidence": `ALTER TABLE agent_memories ADD COLUMN confidence TEXT NOT NULL DEFAULT 'medium'`,
+	}
+	for columnName, stmt := range requiredColumns {
+		if _, exists := existingColumns[columnName]; exists {
+			continue
+		}
+		if _, execErr := pm.db.Exec(stmt); execErr != nil {
+			pm.logger.Warn("schema migration warning", zap.String("stmt", stmt), zap.Error(execErr))
 		}
 	}
 
