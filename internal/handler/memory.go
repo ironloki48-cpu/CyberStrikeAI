@@ -218,9 +218,9 @@ func (h *MemoryHandler) CreateMemory(c *gin.Context) {
 		return
 	}
 
-	cat := agent.MemoryCategory(strings.TrimSpace(req.Category))
-	if cat == "" {
-		cat = agent.MemoryCategoryFact
+	cat := agent.MemoryCategoryFact
+	if strings.TrimSpace(req.Category) != "" {
+		cat = agent.MemoryCategory(strings.TrimSpace(req.Category))
 	}
 	if _, ok := validMemoryCategories[cat]; !ok {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid category"})
@@ -265,9 +265,9 @@ func (h *MemoryHandler) UpdateMemory(c *gin.Context) {
 		return
 	}
 
-	cat := agent.MemoryCategory(strings.TrimSpace(req.Category))
-	if cat == "" {
-		cat = agent.MemoryCategoryFact
+	cat := agent.MemoryCategoryFact
+	if strings.TrimSpace(req.Category) != "" {
+		cat = agent.MemoryCategory(strings.TrimSpace(req.Category))
 	}
 	if _, ok := validMemoryCategories[cat]; !ok {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid category"})
