@@ -236,6 +236,14 @@ install_go_tool "github.com/hakluke/hakrawler" hakrawler
 install_go_tool "github.com/jaeles-project/jaeles" jaeles
 install_go_tool "github.com/aquasecurity/kube-bench" kube-bench
 
+if command -v nuclei >/dev/null 2>&1; then
+  mkdir -p "$WORK_DIR/nuclei-templates"
+  # Keep an isolated local template store so scans are reproducible and do not
+  # depend on a mutable default home directory.
+  nuclei -ut -ud "$WORK_DIR/nuclei-templates" >/dev/null 2>&1 || true
+  ok "updated official nuclei templates at $WORK_DIR/nuclei-templates"
+fi
+
 log "Installing from git repos / scripts"
 install_git_script_symlink "https://github.com/maurosoria/dirsearch.git" "$WORK_DIR/dirsearch" "dirsearch.py" "dirsearch"
 install_git_script_symlink "https://github.com/elceef/dnstwist.git" "$WORK_DIR/dnstwist" "dnstwist.py" "dnstwist" || true
@@ -251,6 +259,10 @@ else
 fi
 if [[ -d "$WORK_DIR/bitrix-nuclei-templates" ]]; then
   ok "installed bitrix nuclei templates at $WORK_DIR/bitrix-nuclei-templates"
+  mkdir -p "$WORK_DIR/nuclei-templates/custom"
+  rm -rf "$WORK_DIR/nuclei-templates/custom/bitrix"
+  ln -s "$WORK_DIR/bitrix-nuclei-templates" "$WORK_DIR/nuclei-templates/custom/bitrix" || true
+  ok "linked bitrix templates into $WORK_DIR/nuclei-templates/custom/bitrix"
 fi
 
 if [[ ! -d "$WORK_DIR/DeBix/.git" ]]; then

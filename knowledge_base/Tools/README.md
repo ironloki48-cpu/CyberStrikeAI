@@ -4,6 +4,9 @@ This directory is auto-generated from `tools/*.yaml` and provides retrieval-frie
 
 Total tools documented: **112**
 
+Additional strategy guides:
+- [Nuclei Template Strategy Guide](./Nuclei%20Template%20Strategy%20Guide.md)
+
 | Tool | Enabled | Command | Doc |
 |---|---|---|---|
 | `amass` | `true` | `amass` | [amass.md](./amass.md) |

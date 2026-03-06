@@ -266,6 +266,51 @@ func TestPaginateLines(t *testing.T) {
 	}
 }
 
+func TestSanitizeFierceArgs_RemovesOrphanListFlags(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    []string
+		expected []string
+		changed  bool
+	}{
+		{
+			name:     "orphan subdomains removed",
+			input:    []string{"--domain", "example.com", "--subdomains"},
+			expected: []string{"--domain", "example.com"},
+			changed:  true,
+		},
+		{
+			name:     "orphan dns-servers removed",
+			input:    []string{"--domain", "example.com", "--dns-servers", "--tcp"},
+			expected: []string{"--domain", "example.com", "--tcp"},
+			changed:  true,
+		},
+		{
+			name:     "valid list flags kept",
+			input:    []string{"--domain", "example.com", "--subdomains", "www", "--dns-servers", "8.8.8.8"},
+			expected: []string{"--domain", "example.com", "--subdomains", "www", "--dns-servers", "8.8.8.8"},
+			changed:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, changed := sanitizeFierceArgs(tt.input)
+			if changed != tt.changed {
+				t.Fatalf("changed mismatch. expected=%v got=%v", tt.changed, changed)
+			}
+			if len(got) != len(tt.expected) {
+				t.Fatalf("length mismatch. expected=%d got=%d args=%v", len(tt.expected), len(got), got)
+			}
+			for i := range tt.expected {
+				if got[i] != tt.expected[i] {
+					t.Fatalf("arg[%d] mismatch. expected=%q got=%q", i, tt.expected[i], got[i])
+				}
+			}
+		})
+	}
+}
+
 func TestBuildCommandArgs_NmapEmptyPortsDoesNotEmitBarePortFlag(t *testing.T) {
 	executor, _ := setupTestExecutor(t)
 

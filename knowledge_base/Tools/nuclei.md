@@ -23,6 +23,21 @@ Nuclei is a template-based fast vulnerability scanner that uses community-mainta
 - Penetration testing
 - Vulnerability verification
 
+## Installed Template Packs
+- Official templates: `/opt/cyberstrike-tools/nuclei-templates`
+- Bitrix pack: `/opt/cyberstrike-tools/bitrix-nuclei-templates`
+- Bitrix symlink under official tree: `/opt/cyberstrike-tools/nuclei-templates/custom/bitrix`
+
+## Template Selection Quick Rules
+- Use official templates for baseline posture and broad CVE checks.
+- Use `-tags` and `-s` to reduce noise before widening scan scope.
+- Use `-pt` to constrain protocol classes (for example `http`, `dns`, `ssl`).
+- Use Bitrix templates only after confirming Bitrix fingerprints/endpoints.
+- Prefer workflows (`-w`) or `-as` for structured phased coverage.
+
+See the comprehensive selection matrix:
+- [Nuclei Template Strategy Guide](./Nuclei%20Template%20Strategy%20Guide.md)
+
 ## Parameters
 ### `target`
 - Type: `string`

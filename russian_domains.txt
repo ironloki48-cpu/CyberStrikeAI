@@ -1,0 +1,10 @@
+example.ru
+test.ru
+demo.ru
+shop.ru
+store.ru
+market.ru
+online.ru
+web.ru
+site.ru
+portal.ru

@@ -22,6 +22,19 @@ description: |
   - If installed via CyberStrike installer script, Bitrix-focused templates are available at:
     `/opt/cyberstrike-tools/bitrix-nuclei-templates`
   - Run with `-t /opt/cyberstrike-tools/bitrix-nuclei-templates` to execute this pack.
+
+  **Installed Template Sources (CyberStrike defaults):**
+  - Official ProjectDiscovery templates:
+    `/opt/cyberstrike-tools/nuclei-templates`
+  - Bitrix community templates:
+    `/opt/cyberstrike-tools/bitrix-nuclei-templates`
+    (also linked as `/opt/cyberstrike-tools/nuclei-templates/custom/bitrix`)
+
+  **Model Guidance:**
+  - Start narrow: use `-tags`, `-s`, and `-pt` filters before full template sweeps.
+  - Use official templates for broad baseline checks and CVE coverage.
+  - Add Bitrix templates only when target technology is confirmed as Bitrix/Bitrix24.
+  - Prefer workflows (`-w`) or `-as` for phased scans instead of unfiltered all-template runs.
 parameters:
   - name: "target"
     type: "string"

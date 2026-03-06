@@ -1,0 +1,14 @@
+-e api
+admin
+login
+config
+backup
+database
+wp-admin
+wp-content
+wp-includes
+robots.txt
+sitemap.xml
+.git
+.htaccess
+web.config

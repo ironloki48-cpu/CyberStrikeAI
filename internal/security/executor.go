@@ -585,6 +585,16 @@ func (e *Executor) buildCommandArgs(toolName string, toolConfig *config.ToolConf
 			}
 			cmdArgs = sanitized
 		}
+		if toolName == "fierce" {
+			sanitized, changed := sanitizeFierceArgs(cmdArgs)
+			if changed {
+				e.logger.Warn("sanitized fierce orphan list flags",
+					zap.Strings("originalArgs", cmdArgs),
+					zap.Strings("sanitizedArgs", sanitized),
+				)
+			}
+			cmdArgs = sanitized
+		}
 
 		return cmdArgs
 	}
@@ -815,6 +825,86 @@ func sanitizeFeroxbusterArgs(args []string) ([]string, bool) {
 	}
 
 	return sanitized, true
+}
+
+// sanitizeFierceArgs removes fierce list-style flags when they have no value.
+// Example invalid pattern: "--subdomains" with no following token.
+func sanitizeFierceArgs(args []string) ([]string, bool) {
+	requiresValue := map[string]struct{}{
+		"--domain":         {},
+		"--traverse":       {},
+		"--range":          {},
+		"--delay":          {},
+		"--subdomain-file": {},
+		"--dns-file":       {},
+	}
+	requiresAtLeastOneValue := map[string]struct{}{
+		"--subdomains":  {},
+		"--dns-servers": {},
+		"--search":      {},
+	}
+
+	sanitized := make([]string, 0, len(args))
+	changed := false
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+
+		// Handle "--flag=value" forms; if value is empty, drop the flag.
+		if strings.Contains(arg, "=") && strings.HasPrefix(arg, "--") {
+			parts := strings.SplitN(arg, "=", 2)
+			if len(parts) == 2 {
+				key := parts[0]
+				val := strings.TrimSpace(parts[1])
+				if _, ok := requiresValue[key]; ok && val == "" {
+					changed = true
+					continue
+				}
+				if _, ok := requiresAtLeastOneValue[key]; ok && val == "" {
+					changed = true
+					continue
+				}
+			}
+			sanitized = append(sanitized, arg)
+			continue
+		}
+
+		if _, ok := requiresValue[arg]; ok {
+			// Needs exactly one following value.
+			if i+1 >= len(args) {
+				changed = true
+				continue
+			}
+			next := strings.TrimSpace(args[i+1])
+			if next == "" || strings.HasPrefix(next, "--") {
+				changed = true
+				continue
+			}
+			sanitized = append(sanitized, arg, args[i+1])
+			i++
+			continue
+		}
+
+		if _, ok := requiresAtLeastOneValue[arg]; ok {
+			// Needs at least one following value token.
+			if i+1 >= len(args) {
+				changed = true
+				continue
+			}
+			next := strings.TrimSpace(args[i+1])
+			if next == "" || strings.HasPrefix(next, "--") {
+				changed = true
+				continue
+			}
+			sanitized = append(sanitized, arg, args[i+1])
+			i++
+			continue
+		}
+
+		sanitized = append(sanitized, arg)
+	}
+
+	return sanitized, changed
 }
 
 // isBackgroundCommand detects whether a command is a fully background command (has & at the end, but not inside quotes)
