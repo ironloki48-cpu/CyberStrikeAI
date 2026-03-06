@@ -473,7 +473,7 @@ func (a *Agent) AgentLoopWithProgress(ctx context.Context, userInput string, his
 		_, _ = pm.Store(key, trimmed, MemoryCategoryToolRun, conversationID)
 	}
 
-	storeToolResultMemory := func(toolName, executionID, result string) {
+	storeToolResultMemory := func(toolName, executionID, toolCallID, status, result string, eventAt time.Time) {
 		if conversationID == "" || result == "" {
 			return
 		}
@@ -488,14 +488,10 @@ func (a *Agent) AgentLoopWithProgress(ctx context.Context, userInput string, his
 			trimmed = trimmed[:2000] + "...[truncated]"
 		}
 		cat := classifyToolResult(toolName, trimmed)
-		key := fmt.Sprintf("tool_result:%s", executionID)
-		if executionID == "" {
-			key = fmt.Sprintf("tool_run:%s:%d", toolName, time.Now().UnixNano())
-		}
-		_, _ = pm.StoreFull(key, fmt.Sprintf("tool=%s result_preview=%s", toolName, trimmed),
+		key := buildToolEventMemoryKey(executionID, toolName, toolCallID, status, eventAt)
+		_, _ = pm.StoreFull(key, fmt.Sprintf("tool=%s status=%s result_preview=%s", toolName, status, trimmed),
 			cat, conversationID, "", MemoryConfidenceMedium, MemoryStatusActive)
 	}
-	_ = storeToolResultMemory // used below in result storage
 	updateToolPool := func(toolCallID, toolName, status, executionID, resultPreview, errorText string) {
 		if toolCallID == "" {
 			return
@@ -540,6 +536,17 @@ func (a *Agent) AgentLoopWithProgress(ctx context.Context, userInput string, his
 			}
 			memKey := buildToolEventMemoryKey(executionID, toolName, toolCallID, status, entry.UpdatedAt)
 			storeToolPoolMemory(memKey, value)
+
+			// Persist tool result snapshot in category-aware memory for later retrieval.
+			resultForMemory := resultPreview
+			if status == "failed" && strings.TrimSpace(errorText) != "" {
+				if strings.TrimSpace(resultForMemory) != "" {
+					resultForMemory = errorText + "\n" + resultForMemory
+				} else {
+					resultForMemory = errorText
+				}
+			}
+			storeToolResultMemory(toolName, executionID, toolCallID, status, resultForMemory, entry.UpdatedAt)
 		}
 	}
 	buildToolPoolContext := func() string {
