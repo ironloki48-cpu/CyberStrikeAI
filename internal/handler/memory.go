@@ -64,6 +64,7 @@ func (h *MemoryHandler) ListMemories(c *gin.Context) {
 	if entity != "" {
 		// Respect category/include_dismissed filters even when entity is provided.
 		entity = strings.TrimSpace(entity)
+		searchLower := strings.ToLower(strings.TrimSpace(search))
 		if includeDismissed {
 			entries, err = h.memory.ListAll(cat, 5000)
 		} else {
@@ -72,11 +73,20 @@ func (h *MemoryHandler) ListMemories(c *gin.Context) {
 		if err == nil {
 			filtered := make([]*agent.MemoryEntry, 0, len(entries))
 			for _, entry := range entries {
-				if strings.EqualFold(strings.TrimSpace(entry.Entity), entity) {
-					filtered = append(filtered, entry)
-					if len(filtered) >= limit {
-						break
+				if !strings.EqualFold(strings.TrimSpace(entry.Entity), entity) {
+					continue
+				}
+				// If search is provided together with entity, apply it as well.
+				if searchLower != "" {
+					keyLower := strings.ToLower(entry.Key)
+					valueLower := strings.ToLower(entry.Value)
+					if !strings.Contains(keyLower, searchLower) && !strings.Contains(valueLower, searchLower) {
+						continue
 					}
+				}
+				filtered = append(filtered, entry)
+				if len(filtered) >= limit {
+					break
 				}
 			}
 			entries = filtered
@@ -311,7 +321,8 @@ func (h *MemoryHandler) DeleteAllMemories(c *gin.Context) {
 	categoryStr := c.Query("category")
 	cat := agent.MemoryCategory(strings.TrimSpace(categoryStr))
 
-	entries, err := h.memory.List(cat, 10000)
+	// Use ListAll so bulk delete truly deletes all entries, including dismissed ones.
+	entries, err := h.memory.ListAll(cat, 10000)
 	if err != nil {
 		h.logger.Error("failed to list memories for bulk delete", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

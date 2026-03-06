@@ -1375,6 +1375,41 @@ var allMemoryCategories = []string{
 	"tool_run", "discovery", "plan",
 }
 
+var allowedMemoryCategories = map[agent.MemoryCategory]struct{}{
+	agent.MemoryCategoryCredential:    {},
+	agent.MemoryCategoryTarget:        {},
+	agent.MemoryCategoryVulnerability: {},
+	agent.MemoryCategoryFact:          {},
+	agent.MemoryCategoryNote:          {},
+	agent.MemoryCategoryToolRun:       {},
+	agent.MemoryCategoryDiscovery:     {},
+	agent.MemoryCategoryPlan:          {},
+}
+
+var allowedMemoryConfidence = map[agent.MemoryConfidence]struct{}{
+	agent.MemoryConfidenceHigh:   {},
+	agent.MemoryConfidenceMedium: {},
+	agent.MemoryConfidenceLow:    {},
+}
+
+func normalizeMemoryCategory(raw string) (agent.MemoryCategory, bool) {
+	cat := agent.MemoryCategory(strings.TrimSpace(raw))
+	if cat == "" {
+		return agent.MemoryCategoryFact, true
+	}
+	_, ok := allowedMemoryCategories[cat]
+	return cat, ok
+}
+
+func normalizeMemoryConfidence(raw string) (agent.MemoryConfidence, bool) {
+	conf := agent.MemoryConfidence(strings.TrimSpace(raw))
+	if conf == "" {
+		return agent.MemoryConfidenceMedium, true
+	}
+	_, ok := allowedMemoryConfidence[conf]
+	return conf, ok
+}
+
 // registerMemoryTools registers all persistent-memory tools on the MCP server.
 func registerMemoryTools(mcpServer *mcp.Server, pm *agent.PersistentMemory, logger *zap.Logger) {
 	// ── store_memory ──────────────────────────────────────────────────────────
@@ -1436,18 +1471,23 @@ Always set entity when the memory is specific to a particular target or host.`,
 				IsError: true,
 			}, nil
 		}
-		cat := agent.MemoryCategory("")
-		if cv, ok := args["category"].(string); ok {
-			cat = agent.MemoryCategory(cv)
-		}
-		if cat == "" {
-			cat = agent.MemoryCategoryFact
+		categoryRaw, _ := args["category"].(string)
+		cat, ok := normalizeMemoryCategory(categoryRaw)
+		if !ok {
+			return &mcp.ToolResult{
+				Content: []mcp.Content{{Type: "text", Text: "Error: invalid category. Must be one of: credential, target, vulnerability, fact, note, tool_run, discovery, plan"}},
+				IsError: true,
+			}, nil
 		}
 		convID, _ := args["conversation_id"].(string)
 		entity, _ := args["entity"].(string)
-		confidence := agent.MemoryConfidenceMedium
-		if cv, ok := args["confidence"].(string); ok && cv != "" {
-			confidence = agent.MemoryConfidence(cv)
+		confidenceRaw, _ := args["confidence"].(string)
+		confidence, ok := normalizeMemoryConfidence(confidenceRaw)
+		if !ok {
+			return &mcp.ToolResult{
+				Content: []mcp.Content{{Type: "text", Text: "Error: invalid confidence. Must be: high, medium, or low"}},
+				IsError: true,
+			}, nil
 		}
 		entry, err := pm.StoreFull(key, value, cat, convID, entity, confidence, agent.MemoryStatusActive)
 		if err != nil {
@@ -1518,6 +1558,7 @@ Always set entity when the memory is specific to a particular target or host.`,
 		// category/include_dismissed semantics (consistent with HTTP API).
 		if entity != "" {
 			entity = strings.TrimSpace(entity)
+			queryLower := strings.ToLower(strings.TrimSpace(query))
 			if includeDismissed {
 				entries, err = pm.ListAll(cat, 5000)
 			} else {
@@ -1526,11 +1567,19 @@ Always set entity when the memory is specific to a particular target or host.`,
 			if err == nil {
 				filtered := make([]*agent.MemoryEntry, 0, len(entries))
 				for _, entry := range entries {
-					if strings.EqualFold(strings.TrimSpace(entry.Entity), entity) {
-						filtered = append(filtered, entry)
-						if len(filtered) >= limit {
-							break
+					if !strings.EqualFold(strings.TrimSpace(entry.Entity), entity) {
+						continue
+					}
+					if queryLower != "" {
+						keyLower := strings.ToLower(entry.Key)
+						valueLower := strings.ToLower(entry.Value)
+						if !strings.Contains(keyLower, queryLower) && !strings.Contains(valueLower, queryLower) {
+							continue
 						}
+					}
+					filtered = append(filtered, entry)
+					if len(filtered) >= limit {
+						break
 					}
 				}
 				entries = filtered
