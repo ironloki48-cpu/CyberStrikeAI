@@ -685,6 +685,25 @@ function handleStreamEvent(event, progressElement, progressId,
             break;
             
         case 'error':
+            if (event.data && event.data.errorType === 'task_already_running') {
+                addTimelineItem(timeline, 'progress', {
+                    title: 'ℹ️ Task already running',
+                    message: event.message,
+                    data: event.data
+                });
+
+                const runningTitle = document.querySelector(`#${progressId} .progress-title`);
+                if (runningTitle) {
+                    runningTitle.textContent = '⏳ Existing task is still running';
+                }
+
+                if (progressTaskState.has(progressId)) {
+                    finalizeProgressTask(progressId, 'Already running');
+                }
+                loadActiveTasks();
+                break;
+            }
+
             // ShowError
             addTimelineItem(timeline, 'error', {
                 title: '❌ Error',

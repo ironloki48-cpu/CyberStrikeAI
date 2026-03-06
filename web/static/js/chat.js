@@ -1,4 +1,5 @@
 let currentConversationId = null;
+let activeChatStreamController = null;
 
 // @ mention related state
 let mentionTools = [];
@@ -112,6 +113,11 @@ function adjustTextareaHeight(textarea) {
 
 // Send message
 async function sendMessage() {
+    if (activeChatStreamController) {
+        addMessage('system', 'A task is already running in this session. Please wait for it to finish or stop it from Active Tasks.');
+        return;
+    }
+
     const input = document.getElementById('chat-input');
     let message = input.value.trim();
     const hasAttachments = chatAttachments && chatAttachments.length > 0;
@@ -175,6 +181,10 @@ async function sendMessage() {
     let assistantMessageId = null;
     let mcpExecutionIds = [];
     
+    setChatInputSendingState(true);
+    const streamController = new AbortController();
+    activeChatStreamController = streamController;
+
     try {
         const response = await apiFetch('/api/agent-loop/stream', {
             method: 'POST',
@@ -182,6 +192,7 @@ async function sendMessage() {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify(body),
+            signal: streamController.signal,
         });
         
         if (!response.ok) {
@@ -197,38 +208,28 @@ async function sendMessage() {
             if (done) break;
             
             buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop(); // Retain last incomplete line
-            
-            for (const line of lines) {
-                if (line.startsWith('data: ')) {
-                    try {
-                        const eventData = JSON.parse(line.slice(6));
-                        handleStreamEvent(eventData, progressElement, progressId, 
-                                         () => assistantMessageId, (id) => { assistantMessageId = id; },
-                                         () => mcpExecutionIds, (ids) => { mcpExecutionIds = ids; });
-                    } catch (e) {
-                        console.error('Failed to parse event data:', e, line);
-                    }
-                }
-            }
+            buffer = processSSEBuffer(
+                buffer,
+                progressElement,
+                progressId,
+                () => assistantMessageId,
+                (id) => { assistantMessageId = id; },
+                () => mcpExecutionIds,
+                (ids) => { mcpExecutionIds = ids; }
+            );
         }
         
         // Handle remaining buffer
         if (buffer.trim()) {
-            const lines = buffer.split('\n');
-            for (const line of lines) {
-                if (line.startsWith('data: ')) {
-                    try {
-                        const eventData = JSON.parse(line.slice(6));
-                        handleStreamEvent(eventData, progressElement, progressId,
-                                         () => assistantMessageId, (id) => { assistantMessageId = id; },
-                                         () => mcpExecutionIds, (ids) => { mcpExecutionIds = ids; });
-                    } catch (e) {
-                        console.error('Failed to parse event data:', e, line);
-                    }
-                }
-            }
+            processSSEBuffer(
+                buffer + '\n',
+                progressElement,
+                progressId,
+                () => assistantMessageId,
+                (id) => { assistantMessageId = id; },
+                () => mcpExecutionIds,
+                (ids) => { mcpExecutionIds = ids; }
+            );
         }
         
         // After successful message send, ensure draft is cleared again
@@ -243,7 +244,45 @@ async function sendMessage() {
         removeMessage(progressId);
         addMessage('system', 'Error: ' + error.message);
         // On send failure, do not restore draft, as the message is already shown in the chat
+    } finally {
+        activeChatStreamController = null;
+        setChatInputSendingState(false);
     }
+}
+
+function setChatInputSendingState(isSending) {
+    const sendButton = document.querySelector('#chat-input-container .send-btn');
+    if (sendButton) {
+        sendButton.disabled = isSending;
+        sendButton.classList.toggle('disabled', isSending);
+        sendButton.title = isSending ? 'Task is running...' : '';
+    }
+}
+
+function processSSEBuffer(buffer, progressElement, progressId, getAssistantId, setAssistantId, getMcpIds, setMcpIds) {
+    const lines = buffer.split(/\r?\n/);
+    const remainder = lines.pop();
+
+    for (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (!line.startsWith('data:')) {
+            continue;
+        }
+
+        const payload = line.slice(5).trim();
+        if (!payload) {
+            continue;
+        }
+
+        try {
+            const eventData = JSON.parse(payload);
+            handleStreamEvent(eventData, progressElement, progressId, getAssistantId, setAssistantId, getMcpIds, setMcpIds);
+        } catch (e) {
+            console.error('Failed to parse event data:', e, line);
+        }
+    }
+
+    return remainder || '';
 }
 
 // ---------- Conversation file upload ----------

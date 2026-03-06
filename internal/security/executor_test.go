@@ -430,3 +430,43 @@ func TestBuildCommandArgs_NmapPortsAndScanTypeOrder(t *testing.T) {
 		}
 	}
 }
+
+func TestSanitizeFeroxbusterArgs_DeduplicateThreads(t *testing.T) {
+	input := []string{
+		"-u", "https://example.com",
+		"-t", "10",
+		"--threads", "50",
+		"-t", "30",
+		"--auto-bail",
+	}
+
+	got, changed := sanitizeFeroxbusterArgs(input)
+	if !changed {
+		t.Fatal("expected feroxbuster args to be sanitized")
+	}
+
+	threadsFlags := 0
+	for _, arg := range got {
+		if arg == "-t" || arg == "--threads" || strings.HasPrefix(arg, "--threads=") {
+			threadsFlags++
+		}
+	}
+	if threadsFlags != 1 {
+		t.Fatalf("expected exactly one thread flag, got %d: %#v", threadsFlags, got)
+	}
+	if !strings.Contains(strings.Join(got, " "), "-t 30") {
+		t.Fatalf("expected to keep last thread setting (-t 30), got: %#v", got)
+	}
+}
+
+func TestSanitizeFeroxbusterArgs_NoChangeOnSingleThreadFlag(t *testing.T) {
+	input := []string{"-u", "https://example.com", "-t", "20", "--auto-bail"}
+	got, changed := sanitizeFeroxbusterArgs(input)
+
+	if changed {
+		t.Fatalf("did not expect sanitization for single thread flag, got: %#v", got)
+	}
+	if strings.Join(input, " ") != strings.Join(got, " ") {
+		t.Fatalf("expected args unchanged, input=%#v got=%#v", input, got)
+	}
+}

@@ -575,6 +575,16 @@ func (e *Executor) buildCommandArgs(toolName string, toolConfig *config.ToolConf
 			}
 			cmdArgs = sanitized
 		}
+		if toolName == "feroxbuster" {
+			sanitized, changed := sanitizeFeroxbusterArgs(cmdArgs)
+			if changed {
+				e.logger.Warn("sanitized feroxbuster duplicate thread flags",
+					zap.Strings("originalArgs", cmdArgs),
+					zap.Strings("sanitizedArgs", sanitized),
+				)
+			}
+			cmdArgs = sanitized
+		}
 
 		return cmdArgs
 	}
@@ -758,6 +768,53 @@ func sanitizeNmapArgs(args []string, isRoot bool) ([]string, bool) {
 	}
 
 	return sanitized, changed
+}
+
+// sanitizeFeroxbusterArgs removes duplicate thread flags (-t/--threads) and keeps only the
+// last occurrence, as feroxbuster forbids specifying --threads multiple times.
+func sanitizeFeroxbusterArgs(args []string) ([]string, bool) {
+	type occ struct {
+		start int
+		end   int
+	}
+
+	occurrences := make([]occ, 0)
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "-t" || arg == "--threads":
+			start := i
+			end := i
+			if i+1 < len(args) {
+				end = i + 1
+				i = end
+			}
+			occurrences = append(occurrences, occ{start: start, end: end})
+		case strings.HasPrefix(arg, "--threads="):
+			occurrences = append(occurrences, occ{start: i, end: i})
+		}
+	}
+
+	if len(occurrences) <= 1 {
+		return args, false
+	}
+
+	remove := make(map[int]struct{}, len(args))
+	for _, o := range occurrences[:len(occurrences)-1] {
+		for i := o.start; i <= o.end; i++ {
+			remove[i] = struct{}{}
+		}
+	}
+
+	sanitized := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		if _, ok := remove[i]; ok {
+			continue
+		}
+		sanitized = append(sanitized, args[i])
+	}
+
+	return sanitized, true
 }
 
 // isBackgroundCommand detects whether a command is a fully background command (has & at the end, but not inside quotes)
