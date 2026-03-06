@@ -262,6 +262,9 @@ function initPage(pageId) {
             if (typeof refreshMonitorPanel === 'function') {
                 refreshMonitorPanel();
             }
+            if (typeof startMonitorAutoRefresh === 'function') {
+                startMonitorAutoRefresh();
+            }
             break;
         case 'mcp-management':
             // Initialize MCP management
@@ -353,6 +356,9 @@ function initPage(pageId) {
     if (pageId !== 'tasks' && typeof cleanupTasksPage === 'function') {
         cleanupTasksPage();
     }
+    if (pageId !== 'mcp-monitor' && typeof stopMonitorAutoRefresh === 'function') {
+        stopMonitorAutoRefresh();
+    }
 }
 
 // Initialize routing after page load
@@ -434,4 +440,3 @@ window.switchPage = switchPage;
 window.toggleSubmenu = toggleSubmenu;
 window.toggleSidebar = toggleSidebar;
 window.currentPage = function() { return currentPage; };
-

@@ -1491,105 +1491,177 @@ async function updateButtonWithToolName(button, executionId, index) {
     }
 }
 
+let mcpDetailPollTimer = null;
+let mcpDetailCurrentExecutionId = null;
+const MCP_RUNNING_STATUSES = new Set(['pending', 'running']);
+const MCP_DETAIL_REFRESH_INTERVAL_MS = 1000;
+
+function stopMCPDetailPolling() {
+    if (mcpDetailPollTimer) {
+        clearInterval(mcpDetailPollTimer);
+        mcpDetailPollTimer = null;
+    }
+}
+
+function formatMCPDetailTime(startTime, endTime) {
+    if (!startTime) {
+        return '—';
+    }
+
+    const start = new Date(startTime);
+    if (Number.isNaN(start.getTime())) {
+        return '—';
+    }
+
+    const finish = endTime ? new Date(endTime) : new Date();
+    const elapsedMs = Math.max(0, finish.getTime() - start.getTime());
+    const elapsedSec = Math.floor(elapsedMs / 1000);
+    const elapsedMin = Math.floor(elapsedSec / 60);
+    const remainSec = elapsedSec % 60;
+
+    const elapsedText = elapsedMin > 0 ? `${elapsedMin}m ${remainSec}s` : `${remainSec}s`;
+    return `${start.toLocaleString('en-US')} (elapsed ${elapsedText})`;
+}
+
+function getToolResultText(content) {
+    if (typeof content === 'string') {
+        return content;
+    }
+    if (Array.isArray(content)) {
+        const texts = content
+            .map(item => (item && typeof item === 'object' && typeof item.text === 'string') ? item.text : '')
+            .filter(Boolean);
+        if (texts.length > 0) {
+            return texts.join('\n\n');
+        }
+    }
+    if (content && typeof content === 'object' && typeof content.text === 'string') {
+        return content.text;
+    }
+    return '';
+}
+
+function renderMCPDetail(exec) {
+    document.getElementById('detail-tool-name').textContent = exec.toolName || 'Unknown';
+    document.getElementById('detail-execution-id').textContent = exec.id || 'N/A';
+
+    const statusEl = document.getElementById('detail-status');
+    const normalizedStatus = (exec.status || 'unknown').toLowerCase();
+    statusEl.textContent = getStatusText(exec.status);
+    statusEl.className = `status-chip status-${normalizedStatus}`;
+
+    document.getElementById('detail-time').textContent = formatMCPDetailTime(exec.startTime, exec.endTime);
+
+    const requestData = {
+        tool: exec.toolName,
+        arguments: exec.arguments
+    };
+    document.getElementById('detail-request').textContent = JSON.stringify(requestData, null, 2);
+
+    const responseElement = document.getElementById('detail-response');
+    const successSection = document.getElementById('detail-success-section');
+    const successElement = document.getElementById('detail-success');
+    const errorSection = document.getElementById('detail-error-section');
+    const errorElement = document.getElementById('detail-error');
+
+    responseElement.className = 'code-block';
+    responseElement.textContent = '';
+    if (successSection && successElement) {
+        successSection.style.display = 'none';
+        successElement.textContent = '';
+    }
+    if (errorSection && errorElement) {
+        errorSection.style.display = 'none';
+        errorElement.textContent = '';
+    }
+
+    const hasResult = !!exec.result;
+    const isRunning = MCP_RUNNING_STATUSES.has(normalizedStatus);
+
+    if (hasResult) {
+        const responseData = {
+            content: exec.result.content,
+            isError: exec.result.isError
+        };
+        responseElement.textContent = JSON.stringify(responseData, null, 2);
+
+        if (exec.result.isError) {
+            responseElement.className = 'code-block error';
+            if (exec.error && errorSection && errorElement) {
+                errorSection.style.display = 'block';
+                errorElement.textContent = exec.error;
+            }
+        } else if (successSection && successElement) {
+            successSection.style.display = 'block';
+            const successText = getToolResultText(exec.result.content) || 'Execution succeeded; no displayable text content returned.';
+            successElement.textContent = successText;
+        }
+    } else if (isRunning) {
+        responseElement.textContent = 'Tool is running. Waiting for realtime output...';
+    } else {
+        responseElement.textContent = 'No response data available';
+    }
+}
+
+async function fetchAndRenderMCPDetail(executionId) {
+    const response = await apiFetch(`/api/monitor/execution/${executionId}`);
+    const exec = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+        throw new Error(exec.error || 'Unknown error');
+    }
+
+    renderMCPDetail(exec);
+    return exec;
+}
+
+function startMCPDetailPolling(executionId) {
+    stopMCPDetailPolling();
+    mcpDetailCurrentExecutionId = executionId;
+
+    mcpDetailPollTimer = setInterval(async () => {
+        const modal = document.getElementById('mcp-detail-modal');
+        if (!modal || modal.style.display !== 'block' || !mcpDetailCurrentExecutionId) {
+            stopMCPDetailPolling();
+            return;
+        }
+
+        try {
+            const exec = await fetchAndRenderMCPDetail(mcpDetailCurrentExecutionId);
+            const status = (exec.status || '').toLowerCase();
+            if (!MCP_RUNNING_STATUSES.has(status)) {
+                stopMCPDetailPolling();
+            }
+        } catch (error) {
+            console.error('Failed to refresh MCP details:', error);
+            stopMCPDetailPolling();
+        }
+    }, MCP_DETAIL_REFRESH_INTERVAL_MS);
+}
+
 // Show MCP call details
 async function showMCPDetail(executionId) {
+    stopMCPDetailPolling();
+    mcpDetailCurrentExecutionId = executionId;
+
     try {
-        const response = await apiFetch(`/api/monitor/execution/${executionId}`);
-        const exec = await response.json();
-        
-        if (response.ok) {
-            // Fill modal content
-            document.getElementById('detail-tool-name').textContent = exec.toolName || 'Unknown';
-            document.getElementById('detail-execution-id').textContent = exec.id || 'N/A';
-            const statusEl = document.getElementById('detail-status');
-            const normalizedStatus = (exec.status || 'unknown').toLowerCase();
-            statusEl.textContent = getStatusText(exec.status);
-            statusEl.className = `status-chip status-${normalizedStatus}`;
-            document.getElementById('detail-time').textContent = exec.startTime
-                ? new Date(exec.startTime).toLocaleString('en-US')
-                : '—';
-            
-            // Request parameters
-            const requestData = {
-                tool: exec.toolName,
-                arguments: exec.arguments
-            };
-            document.getElementById('detail-request').textContent = JSON.stringify(requestData, null, 2);
-            
-            // Response result + success info / error info
-            const responseElement = document.getElementById('detail-response');
-            const successSection = document.getElementById('detail-success-section');
-            const successElement = document.getElementById('detail-success');
-            const errorSection = document.getElementById('detail-error-section');
-            const errorElement = document.getElementById('detail-error');
+        const exec = await fetchAndRenderMCPDetail(executionId);
+        document.getElementById('mcp-detail-modal').style.display = 'block';
 
-            // Reset state
-            responseElement.className = 'code-block';
-            responseElement.textContent = '';
-            if (successSection && successElement) {
-                successSection.style.display = 'none';
-                successElement.textContent = '';
-            }
-            if (errorSection && errorElement) {
-                errorSection.style.display = 'none';
-                errorElement.textContent = '';
-            }
-
-            if (exec.result) {
-                const responseData = {
-                    content: exec.result.content,
-                    isError: exec.result.isError
-                };
-                responseElement.textContent = JSON.stringify(responseData, null, 2);
-
-                if (exec.result.isError) {
-                    // Error scenario: response result highlighted red + error info block
-                    responseElement.className = 'code-block error';
-                    if (exec.error && errorSection && errorElement) {
-                        errorSection.style.display = 'block';
-                        errorElement.textContent = exec.error;
-                    }
-                } else {
-                    // Success scenario: response result stays normal style, success info shown separately
-                    responseElement.className = 'code-block';
-                    if (successSection && successElement) {
-                        successSection.style.display = 'block';
-                        let successText = '';
-                        const content = exec.result.content;
-                        if (typeof content === 'string') {
-                            successText = content;
-                        } else if (Array.isArray(content)) {
-                            const texts = content
-                                .map(item => (item && typeof item === 'object' && typeof item.text === 'string') ? item.text : '')
-                                .filter(Boolean);
-                            if (texts.length > 0) {
-                                successText = texts.join('\n\n');
-                            }
-                        } else if (content && typeof content === 'object' && typeof content.text === 'string') {
-                            successText = content.text;
-                        }
-                        if (!successText) {
-                            successText = 'Execution succeeded; no displayable text content returned.';
-                        }
-                        successElement.textContent = successText;
-                    }
-                }
-            } else {
-                responseElement.textContent = 'No response data available';
-            }
-            
-            // Show modal
-            document.getElementById('mcp-detail-modal').style.display = 'block';
-        } else {
-            alert('Failed to get details: ' + (exec.error || 'Unknown error'));
+        const status = (exec.status || '').toLowerCase();
+        if (MCP_RUNNING_STATUSES.has(status)) {
+            startMCPDetailPolling(executionId);
         }
     } catch (error) {
+        stopMCPDetailPolling();
         alert('Failed to get details: ' + error.message);
     }
 }
 
 // Close MCP detail modal
 function closeMCPDetail() {
+    stopMCPDetailPolling();
+    mcpDetailCurrentExecutionId = null;
     document.getElementById('mcp-detail-modal').style.display = 'none';
 }
 

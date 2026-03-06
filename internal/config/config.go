@@ -119,6 +119,7 @@ type AgentConfig struct {
 	ParallelToolExecution  bool                  `yaml:"parallel_tool_execution" json:"parallel_tool_execution"`   // Execute multiple tool calls concurrently (default true)
 	MaxParallelTools       int                   `yaml:"max_parallel_tools" json:"max_parallel_tools"`             // Maximum concurrent tool calls (0 = unlimited)
 	ToolRetryCount         int                   `yaml:"tool_retry_count" json:"tool_retry_count"`                 // Number of retries on transient tool errors (default 0)
+	ParallelToolWaitSeconds int                  `yaml:"parallel_tool_wait_seconds" json:"parallel_tool_wait_seconds"` // Max wait per parallel tool before deferring (default 45s)
 	TimeAwareness          TimeAwarenessConfig   `yaml:"time_awareness" json:"time_awareness"`                     // Temporal context injection settings
 	Memory                 MemoryConfig          `yaml:"memory" json:"memory"`                                     // Persistent memory settings
 }

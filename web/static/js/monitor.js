@@ -2,6 +2,8 @@ const progressTaskState = new Map();
 let activeTaskInterval = null;
 const ACTIVE_TASK_REFRESH_INTERVAL = 10000; // Check every 10 seconds
 const TASK_FINAL_STATUSES = new Set(['failed', 'timeout', 'cancelled', 'completed']);
+let monitorAutoRefreshInterval = null;
+const MONITOR_AUTO_REFRESH_INTERVAL = 3000;
 
 // Map from tool call ID to DOM element, used to update execution status
 const toolCallStatusMap = new Map();
@@ -540,6 +542,21 @@ function handleStreamEvent(event, progressElement, progressId,
                 expanded: false
             });
             break;
+
+        case 'tool_deferred':
+            // Tool exceeds parallel wait threshold and continues in background.
+            const deferredInfo = event.data || {};
+            const deferredToolName = deferredInfo.toolName || 'Unknown Tool';
+            const deferredToolCallId = deferredInfo.toolCallId || null;
+            if (deferredToolCallId && toolCallStatusMap.has(deferredToolCallId)) {
+                updateToolCallStatus(deferredToolCallId, 'running');
+            }
+            addTimelineItem(timeline, 'progress', {
+                title: `⏳ Tool ${escapeHtml(deferredToolName)} is running in background`,
+                message: event.message,
+                data: deferredInfo
+            });
+            break;
             
         case 'progress':
             // Update progress status
@@ -1044,6 +1061,24 @@ function openMonitorPanel() {
     }
     // Initialize per-page count selector
     initializeMonitorPageSize();
+}
+
+function startMonitorAutoRefresh() {
+    stopMonitorAutoRefresh();
+    monitorAutoRefreshInterval = setInterval(() => {
+        if (typeof currentPage === 'function' && currentPage() !== 'mcp-monitor') {
+            stopMonitorAutoRefresh();
+            return;
+        }
+        refreshMonitorPanel();
+    }, MONITOR_AUTO_REFRESH_INTERVAL);
+}
+
+function stopMonitorAutoRefresh() {
+    if (monitorAutoRefreshInterval) {
+        clearInterval(monitorAutoRefreshInterval);
+        monitorAutoRefreshInterval = null;
+    }
 }
 
 // Initialize per-page count selector
