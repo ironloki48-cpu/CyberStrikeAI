@@ -5,12 +5,20 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"cyberstrike-ai/internal/knowledge"
 
 	"go.uber.org/zap"
 )
+
+// ragCache holds a cached RAG result keyed by the normalised query words.
+type ragCache struct {
+	queryWords map[string]struct{} // lowercased word set of the original query
+	result     string              // the formatted block / hint
+	createdAt  time.Time
+}
 
 // RAGContextInjector proactively retrieves relevant knowledge-base content
 // and injects it into the agent's system prompt before the first LLM call.
@@ -26,7 +34,20 @@ type RAGContextInjector struct {
 	maxChunks     int           // maximum knowledge chunks to inject per request
 	maxCharsTotal int           // total character budget for the injected context block
 	fetchTimeout  time.Duration // per-request timeout for the pre-flight knowledge fetch
+
+	// Cache to avoid re-fetching identical or very similar queries.
+	cacheMu   sync.Mutex
+	blockCache *ragCache // cached BuildContextBlock result
+	hintCache  *ragCache // cached ToolGuidanceHint result
 }
+
+const (
+	// ragCacheTTL is how long a cached RAG result is considered fresh.
+	ragCacheTTL = 5 * time.Minute
+	// ragCacheSimilarityThreshold is the minimum Jaccard word-overlap
+	// required to consider a new query "the same" as the cached one.
+	ragCacheSimilarityThreshold = 0.7
+)
 
 // RAGContextConfig configures the RAGContextInjector.
 type RAGContextConfig struct {
@@ -65,14 +86,81 @@ func NewRAGContextInjector(retriever *knowledge.Retriever, logger *zap.Logger, c
 	}
 }
 
+// queryWords splits a query into a lowercase word set for similarity comparison.
+func queryWords(query string) map[string]struct{} {
+	words := strings.Fields(strings.ToLower(query))
+	set := make(map[string]struct{}, len(words))
+	for _, w := range words {
+		// Strip common punctuation so "target," matches "target".
+		w = strings.Trim(w, ".,;:!?\"'`()[]{}/<>")
+		if len(w) >= 2 { // skip single-char noise
+			set[w] = struct{}{}
+		}
+	}
+	return set
+}
+
+// jaccardSimilarity returns the Jaccard index between two word sets.
+func jaccardSimilarity(a, b map[string]struct{}) float64 {
+	if len(a) == 0 && len(b) == 0 {
+		return 1.0
+	}
+	if len(a) == 0 || len(b) == 0 {
+		return 0.0
+	}
+	intersection := 0
+	for w := range a {
+		if _, ok := b[w]; ok {
+			intersection++
+		}
+	}
+	union := len(a) + len(b) - intersection
+	if union == 0 {
+		return 0.0
+	}
+	return float64(intersection) / float64(union)
+}
+
+// checkCache returns the cached result if the query is similar enough and
+// the cache is fresh.  Returns ("", false) on miss.
+func (r *RAGContextInjector) checkCache(cache *ragCache, newWords map[string]struct{}) (string, bool) {
+	if cache == nil {
+		return "", false
+	}
+	if time.Since(cache.createdAt) > ragCacheTTL {
+		return "", false
+	}
+	if jaccardSimilarity(cache.queryWords, newWords) >= ragCacheSimilarityThreshold {
+		return cache.result, true
+	}
+	return "", false
+}
+
 // BuildContextBlock fetches knowledge relevant to query and returns a
 // formatted system-prompt block ready for injection.  Returns an empty
 // string when no relevant knowledge is found or retrieval fails so callers
 // can safely skip injection.
+//
+// Results are cached: when a subsequent query has high word-overlap with the
+// previous one (Jaccard >= 0.7) and the cache is < 5 minutes old, the
+// cached block is returned without hitting the knowledge base.
 func (r *RAGContextInjector) BuildContextBlock(ctx context.Context, query string) string {
 	if r == nil || r.retriever == nil || strings.TrimSpace(query) == "" {
 		return ""
 	}
+
+	words := queryWords(query)
+
+	// Check cache first.
+	r.cacheMu.Lock()
+	if cached, hit := r.checkCache(r.blockCache, words); hit {
+		r.cacheMu.Unlock()
+		r.logger.Debug("RAG context block served from cache",
+			zap.String("query", truncateStr(query, 80)),
+		)
+		return cached
+	}
+	r.cacheMu.Unlock()
 
 	fetchCtx, cancel := context.WithTimeout(ctx, r.fetchTimeout)
 	defer cancel()
@@ -176,23 +264,49 @@ func (r *RAGContextInjector) BuildContextBlock(ctx context.Context, query string
 
 	sb.WriteString("</rag_knowledge_context>\n")
 
+	block := sb.String()
+
 	r.logger.Info("RAG context block injected into system prompt",
 		zap.String("query", truncateStr(query, 80)),
 		zap.Int("items", itemCount),
 		zap.Int("chars", r.maxCharsTotal-charBudget),
 	)
 
-	return sb.String()
+	// Store in cache.
+	r.cacheMu.Lock()
+	r.blockCache = &ragCache{
+		queryWords: words,
+		result:     block,
+		createdAt:  time.Now(),
+	}
+	r.cacheMu.Unlock()
+
+	return block
 }
 
 // ToolGuidanceHint returns a concise hint listing the knowledge-base
 // categories that match the current query.  This is appended to the system
 // prompt as a lightweight alternative to the full context block when the
 // agent already has a large context and needs only a directional hint.
+//
+// Results are cached with the same similarity logic as BuildContextBlock.
 func (r *RAGContextInjector) ToolGuidanceHint(ctx context.Context, query string) string {
 	if r == nil || r.retriever == nil || strings.TrimSpace(query) == "" {
 		return ""
 	}
+
+	words := queryWords(query)
+
+	// Check cache first.
+	r.cacheMu.Lock()
+	if cached, hit := r.checkCache(r.hintCache, words); hit {
+		r.cacheMu.Unlock()
+		r.logger.Debug("RAG tool guidance hint served from cache",
+			zap.String("query", truncateStr(query, 80)),
+		)
+		return cached
+	}
+	r.cacheMu.Unlock()
 
 	fetchCtx, cancel := context.WithTimeout(ctx, r.fetchTimeout)
 	defer cancel()
@@ -221,9 +335,20 @@ func (r *RAGContextInjector) ToolGuidanceHint(ctx context.Context, query string)
 		return ""
 	}
 
-	return fmt.Sprintf("\nKnowledge base hint: Relevant attack categories detected — %s. "+
+	hint := fmt.Sprintf("\nKnowledge base hint: Relevant attack categories detected — %s. "+
 		"Use search_knowledge_base for detailed exploitation techniques.",
 		strings.Join(categories, ", "))
+
+	// Store in cache.
+	r.cacheMu.Lock()
+	r.hintCache = &ragCache{
+		queryWords: words,
+		result:     hint,
+		createdAt:  time.Now(),
+	}
+	r.cacheMu.Unlock()
+
+	return hint
 }
 
 // truncateStr truncates s to at most max runes, appending "..." when trimmed.
