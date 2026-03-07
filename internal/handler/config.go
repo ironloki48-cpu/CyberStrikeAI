@@ -155,6 +155,11 @@ func (h *ConfigHandler) SetRobotRestarter(restarter RobotRestarter) {
 	h.robotRestarter = restarter
 }
 
+// SecuritySettingsResponse exposes the subset of SecurityConfig that is user-configurable.
+type SecuritySettingsResponse struct {
+	ToolDescriptionMode string `json:"tool_description_mode"`
+}
+
 // GetConfigResponse get configuration response
 type GetConfigResponse struct {
 	OpenAI    config.OpenAIConfig    `json:"openai"`
@@ -164,6 +169,7 @@ type GetConfigResponse struct {
 	Agent     config.AgentConfig     `json:"agent"`
 	Knowledge config.KnowledgeConfig `json:"knowledge"`
 	Robots    config.RobotsConfig    `json:"robots,omitempty"`
+	Security  SecuritySettingsResponse `json:"security"`
 }
 
 // ToolConfigInfo tool configuration info
@@ -237,6 +243,9 @@ func (h *ConfigHandler) GetConfig(c *gin.Context) {
 		Agent:     h.config.Agent,
 		Knowledge: h.config.Knowledge,
 		Robots:    h.config.Robots,
+		Security: SecuritySettingsResponse{
+			ToolDescriptionMode: h.config.Security.ToolDescriptionMode,
+		},
 	})
 }
 
@@ -486,6 +495,11 @@ func (h *ConfigHandler) GetTools(c *gin.Context) {
 	})
 }
 
+// SecuritySettingsRequest holds the user-configurable subset of SecurityConfig.
+type SecuritySettingsRequest struct {
+	ToolDescriptionMode string `json:"tool_description_mode"`
+}
+
 // UpdateConfigRequest update configuration request
 type UpdateConfigRequest struct {
 	OpenAI    *config.OpenAIConfig    `json:"openai,omitempty"`
@@ -495,6 +509,7 @@ type UpdateConfigRequest struct {
 	Agent     *config.AgentConfig     `json:"agent,omitempty"`
 	Knowledge *config.KnowledgeConfig `json:"knowledge,omitempty"`
 	Robots    *config.RobotsConfig    `json:"robots,omitempty"`
+	Security  *SecuritySettingsRequest `json:"security,omitempty"`
 }
 
 // ToolEnableStatus tool enable status
@@ -578,6 +593,16 @@ func (h *ConfigHandler) UpdateConfig(c *gin.Context) {
 			zap.Bool("wecom_enabled", h.config.Robots.Wecom.Enabled),
 			zap.Bool("dingtalk_enabled", h.config.Robots.Dingtalk.Enabled),
 			zap.Bool("lark_enabled", h.config.Robots.Lark.Enabled),
+		)
+	}
+
+	// Update security config
+	if req.Security != nil {
+		if req.Security.ToolDescriptionMode == "short" || req.Security.ToolDescriptionMode == "full" {
+			h.config.Security.ToolDescriptionMode = req.Security.ToolDescriptionMode
+		}
+		h.logger.Info("Updating security config",
+			zap.String("tool_description_mode", h.config.Security.ToolDescriptionMode),
 		)
 	}
 
@@ -883,9 +908,10 @@ func (h *ConfigHandler) saveConfig() error {
 		return fmt.Errorf("failed to parse config file: %w", err)
 	}
 
-	updateAgentConfig(root, h.config.Agent.MaxIterations)
+	updateAgentConfig(root, h.config.Agent)
 	updateMCPConfig(root, h.config.MCP)
 	updateOpenAIConfig(root, h.config.OpenAI)
+	updateSecuritySettingsConfig(root, h.config.Security.ToolDescriptionMode)
 	updateFOFAConfig(root, h.config.FOFA)
 	updateKnowledgeConfig(root, h.config.Knowledge)
 	updateRobotsConfig(root, h.config.Robots)
@@ -1010,10 +1036,42 @@ func writeYAMLDocument(path string, doc *yaml.Node) error {
 	return os.WriteFile(path, buf.Bytes(), 0644)
 }
 
-func updateAgentConfig(doc *yaml.Node, maxIterations int) {
+func updateAgentConfig(doc *yaml.Node, cfg config.AgentConfig) {
 	root := doc.Content[0]
 	agentNode := ensureMap(root, "agent")
-	setIntInMap(agentNode, "max_iterations", maxIterations)
+	setIntInMap(agentNode, "max_iterations", cfg.MaxIterations)
+	if cfg.LargeResultThreshold > 0 {
+		setIntInMap(agentNode, "large_result_threshold", cfg.LargeResultThreshold)
+	}
+	if cfg.ResultStorageDir != "" {
+		setStringInMap(agentNode, "result_storage_dir", cfg.ResultStorageDir)
+	}
+	setBoolInMap(agentNode, "parallel_tool_execution", cfg.ParallelToolExecution)
+	setIntInMap(agentNode, "max_parallel_tools", cfg.MaxParallelTools)
+	setIntInMap(agentNode, "tool_retry_count", cfg.ToolRetryCount)
+	if cfg.ParallelToolWaitSeconds > 0 {
+		setIntInMap(agentNode, "parallel_tool_wait_seconds", cfg.ParallelToolWaitSeconds)
+	}
+
+	// Time awareness
+	taNode := ensureMap(agentNode, "time_awareness")
+	setBoolInMap(taNode, "enabled", cfg.TimeAwareness.Enabled)
+	if cfg.TimeAwareness.Timezone != "" {
+		setStringInMap(taNode, "timezone", cfg.TimeAwareness.Timezone)
+	}
+
+	// Memory
+	memNode := ensureMap(agentNode, "memory")
+	setBoolInMap(memNode, "enabled", cfg.Memory.Enabled)
+	setIntInMap(memNode, "max_entries", cfg.Memory.MaxEntries)
+}
+
+func updateSecuritySettingsConfig(doc *yaml.Node, toolDescriptionMode string) {
+	root := doc.Content[0]
+	secNode := ensureMap(root, "security")
+	if toolDescriptionMode != "" {
+		setStringInMap(secNode, "tool_description_mode", toolDescriptionMode)
+	}
 }
 
 func updateMCPConfig(doc *yaml.Node, cfg config.MCPConfig) {
@@ -1032,6 +1090,9 @@ func updateOpenAIConfig(doc *yaml.Node, cfg config.OpenAIConfig) {
 	setStringInMap(openaiNode, "model", cfg.Model)
 	setStringInMap(openaiNode, "tool_model", cfg.ToolModel)
 	setStringInMap(openaiNode, "summary_model", cfg.SummaryModel)
+	if cfg.MaxTotalTokens > 0 {
+		setIntInMap(openaiNode, "max_total_tokens", cfg.MaxTotalTokens)
+	}
 }
 
 func updateFOFAConfig(doc *yaml.Node, cfg config.FofaConfig) {

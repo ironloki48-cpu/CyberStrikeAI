@@ -1251,6 +1251,11 @@
                                             <label for="openai-summary-model">Summary Model <span style="color: #888; font-weight: normal;">(optional)</span></label>
                                             <input type="text" id="openai-summary-model" placeholder="Leave empty to use main model for summarization" />
                                         </div>
+                                        <div class="form-group">
+                                            <label for="openai-max-total-tokens">Max Total Tokens</label>
+                                            <input type="number" id="openai-max-total-tokens" min="1000" max="2000000" placeholder="120000" />
+                                            <small class="form-hint">Maximum token limit for context (shared by memory compression and attack-chain building)</small>
+                                        </div>
                                     </div>
                                 </div>
 
@@ -1281,7 +1286,85 @@
                                     <div class="settings-form">
                                         <div class="form-group">
                                             <label for="agent-max-iterations">Max Iterations</label>
-                                            <input type="number" id="agent-max-iterations" min="1" max="100" placeholder="30" />
+                                            <input type="number" id="agent-max-iterations" min="1" max="200" placeholder="30" />
+                                            <small class="form-hint">Maximum number of agent loop iterations per task</small>
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="agent-large-result-threshold">Large Result Threshold (bytes)</label>
+                                            <input type="number" id="agent-large-result-threshold" min="1024" max="1048576" placeholder="51200" />
+                                            <small class="form-hint">Tool output larger than this is stored to file instead of inline (default 50 KB)</small>
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="agent-result-storage-dir">Result Storage Directory</label>
+                                            <input type="text" id="agent-result-storage-dir" placeholder="tmp" />
+                                            <small class="form-hint">Directory for storing large tool outputs</small>
+                                        </div>
+                                        <div class="form-group">
+                                            <label class="checkbox-label">
+                                                <input type="checkbox" id="agent-parallel-tool-execution" class="modern-checkbox" />
+                                                <span class="checkbox-custom"></span>
+                                                <span class="checkbox-text">Enable parallel tool execution</span>
+                                            </label>
+                                            <small class="form-hint">Execute multiple tool calls concurrently</small>
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="agent-max-parallel-tools">Max Parallel Tools</label>
+                                            <input type="number" id="agent-max-parallel-tools" min="0" max="20" placeholder="0" />
+                                            <small class="form-hint">Maximum concurrent tool calls (0 = unlimited)</small>
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="agent-tool-retry-count">Tool Retry Count</label>
+                                            <input type="number" id="agent-tool-retry-count" min="0" max="10" placeholder="0" />
+                                            <small class="form-hint">Number of retries on transient tool errors (default 0)</small>
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="agent-parallel-tool-wait-seconds">Parallel Tool Wait (seconds)</label>
+                                            <input type="number" id="agent-parallel-tool-wait-seconds" min="5" max="300" placeholder="45" />
+                                            <small class="form-hint">Max wait per parallel tool before deferring result (default 45s)</small>
+                                        </div>
+
+                                        <div class="settings-subsection-header">
+                                            <h5>Time Awareness</h5>
+                                        </div>
+                                        <div class="form-group">
+                                            <label class="checkbox-label">
+                                                <input type="checkbox" id="agent-time-awareness-enabled" class="modern-checkbox" />
+                                                <span class="checkbox-custom"></span>
+                                                <span class="checkbox-text">Inject current date/time into system prompt</span>
+                                            </label>
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="agent-time-awareness-timezone">Timezone</label>
+                                            <input type="text" id="agent-time-awareness-timezone" placeholder="UTC" />
+                                            <small class="form-hint">IANA timezone name, e.g. "America/New_York", "Europe/Kyiv"</small>
+                                        </div>
+
+                                        <div class="settings-subsection-header">
+                                            <h5>Persistent Memory</h5>
+                                        </div>
+                                        <div class="form-group">
+                                            <label class="checkbox-label">
+                                                <input type="checkbox" id="agent-memory-enabled" class="modern-checkbox" />
+                                                <span class="checkbox-custom"></span>
+                                                <span class="checkbox-text">Enable persistent memory store</span>
+                                            </label>
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="agent-memory-max-entries">Max Memory Entries</label>
+                                            <input type="number" id="agent-memory-max-entries" min="0" max="10000" placeholder="200" />
+                                            <small class="form-hint">Hard cap on stored memory entries (0 = unlimited)</small>
+                                        </div>
+
+                                        <div class="settings-subsection-header">
+                                            <h5>Tool Settings</h5>
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="security-tool-description-mode">Tool Description Mode</label>
+                                            <select id="security-tool-description-mode">
+                                                <option value="short">Short</option>
+                                                <option value="full">Full</option>
+                                            </select>
+                                            <small class="form-hint">"Short" reduces token consumption; "Full" gives the model more context about each tool</small>
                                         </div>
                                     </div>
                                 </div>

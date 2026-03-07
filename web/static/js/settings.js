@@ -248,8 +248,40 @@ async function loadConfig(loadTools = true) {
         if (fofaKeyEl) fofaKeyEl.value = fofa.api_key || '';
         if (fofaBaseUrlEl) fofaBaseUrlEl.value = fofa.base_url || '';
         
+        // Fill OpenAI max total tokens
+        const maxTotalTokensEl = document.getElementById('openai-max-total-tokens');
+        if (maxTotalTokensEl) maxTotalTokensEl.value = currentConfig.openai.max_total_tokens || 120000;
+
         // Fill Agent config
         document.getElementById('agent-max-iterations').value = currentConfig.agent.max_iterations || 30;
+
+        const agentFields = {
+            'agent-large-result-threshold': currentConfig.agent.large_result_threshold || 51200,
+            'agent-result-storage-dir': currentConfig.agent.result_storage_dir || 'tmp',
+            'agent-max-parallel-tools': currentConfig.agent.max_parallel_tools || 0,
+            'agent-tool-retry-count': currentConfig.agent.tool_retry_count || 0,
+            'agent-parallel-tool-wait-seconds': currentConfig.agent.parallel_tool_wait_seconds || 45,
+            'agent-time-awareness-timezone': currentConfig.agent.time_awareness?.timezone || 'UTC',
+            'agent-memory-max-entries': currentConfig.agent.memory?.max_entries || 200,
+        };
+        for (const [id, val] of Object.entries(agentFields)) {
+            const el = document.getElementById(id);
+            if (el) el.value = val;
+        }
+
+        const agentCheckboxes = {
+            'agent-parallel-tool-execution': currentConfig.agent.parallel_tool_execution !== false,
+            'agent-time-awareness-enabled': currentConfig.agent.time_awareness?.enabled !== false,
+            'agent-memory-enabled': currentConfig.agent.memory?.enabled !== false,
+        };
+        for (const [id, val] of Object.entries(agentCheckboxes)) {
+            const el = document.getElementById(id);
+            if (el) el.checked = val;
+        }
+
+        // Fill security config
+        const toolDescModeEl = document.getElementById('security-tool-description-mode');
+        if (toolDescModeEl) toolDescModeEl.value = currentConfig.security?.tool_description_mode || 'short';
         
         // Fill knowledge base config
         const knowledgeEnabledCheckbox = document.getElementById('knowledge-enabled');
@@ -878,7 +910,8 @@ async function applySettings() {
                 base_url: baseUrl,
                 model: model,
                 tool_model: document.getElementById('openai-tool-model')?.value.trim() || '',
-                summary_model: document.getElementById('openai-summary-model')?.value.trim() || ''
+                summary_model: document.getElementById('openai-summary-model')?.value.trim() || '',
+                max_total_tokens: parseInt(document.getElementById('openai-max-total-tokens')?.value) || 120000
             },
             fofa: {
                 email: document.getElementById('fofa-email')?.value.trim() || '',
@@ -886,7 +919,24 @@ async function applySettings() {
                 base_url: document.getElementById('fofa-base-url')?.value.trim() || ''
             },
             agent: {
-                max_iterations: parseInt(document.getElementById('agent-max-iterations').value) || 30
+                max_iterations: parseInt(document.getElementById('agent-max-iterations').value) || 30,
+                large_result_threshold: parseInt(document.getElementById('agent-large-result-threshold')?.value) || 51200,
+                result_storage_dir: document.getElementById('agent-result-storage-dir')?.value.trim() || 'tmp',
+                parallel_tool_execution: document.getElementById('agent-parallel-tool-execution')?.checked !== false,
+                max_parallel_tools: parseInt(document.getElementById('agent-max-parallel-tools')?.value) || 0,
+                tool_retry_count: parseInt(document.getElementById('agent-tool-retry-count')?.value) || 0,
+                parallel_tool_wait_seconds: parseInt(document.getElementById('agent-parallel-tool-wait-seconds')?.value) || 45,
+                time_awareness: {
+                    enabled: document.getElementById('agent-time-awareness-enabled')?.checked !== false,
+                    timezone: document.getElementById('agent-time-awareness-timezone')?.value.trim() || 'UTC'
+                },
+                memory: {
+                    enabled: document.getElementById('agent-memory-enabled')?.checked !== false,
+                    max_entries: parseInt(document.getElementById('agent-memory-max-entries')?.value) || 200
+                }
+            },
+            security: {
+                tool_description_mode: document.getElementById('security-tool-description-mode')?.value || 'short'
             },
             knowledge: knowledgeConfig,
             robots: {
