@@ -102,14 +102,21 @@ func (c *Client) ChatCompletion(ctx context.Context, payload interface{}, out in
 		bodyChan <- responseBody
 	}()
 
+	hardTimeout := time.NewTimer(25 * time.Minute)
+	defer hardTimeout.Stop()
+
 	var respBody []byte
 	select {
 	case respBody = <-bodyChan:
 	case err := <-errChan:
 		return fmt.Errorf("read openai response: %w", err)
 	case <-ctx.Done():
+		// Close resp.Body to unblock the io.ReadAll goroutine
+		resp.Body.Close()
 		return fmt.Errorf("read openai response timeout: %w", ctx.Err())
-	case <-time.After(25 * time.Minute):
+	case <-hardTimeout.C:
+		// Close resp.Body to unblock the io.ReadAll goroutine
+		resp.Body.Close()
 		return fmt.Errorf("read openai response timeout (25m)")
 	}
 

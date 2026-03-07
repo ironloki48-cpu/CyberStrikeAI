@@ -975,6 +975,16 @@ Skills Library:
 	result := &AgentLoopResult{
 		MCPExecutionIDs: make([]string, 0),
 	}
+	const maxIdenticalSuccessfulToolRuns = 2
+	toolSignature := func(toolName string, args map[string]interface{}) string {
+		argsJSON, err := json.Marshal(args)
+		if err != nil {
+			return toolName
+		}
+		return toolName + "|" + string(argsJSON)
+	}
+	toolSuccessCounts := make(map[string]int)
+	toolCachedResults := make(map[string]string)
 	backgroundResultCh := make(chan parallelToolCallResult, 128)
 	deferredInFlight := 0
 	drainBackgroundToolResults := func(waitFirst time.Duration) int {
@@ -1052,10 +1062,12 @@ Skills Library:
 		}
 
 		if waitFirst > 0 {
+			waitTimer := time.NewTimer(waitFirst)
 			select {
 			case pr := <-backgroundResultCh:
+				waitTimer.Stop()
 				processOne(pr)
-			case <-time.After(waitFirst):
+			case <-waitTimer.C:
 				return 0
 			}
 		}
@@ -1401,6 +1413,45 @@ Skills Library:
 			} else {
 				// ── Sequential path (single tool call or parallelism disabled) ───────
 				for idx, toolCall := range choice.Message.ToolCalls {
+					sig := toolSignature(toolCall.Function.Name, toolCall.Function.Arguments)
+					if toolSuccessCounts[sig] >= maxIdenticalSuccessfulToolRuns {
+						cachedResult := toolCachedResults[sig]
+						if cachedResult == "" {
+							cachedResult = "No previous output was cached for this repeated call."
+						}
+						if len(cachedResult) > 4000 {
+							cachedResult = cachedResult[:4000] + "\n...[truncated]"
+						}
+						loopGuardMsg := fmt.Sprintf(
+							"Loop guard activated: tool %s with identical arguments already succeeded %d times. Reuse the previous output below and select a different next step.\n\nPrevious output:\n%s",
+							toolCall.Function.Name,
+							toolSuccessCounts[sig],
+							cachedResult,
+						)
+						updateToolPool(toolCall.ID, toolCall.Function.Name, "completed", "", "Repeated identical tool call skipped by loop guard", loopGuardMsg, "", toolCall.Function.Arguments, false)
+						messages = append(messages, ChatMessage{
+							Role:       "tool",
+							ToolCallID: toolCall.ID,
+							Content:    loopGuardMsg,
+						})
+						sendProgress("tool_result", fmt.Sprintf("Tool %s skipped (loop guard)", toolCall.Function.Name), map[string]interface{}{
+							"toolName":   toolCall.Function.Name,
+							"success":    true,
+							"isError":    false,
+							"skipped":    true,
+							"result":     loopGuardMsg,
+							"toolCallId": toolCall.ID,
+							"index":      idx + 1,
+							"total":      totalTools,
+							"iteration":  i + 1,
+						})
+						a.logger.Warn("Skipped repeated identical tool call via loop guard",
+							zap.String("tool", toolCall.Function.Name),
+							zap.Int("successfulRuns", toolSuccessCounts[sig]),
+						)
+						continue
+					}
+
 					// Execute tool
 					execResult, err := a.executeToolViaMCP(ctx, toolCall.Function.Name, toolCall.Function.Arguments)
 					if err != nil {
@@ -1439,6 +1490,10 @@ Skills Library:
 						// Collect execution ID
 						if execResult.ExecutionID != "" {
 							result.MCPExecutionIDs = append(result.MCPExecutionIDs, execResult.ExecutionID)
+						}
+						if !execResult.IsError {
+							toolSuccessCounts[sig]++
+							toolCachedResults[sig] = execResult.Result
 						}
 
 						// Send tool execution success event
@@ -1650,10 +1705,8 @@ func (a *Agent) getAvailableTools(ctx context.Context, roleTools []string) []Too
 			// Get external MCP configuration to check tool enabled status
 			externalMCPConfigs := a.externalMCPMgr.GetConfigs()
 
-			// Clear and rebuild tool name mapping
-			a.mu.Lock()
-			a.toolNameMapping = make(map[string]string)
-			a.mu.Unlock()
+			// Build new tool name mapping in a local map, then swap under a single lock
+			newToolNameMapping := make(map[string]string)
 
 			// Add external MCP tools to tool list (only add enabled tools)
 			for _, externalTool := range externalTools {
@@ -1714,9 +1767,7 @@ func (a *Agent) getAvailableTools(ctx context.Context, roleTools []string) []Too
 				openAIName := strings.ReplaceAll(externalTool.Name, "::", "__")
 
 				// Save name mapping (OpenAI format -> original format)
-				a.mu.Lock()
-				a.toolNameMapping[openAIName] = externalTool.Name
-				a.mu.Unlock()
+				newToolNameMapping[openAIName] = externalTool.Name
 
 				tools = append(tools, Tool{
 					Type: "function",
@@ -1727,6 +1778,11 @@ func (a *Agent) getAvailableTools(ctx context.Context, roleTools []string) []Too
 					},
 				})
 			}
+
+			// Atomically swap the entire mapping
+			a.mu.Lock()
+			a.toolNameMapping = newToolNameMapping
+			a.mu.Unlock()
 		}
 	}
 
@@ -1865,10 +1921,12 @@ func (a *Agent) callOpenAI(ctx context.Context, messages []ChatMessage, tools []
 			)
 
 			// Check if context has been cancelled
+			backoffTimer := time.NewTimer(backoff)
 			select {
 			case <-ctx.Done():
+				backoffTimer.Stop()
 				return nil, fmt.Errorf("context cancelled: %w", ctx.Err())
-			case <-time.After(backoff):
+			case <-backoffTimer.C:
 				// Continue retrying
 			}
 		}
@@ -2006,8 +2064,10 @@ func (a *Agent) executeToolCallsInParallel(
 				done <- outcome{execResult: execResult, execErr: execErr}
 			}()
 
+			waitTimer := time.NewTimer(a.parallelToolWait)
 			select {
 			case out := <-done:
+				waitTimer.Stop()
 				pr := parallelToolCallResult{
 					index:      idx,
 					toolCallID: tc.ID,
@@ -2020,7 +2080,7 @@ func (a *Agent) executeToolCallsInParallel(
 				if onResult != nil {
 					onResult(pr)
 				}
-			case <-time.After(a.parallelToolWait):
+			case <-waitTimer.C:
 				placeholder := fmt.Sprintf("Tool %s is still running in background. Continue with other tasks; check MCP monitor for final output.", tc.Function.Name)
 				pr := parallelToolCallResult{
 					index:      idx,

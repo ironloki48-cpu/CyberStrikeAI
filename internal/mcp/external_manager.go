@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -402,7 +403,7 @@ func (m *ExternalMCPManager) updateToolCache(name string, tools []Tool) {
 func (m *ExternalMCPManager) CallTool(ctx context.Context, toolName string, args map[string]interface{}) (*ToolResult, string, error) {
 	// parse tool name: name::toolName
 	var mcpName, actualToolName string
-	if idx := findSubstring(toolName, "::"); idx > 0 {
+	if idx := strings.Index(toolName, "::"); idx > 0 {
 		mcpName = toolName[:idx]
 		actualToolName = toolName[idx+2:]
 	} else {
@@ -524,14 +525,10 @@ func (m *ExternalMCPManager) cleanupOldExecutions() {
 		execs = append(execs, execTime{id: id, startTime: exec.StartTime})
 	}
 
-	// sort by time
-	for i := 0; i < len(execs)-1; i++ {
-		for j := i + 1; j < len(execs); j++ {
-			if execs[i].startTime.After(execs[j].startTime) {
-				execs[i], execs[j] = execs[j], execs[i]
-			}
-		}
-	}
+	// sort by time (ascending — oldest first)
+	sort.Slice(execs, func(i, j int) bool {
+		return execs[i].startTime.Before(execs[j].startTime)
+	})
 
 	// delete the oldest records
 	toDelete := len(m.executions) - maxExecutionsInMemory
@@ -638,7 +635,7 @@ func (m *ExternalMCPManager) GetToolStats() map[string]*ToolStats {
 		if err == nil {
 			// only keep statistics for external MCP tools (tool names containing "::")
 			for k, v := range dbStats {
-				if findSubstring(k, "::") > 0 {
+				if strings.Index(k, "::") > 0 {
 					result[k] = v
 				}
 			}
@@ -1004,16 +1001,6 @@ func (m *ExternalMCPManager) isEnabled(cfg config.ExternalMCPServerConfig) bool 
 	}
 	// neither set, default to enabled
 	return true
-}
-
-// findSubstring finds a substring (simple implementation)
-func findSubstring(s, substr string) int {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return i
-		}
-	}
-	return -1
 }
 
 // StartAllEnabled starts all enabled clients
