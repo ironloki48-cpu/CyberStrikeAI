@@ -234,8 +234,10 @@ async function loadConfig(loadTools = true) {
         document.getElementById('openai-api-key').value = currentConfig.openai.api_key || '';
         document.getElementById('openai-base-url').value = currentConfig.openai.base_url || '';
         document.getElementById('openai-model').value = currentConfig.openai.model || '';
-        document.getElementById('openai-tool-model').value = currentConfig.openai.tool_model || '';
-        document.getElementById('openai-summary-model').value = currentConfig.openai.summary_model || '';
+        const toolModelEl = document.getElementById('openai-tool-model');
+        if (toolModelEl) toolModelEl.value = currentConfig.openai.tool_model || '';
+        const summaryModelEl = document.getElementById('openai-summary-model');
+        if (summaryModelEl) summaryModelEl.value = currentConfig.openai.summary_model || '';
 
         // Fill FOFA config
         const fofa = currentConfig.fofa || {};
@@ -875,8 +877,8 @@ async function applySettings() {
                 api_key: apiKey,
                 base_url: baseUrl,
                 model: model,
-                tool_model: document.getElementById('openai-tool-model').value.trim(),
-                summary_model: document.getElementById('openai-summary-model').value.trim()
+                tool_model: document.getElementById('openai-tool-model')?.value.trim() || '',
+                summary_model: document.getElementById('openai-summary-model')?.value.trim() || ''
             },
             fofa: {
                 email: document.getElementById('fofa-email')?.value.trim() || '',
