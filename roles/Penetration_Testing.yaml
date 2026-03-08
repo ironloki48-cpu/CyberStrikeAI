@@ -1,0 +1,40 @@
+name: Penetration Testing
+description: Professional penetration testing expert for comprehensive, in-depth vulnerability detection.
+user_prompt: You are a professional cybersecurity penetration testing expert. Please use professional penetration testing methods and tools to conduct comprehensive security testing on the target, including but not limited to SQL injection, XSS, CSRF, file inclusion, command execution, and other common vulnerabilities.
+icon: "\U0001F3AF"
+tools:
+    - http-framework-test
+    - httpx
+    - amass
+    - anew
+    - angr
+    - api-fuzzer
+    - api-schema-analyzer
+    - arjun
+    - arp-scan
+    - autorecon
+    - binwalk
+    - bloodhound
+    - burpsuite
+    - cat
+    - checkov
+    - checksec
+    - cloudmapper
+    - create-file
+    - cyberchef
+    - dalfox
+    - delete-file
+    - exec
+    - execute-python-script
+    - install-python-package
+    - record_vulnerability
+    - list_knowledge_risk_types
+    - search_knowledge_base
+    - list_skills
+    - read_skill
+    - flaresolverr
+    - nuclei-bitrix
+    - paramspider
+    - list_memories
+    - get_current_time
+enabled: true

@@ -215,20 +215,13 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		// create knowledge base manager
 		knowledgeManager = knowledge.NewManager(knowledgeDB, cfg.Knowledge.BasePath, log.Logger)
 
-		// create embedder
-		// use OpenAI config API Key (if not specified in knowledge base config)
-		if cfg.Knowledge.Embedding.APIKey == "" {
-			cfg.Knowledge.Embedding.APIKey = cfg.OpenAI.APIKey
-		}
-		if cfg.Knowledge.Embedding.BaseURL == "" {
-			cfg.Knowledge.Embedding.BaseURL = cfg.OpenAI.BaseURL
-		}
-
+		// create embedder (no implicit fallback to OpenAI endpoint for embeddings)
 		httpClient := &http.Client{
 			Timeout: 30 * time.Minute,
 		}
 		openAIClient := openai.NewClient(&cfg.OpenAI, httpClient, log.Logger)
-		embedder := knowledge.NewEmbedder(&cfg.Knowledge, &cfg.OpenAI, openAIClient, log.Logger)
+		embedder := knowledge.NewEmbedder(&cfg.Knowledge, openAIClient, log.Logger)
+		embeddingEnabled := embedder.Enabled()
 
 		// create retriever
 		retrievalConfig := &knowledge.RetrievalConfig{
@@ -239,7 +232,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		knowledgeRetriever = knowledge.NewRetriever(knowledgeDB, embedder, retrievalConfig, log.Logger)
 
 		// create indexer
-		knowledgeIndexer = knowledge.NewIndexer(knowledgeDB, embedder, log.Logger)
+		knowledgeIndexer = knowledge.NewIndexer(knowledgeDB, embedder, log.Logger, cfg.Knowledge.Embedding.MaxTokens)
 
 		// register knowledge retrieval tool to MCP server
 		knowledge.RegisterKnowledgeTool(mcpServer, knowledgeRetriever, knowledgeManager, log.Logger)
@@ -248,87 +241,93 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		knowledgeHandler = handler.NewKnowledgeHandler(knowledgeManager, knowledgeRetriever, knowledgeIndexer, db, log.Logger)
 		log.Logger.Info("knowledge base module initialization complete", zap.Bool("handler_created", knowledgeHandler != nil))
 
-		// attach proactive RAG context injector to the agent so that relevant
-		// knowledge is automatically embedded in the system prompt at the start
-		// of every agent loop run.
-		ragInjector := agent.NewRAGContextInjector(
-			knowledgeRetriever,
-			log.Logger,
-			agent.RAGContextConfig{}, // use library defaults
-		)
-		agentInstance.SetRAGInjector(ragInjector)
-		log.Logger.Info("RAG context injector attached to agent")
+		if embeddingEnabled {
+			// attach proactive RAG context injector to the agent so that relevant
+			// knowledge is automatically embedded in the system prompt at the start
+			// of every agent loop run.
+			ragInjector := agent.NewRAGContextInjector(
+				knowledgeRetriever,
+				log.Logger,
+				agent.RAGContextConfig{}, // use library defaults
+			)
+			agentInstance.SetRAGInjector(ragInjector)
+			log.Logger.Info("RAG context injector attached to agent")
+		} else {
+			log.Logger.Warn("knowledge embedding disabled: missing embedding base_url/model/api_key; skipping RAG injector and index build")
+		}
 
 		// scan knowledge base and build index (async)
-		go func() {
-			itemsToIndex, err := knowledgeManager.ScanKnowledgeBase()
-			if err != nil {
-				log.Logger.Warn("failed to scan knowledge base", zap.Error(err))
-				return
-			}
-
-			// check if index already exists
-			hasIndex, err := knowledgeIndexer.HasIndex()
-			if err != nil {
-				log.Logger.Warn("failed to check index status", zap.Error(err))
-				return
-			}
-
-			if hasIndex {
-				// if index exists, only index newly added or updated items
-				if len(itemsToIndex) > 0 {
-					log.Logger.Info("existing knowledge base index detected, starting incremental indexing", zap.Int("count", len(itemsToIndex)))
-					ctx := context.Background()
-					consecutiveFailures := 0
-					var firstFailureItemID string
-					var firstFailureError error
-					failedCount := 0
-
-					for _, itemID := range itemsToIndex {
-						if err := knowledgeIndexer.IndexItem(ctx, itemID); err != nil {
-							failedCount++
-							consecutiveFailures++
-
-							if consecutiveFailures == 1 {
-								firstFailureItemID = itemID
-								firstFailureError = err
-								log.Logger.Warn("failed to index knowledge item", zap.String("itemId", itemID), zap.Error(err))
-							}
-
-							// if 2 consecutive failures, immediately stop incremental indexing
-							if consecutiveFailures >= 2 {
-								log.Logger.Error("too many consecutive index failures, stopping incremental indexing immediately",
-									zap.Int("consecutiveFailures", consecutiveFailures),
-									zap.Int("totalItems", len(itemsToIndex)),
-									zap.String("firstFailureItemId", firstFailureItemID),
-									zap.Error(firstFailureError),
-								)
-								break
-							}
-							continue
-						}
-
-						// reset consecutive failure count on success
-						if consecutiveFailures > 0 {
-							consecutiveFailures = 0
-							firstFailureItemID = ""
-							firstFailureError = nil
-						}
-					}
-					log.Logger.Info("incremental indexing complete", zap.Int("totalItems", len(itemsToIndex)), zap.Int("failedCount", failedCount))
-				} else {
-					log.Logger.Info("existing knowledge base index detected, no new or updated items to index")
+		if embeddingEnabled {
+			go func() {
+				itemsToIndex, err := knowledgeManager.ScanKnowledgeBase()
+				if err != nil {
+					log.Logger.Warn("failed to scan knowledge base", zap.Error(err))
+					return
 				}
-				return
-			}
 
-			// only auto-rebuild when no index exists
-			log.Logger.Info("no knowledge base index detected, starting automatic index build")
-			ctx := context.Background()
-			if err := knowledgeIndexer.RebuildIndex(ctx); err != nil {
-				log.Logger.Warn("failed to rebuild knowledge base index", zap.Error(err))
-			}
-		}()
+				// check if index already exists
+				hasIndex, err := knowledgeIndexer.HasIndex()
+				if err != nil {
+					log.Logger.Warn("failed to check index status", zap.Error(err))
+					return
+				}
+
+				if hasIndex {
+					// if index exists, only index newly added or updated items
+					if len(itemsToIndex) > 0 {
+						log.Logger.Info("existing knowledge base index detected, starting incremental indexing", zap.Int("count", len(itemsToIndex)))
+						ctx := context.Background()
+						consecutiveFailures := 0
+						var firstFailureItemID string
+						var firstFailureError error
+						failedCount := 0
+
+						for _, itemID := range itemsToIndex {
+							if err := knowledgeIndexer.IndexItem(ctx, itemID); err != nil {
+								failedCount++
+								consecutiveFailures++
+
+								if consecutiveFailures == 1 {
+									firstFailureItemID = itemID
+									firstFailureError = err
+									log.Logger.Warn("failed to index knowledge item", zap.String("itemId", itemID), zap.Error(err))
+								}
+
+								// if 2 consecutive failures, immediately stop incremental indexing
+								if consecutiveFailures >= 2 {
+									log.Logger.Error("too many consecutive index failures, stopping incremental indexing immediately",
+										zap.Int("consecutiveFailures", consecutiveFailures),
+										zap.Int("totalItems", len(itemsToIndex)),
+										zap.String("firstFailureItemId", firstFailureItemID),
+										zap.Error(firstFailureError),
+									)
+									break
+								}
+								continue
+							}
+
+							// reset consecutive failure count on success
+							if consecutiveFailures > 0 {
+								consecutiveFailures = 0
+								firstFailureItemID = ""
+								firstFailureError = nil
+							}
+						}
+						log.Logger.Info("incremental indexing complete", zap.Int("totalItems", len(itemsToIndex)), zap.Int("failedCount", failedCount))
+					} else {
+						log.Logger.Info("existing knowledge base index detected, no new or updated items to index")
+					}
+					return
+				}
+
+				// only auto-rebuild when no index exists
+				log.Logger.Info("no knowledge base index detected, starting automatic index build")
+				ctx := context.Background()
+				if err := knowledgeIndexer.RebuildIndex(ctx); err != nil {
+					log.Logger.Warn("failed to rebuild knowledge base index", zap.Error(err))
+				}
+			}()
+		}
 	}
 
 	// Resolve the effective config path from CLI args; required for settings/auth persistence.
@@ -433,6 +432,22 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		return nil
 	}
 	configHandler.SetSkillsToolRegistrar(skillsRegistrar)
+
+	// set memory tool registrar (so memory tools survive config re-apply)
+	if persistentMem != nil {
+		memoryRegistrar := func() error {
+			registerMemoryTools(mcpServer, persistentMem, log.Logger)
+			return nil
+		}
+		configHandler.SetMemoryToolRegistrar(memoryRegistrar)
+	}
+
+	// set time tool registrar (so time tools survive config re-apply)
+	timeRegistrar := func() error {
+		registerTimeTools(mcpServer, timeAwareness, log.Logger)
+		return nil
+	}
+	configHandler.SetTimeToolRegistrar(timeRegistrar)
 
 	// set knowledge base initializer (for dynamic initialization, must be set after App is created)
 	configHandler.SetKnowledgeInitializer(func() (*handler.KnowledgeHandler, error) {
@@ -556,6 +571,8 @@ func (a *App) Run() error {
 
 			mux := http.NewServeMux()
 			mux.HandleFunc("/mcp", a.mcpServer.HandleHTTP)
+			// Backward-compatibility alias for legacy SSE endpoint configs.
+			mux.HandleFunc("/mcp/sse", a.mcpServer.HandleHTTP)
 
 			if err := http.ListenAndServe(mcpAddr, mux); err != nil {
 				a.logger.Error("MCP server failed to start", zap.Error(err))
@@ -732,6 +749,7 @@ func setupRoutes(
 		// configuration management
 		protected.GET("/config", configHandler.GetConfig)
 		protected.GET("/config/tools", configHandler.GetTools)
+		protected.POST("/config/models", configHandler.DiscoverModels)
 		protected.PUT("/config", configHandler.UpdateConfig)
 		protected.POST("/config/apply", configHandler.ApplyConfig)
 
@@ -1035,7 +1053,7 @@ func registerVulnerabilityTool(mcpServer *mcp.Server, db *database.DB, logger *z
 			"properties": map[string]interface{}{
 				"title": map[string]interface{}{
 					"type":        "string",
-					"description": "Vulnerability title (required)",
+					"description": "Vulnerability title (optional; auto-generated from description when omitted)",
 				},
 				"description": map[string]interface{}{
 					"type":        "string",
@@ -1067,7 +1085,7 @@ func registerVulnerabilityTool(mcpServer *mcp.Server, db *database.DB, logger *z
 					"description": "Remediation recommendations",
 				},
 			},
-			"required": []string{"title", "severity"},
+			"required": []string{"severity"},
 		},
 	}
 
@@ -1086,18 +1104,8 @@ func registerVulnerabilityTool(mcpServer *mcp.Server, db *database.DB, logger *z
 			}, nil
 		}
 
-		title, ok := args["title"].(string)
-		if !ok || title == "" {
-			return &mcp.ToolResult{
-				Content: []mcp.Content{
-					{
-						Type: "text",
-						Text: "Error: title parameter is required and cannot be empty",
-					},
-				},
-				IsError: true,
-			}, nil
-		}
+		title, _ := args["title"].(string)
+		title = strings.TrimSpace(title)
 
 		severity, ok := args["severity"].(string)
 		if !ok || severity == "" {
@@ -1163,6 +1171,10 @@ func registerVulnerabilityTool(mcpServer *mcp.Server, db *database.DB, logger *z
 			recommendation = r
 		}
 
+		if title == "" {
+			title = autoGenerateVulnerabilityTitle(description, vulnType, target, severity)
+		}
+
 		// create vulnerability record
 		vuln := &database.Vulnerability{
 			ConversationID: conversationID,
@@ -1213,6 +1225,47 @@ func registerVulnerabilityTool(mcpServer *mcp.Server, db *database.DB, logger *z
 	logger.Info("vulnerability recording tool registered successfully")
 }
 
+func autoGenerateVulnerabilityTitle(description, vulnType, target, severity string) string {
+	clean := func(s string) string {
+		return strings.TrimSpace(strings.Join(strings.Fields(s), " "))
+	}
+	clip := func(s string, n int) string {
+		if n <= 0 {
+			return ""
+		}
+		r := []rune(s)
+		if len(r) <= n {
+			return s
+		}
+		return string(r[:n]) + "..."
+	}
+
+	description = clean(description)
+	vulnType = clean(vulnType)
+	target = clean(target)
+	severity = strings.ToUpper(clean(severity))
+
+	if description != "" {
+		return clip(description, 96)
+	}
+
+	parts := make([]string, 0, 3)
+	if severity != "" {
+		parts = append(parts, severity)
+	}
+	if vulnType != "" {
+		parts = append(parts, vulnType)
+	} else {
+		parts = append(parts, "Vulnerability")
+	}
+
+	title := strings.Join(parts, " ")
+	if target != "" {
+		title += " on " + target
+	}
+	return clip(title, 96)
+}
+
 // initializeKnowledge initializes knowledge base components (for dynamic initialization)
 func initializeKnowledge(
 	cfg *config.Config,
@@ -1250,20 +1303,13 @@ func initializeKnowledge(
 	// create knowledge base manager
 	knowledgeManager := knowledge.NewManager(knowledgeDB, cfg.Knowledge.BasePath, logger)
 
-	// create embedder
-	// use OpenAI config API Key (if not specified in knowledge base config)
-	if cfg.Knowledge.Embedding.APIKey == "" {
-		cfg.Knowledge.Embedding.APIKey = cfg.OpenAI.APIKey
-	}
-	if cfg.Knowledge.Embedding.BaseURL == "" {
-		cfg.Knowledge.Embedding.BaseURL = cfg.OpenAI.BaseURL
-	}
-
+	// create embedder (no implicit fallback to OpenAI endpoint for embeddings)
 	httpClient := &http.Client{
 		Timeout: 30 * time.Minute,
 	}
 	openAIClient := openai.NewClient(&cfg.OpenAI, httpClient, logger)
-	embedder := knowledge.NewEmbedder(&cfg.Knowledge, &cfg.OpenAI, openAIClient, logger)
+	embedder := knowledge.NewEmbedder(&cfg.Knowledge, openAIClient, logger)
+	embeddingEnabled := embedder.Enabled()
 
 	// create retriever
 	retrievalConfig := &knowledge.RetrievalConfig{
@@ -1274,7 +1320,7 @@ func initializeKnowledge(
 	knowledgeRetriever := knowledge.NewRetriever(knowledgeDB, embedder, retrievalConfig, logger)
 
 	// create indexer
-	knowledgeIndexer := knowledge.NewIndexer(knowledgeDB, embedder, logger)
+	knowledgeIndexer := knowledge.NewIndexer(knowledgeDB, embedder, logger, cfg.Knowledge.Embedding.MaxTokens)
 
 	// register knowledge retrieval tool to MCP server
 	knowledge.RegisterKnowledgeTool(mcpServer, knowledgeRetriever, knowledgeManager, logger)
@@ -1300,75 +1346,79 @@ func initializeKnowledge(
 	}
 
 	// scan knowledge base and build index (async)
-	go func() {
-		itemsToIndex, err := knowledgeManager.ScanKnowledgeBase()
-		if err != nil {
-			logger.Warn("failed to scan knowledge base", zap.Error(err))
-			return
-		}
-
-		// check if index already exists
-		hasIndex, err := knowledgeIndexer.HasIndex()
-		if err != nil {
-			logger.Warn("failed to check index status", zap.Error(err))
-			return
-		}
-
-		if hasIndex {
-			// if index exists, only index newly added or updated items
-			if len(itemsToIndex) > 0 {
-				logger.Info("existing knowledge base index detected, starting incremental indexing", zap.Int("count", len(itemsToIndex)))
-				ctx := context.Background()
-				consecutiveFailures := 0
-				var firstFailureItemID string
-				var firstFailureError error
-				failedCount := 0
-
-				for _, itemID := range itemsToIndex {
-					if err := knowledgeIndexer.IndexItem(ctx, itemID); err != nil {
-						failedCount++
-						consecutiveFailures++
-
-						if consecutiveFailures == 1 {
-							firstFailureItemID = itemID
-							firstFailureError = err
-							logger.Warn("failed to index knowledge item", zap.String("itemId", itemID), zap.Error(err))
-						}
-
-						// if 2 consecutive failures, immediately stop incremental indexing
-						if consecutiveFailures >= 2 {
-							logger.Error("too many consecutive index failures, stopping incremental indexing immediately",
-								zap.Int("consecutiveFailures", consecutiveFailures),
-								zap.Int("totalItems", len(itemsToIndex)),
-								zap.String("firstFailureItemId", firstFailureItemID),
-								zap.Error(firstFailureError),
-							)
-							break
-						}
-						continue
-					}
-
-					// reset consecutive failure count on success
-					if consecutiveFailures > 0 {
-						consecutiveFailures = 0
-						firstFailureItemID = ""
-						firstFailureError = nil
-					}
-				}
-				logger.Info("incremental indexing complete", zap.Int("totalItems", len(itemsToIndex)), zap.Int("failedCount", failedCount))
-			} else {
-				logger.Info("existing knowledge base index detected, no new or updated items to index")
+	if embeddingEnabled {
+		go func() {
+			itemsToIndex, err := knowledgeManager.ScanKnowledgeBase()
+			if err != nil {
+				logger.Warn("failed to scan knowledge base", zap.Error(err))
+				return
 			}
-			return
-		}
 
-		// only auto-rebuild when no index exists
-		logger.Info("no knowledge base index detected, starting automatic index build")
-		ctx := context.Background()
-		if err := knowledgeIndexer.RebuildIndex(ctx); err != nil {
-			logger.Warn("failed to rebuild knowledge base index", zap.Error(err))
-		}
-	}()
+			// check if index already exists
+			hasIndex, err := knowledgeIndexer.HasIndex()
+			if err != nil {
+				logger.Warn("failed to check index status", zap.Error(err))
+				return
+			}
+
+			if hasIndex {
+				// if index exists, only index newly added or updated items
+				if len(itemsToIndex) > 0 {
+					logger.Info("existing knowledge base index detected, starting incremental indexing", zap.Int("count", len(itemsToIndex)))
+					ctx := context.Background()
+					consecutiveFailures := 0
+					var firstFailureItemID string
+					var firstFailureError error
+					failedCount := 0
+
+					for _, itemID := range itemsToIndex {
+						if err := knowledgeIndexer.IndexItem(ctx, itemID); err != nil {
+							failedCount++
+							consecutiveFailures++
+
+							if consecutiveFailures == 1 {
+								firstFailureItemID = itemID
+								firstFailureError = err
+								logger.Warn("failed to index knowledge item", zap.String("itemId", itemID), zap.Error(err))
+							}
+
+							// if 2 consecutive failures, immediately stop incremental indexing
+							if consecutiveFailures >= 2 {
+								logger.Error("too many consecutive index failures, stopping incremental indexing immediately",
+									zap.Int("consecutiveFailures", consecutiveFailures),
+									zap.Int("totalItems", len(itemsToIndex)),
+									zap.String("firstFailureItemId", firstFailureItemID),
+									zap.Error(firstFailureError),
+								)
+								break
+							}
+							continue
+						}
+
+						// reset consecutive failure count on success
+						if consecutiveFailures > 0 {
+							consecutiveFailures = 0
+							firstFailureItemID = ""
+							firstFailureError = nil
+						}
+					}
+					logger.Info("incremental indexing complete", zap.Int("totalItems", len(itemsToIndex)), zap.Int("failedCount", failedCount))
+				} else {
+					logger.Info("existing knowledge base index detected, no new or updated items to index")
+				}
+				return
+			}
+
+			// only auto-rebuild when no index exists
+			logger.Info("no knowledge base index detected, starting automatic index build")
+			ctx := context.Background()
+			if err := knowledgeIndexer.RebuildIndex(ctx); err != nil {
+				logger.Warn("failed to rebuild knowledge base index", zap.Error(err))
+			}
+		}()
+	} else {
+		logger.Warn("knowledge embedding disabled: missing embedding base_url/model/api_key; skipping index build")
+	}
 
 	return knowledgeHandler, nil
 }

@@ -17,14 +17,15 @@ import (
 	"cyberstrike-ai/internal/openai"
 	"cyberstrike-ai/internal/storage"
 
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
 // Agent represents an AI agent
 type Agent struct {
 	openAIClient          *openai.Client
-	toolOpenAIClient      *openai.Client      // separate client for tool-calling (different base URL / API key)
-	httpClient            *http.Client         // shared HTTP client (kept for creating new openai clients at runtime)
+	toolOpenAIClient      *openai.Client // separate client for tool-calling (different base URL / API key)
+	httpClient            *http.Client   // shared HTTP client (kept for creating new openai clients at runtime)
 	config                *config.OpenAIConfig
 	agentConfig           *config.AgentConfig
 	memoryCompressor      *MemoryCompressor
@@ -106,6 +107,71 @@ func NewAgent(cfg *config.OpenAIConfig, agentCfg *config.AgentConfig, mcpServer 
 		// Set to nil temporarily, initialize when needed
 	}
 
+	// Auto-discover model names from endpoints when not explicitly configured
+	if cfg != nil {
+		autoDiscover := func(baseURL, apiKey string, modelField *string, label string) {
+			if baseURL == "" {
+				return
+			}
+			if modelField == nil {
+				return
+			}
+			current := strings.TrimSpace(*modelField)
+			normalized := strings.ToLower(current)
+			shouldDiscover := current == "" || normalized == "my_model" || normalized == "auto"
+			if !shouldDiscover {
+				logger.Debug("Skipping model auto-discovery because model is explicitly configured",
+					zap.String("label", label),
+					zap.String("configured_model", current),
+					zap.String("base_url", baseURL),
+				)
+				return
+			}
+			// Always query the endpoint to get available models
+			discovered, err := openai.FetchFirstModel(baseURL, apiKey, nil, logger)
+			if err != nil {
+				if modelField != nil && strings.TrimSpace(*modelField) != "" {
+					logger.Info("Could not query models endpoint, keeping configured model name",
+						zap.String("label", label),
+						zap.String("model", *modelField),
+						zap.Error(err),
+					)
+				} else {
+					logger.Warn("Failed to auto-discover model, manual configuration required",
+						zap.String("label", label),
+						zap.String("base_url", baseURL),
+						zap.Error(err),
+					)
+				}
+				return
+			}
+			if current != discovered {
+				logger.Info("Auto-discovered model name",
+					zap.String("label", label),
+					zap.String("configured", current),
+					zap.String("model", discovered),
+					zap.String("base_url", baseURL),
+				)
+				*modelField = discovered
+			}
+		}
+
+		// Main model
+		autoDiscover(cfg.BaseURL, cfg.APIKey, &cfg.Model, "main")
+
+		// Tool model (only if tool_base_url is set but tool_model is empty)
+		if cfg.ToolBaseURL != "" && cfg.ToolModel == "" {
+			toolBaseURL, toolAPIKey := cfg.EffectiveToolConfig()
+			autoDiscover(toolBaseURL, toolAPIKey, &cfg.ToolModel, "tool")
+		}
+
+		// Summary model (only if summary_base_url is set but summary_model is empty)
+		if cfg.SummaryBaseURL != "" && cfg.SummaryModel == "" {
+			sumBaseURL, sumAPIKey := cfg.EffectiveSummaryConfig()
+			autoDiscover(sumBaseURL, sumAPIKey, &cfg.SummaryModel, "summary")
+		}
+	}
+
 	// Configure HTTP Transport, optimize connection management and timeout settings
 	transport := &http.Transport{
 		DialContext: (&net.Dialer{
@@ -137,6 +203,12 @@ func NewAgent(cfg *config.OpenAIConfig, agentCfg *config.AgentConfig, mcpServer 
 			BaseURL: toolBaseURL,
 		}
 		toolClient = openai.NewClient(toolCfg, httpClient, logger)
+		logger.Info("Tool model client initialized",
+			zap.String("tool_model", cfg.ToolModel),
+			zap.String("tool_base_url", toolBaseURL),
+		)
+	} else {
+		logger.Info("No dedicated tool model configured, using main model for tool calls")
 	}
 
 	var memoryCompressor *MemoryCompressor
@@ -267,9 +339,10 @@ func (cm ChatMessage) MarshalJSON() ([]byte, error) {
 
 // OpenAIRequest represents an OpenAI API request
 type OpenAIRequest struct {
-	Model    string        `json:"model"`
-	Messages []ChatMessage `json:"messages"`
-	Tools    []Tool        `json:"tools,omitempty"`
+	Model             string        `json:"model"`
+	Messages          []ChatMessage `json:"messages"`
+	Tools             []Tool        `json:"tools,omitempty"`
+	ParallelToolCalls *bool         `json:"parallel_tool_calls,omitempty"`
 }
 
 // OpenAIResponse represents an OpenAI API response
@@ -760,6 +833,7 @@ Assessment methodology:
 - Scope definition — clearly establish boundaries first
 - Breadth-first discovery — map the full attack surface before going deep
 - Automated scanning — cover with multiple tools
+- Parallel tool calls — when multiple independent scans are needed (e.g. scanning different subdomains, running nmap and subfinder simultaneously), call multiple tools in a single response to save time
 - Targeted exploitation — focus on high-impact vulnerabilities
 - Continuous iteration — cycle forward with new insights
 - Impact documentation — assess business context
@@ -785,16 +859,38 @@ Bug bounty mindset:
 - Remember: a single high-impact vulnerability is worth more than dozens of low-severity ones.
 
 Thinking and reasoning requirements:
-Before calling tools, provide 5-10 sentences (50-150 words) of thinking in the message content, including:
-1. Current testing objective and reason for tool selection
-2. Contextual connections based on previous results
-3. Expected test outcomes
+You MUST always explain your thought process before AND after tool calls. Be verbose and transparent about your reasoning — the user wants to understand what you are doing and why.
+
+Before calling tools, provide a detailed explanation (100-300 words) that includes:
+1. What you are about to do and WHY — explain the strategic reasoning behind the next step
+2. How this connects to previous results — what you learned and how it shapes your next move
+3. What you expect to find and what it would mean for the overall assessment
+4. Any alternative approaches you considered and why you chose this one
+
+After receiving tool results, ALWAYS provide analysis (100-200 words) that includes:
+1. What the results mean — interpret findings for the user
+2. Key discoveries or notable observations
+3. How this changes or confirms your current understanding
+4. What the next logical step is based on these results
 
 Requirements:
-- ✅ Clear expression in 2-4 sentences
-- ✅ Include key decision rationale
-- ❌ Do not write only one sentence
-- ❌ Do not exceed 10 sentences
+- ✅ Always explain your reasoning — never call a tool silently without context
+- ✅ Share your thought process openly — think out loud
+- ✅ Summarize progress periodically (every 5-10 steps) — recap what was found so far
+- ✅ When starting a new phase of testing, explain the transition and why
+- ✅ Include key decision rationale and strategic thinking
+- ❌ Do not call tools without any explanatory text
+- ❌ Do not give single-sentence explanations — be thorough
+- ❌ Do not exceed 300 words per explanation block
+
+Resumption and continuity:
+When you detect that this is a resumed or continuing conversation (i.e. there are historical messages above):
+1. FIRST check persistent memory (list_memories, retrieve_memory) to recall what was done previously
+2. Provide a brief summary of prior progress to the user: what was tested, what was found, where you stopped
+3. Acknowledge any new instructions or comments from the user
+4. Continue from exactly where you left off — do not restart scans that were already completed
+5. Store your current progress/plan in persistent memory (category=plan) so it survives future interruptions
+6. At the start of each major phase, update your plan memory with completed and remaining steps
 
 Important: When a tool call fails, follow these principles:
 1. Carefully analyze the error message to understand the specific cause of failure
@@ -827,6 +923,10 @@ Memory management:
   * false_positive — investigated and ruled out; prevents re-investigation
   * disproven     — fact was found incorrect
 - Store memories proactively — memory survives conversation compression and server restarts
+- CRITICAL: Always maintain a plan memory (category=plan) that tracks your testing progress:
+  * Update it after each major step completes (prefix completed steps with [DONE])
+  * Include what was found, what remains, and your next intended action
+  * This is your lifeline for resuming after interruptions — keep it current
 - Before starting a scan you already ran, check tool_run memories first to avoid duplicate work
 - Mandatory introspection before major new actions:
   1. Check similar memory entries for this target/task (` + builtin.ToolRetrieveMemory + `, ` + builtin.ToolListMemories + ` with entity/category filters)
@@ -1021,9 +1121,9 @@ Skills Library:
 					"late":       true,
 				})
 				messages = append(messages, ChatMessage{
-					Role: "system",
+					Role: "user",
 					Content: fmt.Sprintf(
-						"Background tool %s finished with error. Integrate this into your next reasoning:\n%s",
+						"[System Notice] Background tool %s finished with error. Integrate this into your next reasoning:\n%s",
 						pr.toolName,
 						pr.execErr.Error(),
 					),
@@ -1066,9 +1166,9 @@ Skills Library:
 				contextResult = contextResult[:4000] + "\n...[truncated]"
 			}
 			messages = append(messages, ChatMessage{
-				Role: "system",
+				Role: "user",
 				Content: fmt.Sprintf(
-					"Background tool %s finished. Integrate this result into your next reasoning.\nExecution ID: %s\nResult:\n%s",
+					"[System Notice] Background tool %s finished. Integrate this result into your next reasoning.\nExecution ID: %s\nResult:\n%s",
 					pr.toolName,
 					execResult.ExecutionID,
 					contextResult,
@@ -1112,8 +1212,8 @@ Skills Library:
 		messages = a.applyMemoryCompression(ctx, messages, toolsTokens)
 		if poolContext := buildToolPoolContext(); poolContext != "" {
 			messages = append(messages, ChatMessage{
-				Role:    "system",
-				Content: poolContext,
+				Role:    "user",
+				Content: "[System Notice] " + poolContext,
 			})
 		}
 
@@ -1261,6 +1361,17 @@ Skills Library:
 		}
 
 		choice := response.Choices[0]
+
+		a.logger.Info("OpenAI response received",
+			zap.String("finish_reason", choice.FinishReason),
+			zap.Int("tool_calls_count", len(choice.Message.ToolCalls)),
+			zap.String("content_preview", func() string {
+				if len(choice.Message.Content) > 100 {
+					return choice.Message.Content[:100] + "..."
+				}
+				return choice.Message.Content
+			}()),
+		)
 
 		// Check if there are tool calls
 		if len(choice.Message.ToolCalls) > 0 {
@@ -1467,12 +1578,69 @@ Skills Library:
 						continue
 					}
 
-					// Execute tool
-					execResult, err := a.executeToolViaMCP(ctx, toolCall.Function.Name, toolCall.Function.Arguments)
-					if err != nil {
+					// Execute tool with timeout — if it takes longer than parallelToolWait,
+					// defer it to the background and let the model continue.
+					type seqOutcome struct {
+						execResult *ToolExecutionResult
+						execErr    error
+					}
+					seqDone := make(chan seqOutcome, 1)
+					go func() {
+						r, e := a.executeToolViaMCP(ctx, toolCall.Function.Name, toolCall.Function.Arguments)
+						seqDone <- seqOutcome{execResult: r, execErr: e}
+					}()
+
+					seqTimer := time.NewTimer(a.parallelToolWait)
+					var seqResult seqOutcome
+					deferred := false
+
+					select {
+					case seqResult = <-seqDone:
+						seqTimer.Stop()
+					case <-seqTimer.C:
+						// Tool is still running — defer to background
+						deferred = true
+						deferredInFlight++
+						placeholder := fmt.Sprintf("Tool %s is still running in background (exceeded %v wait). Continue with other tasks; results will be integrated when available.", toolCall.Function.Name, a.parallelToolWait)
+						messages = append(messages, ChatMessage{
+							Role:       "tool",
+							ToolCallID: toolCall.ID,
+							Content:    placeholder,
+						})
+						updateToolPool(toolCall.ID, toolCall.Function.Name, "deferred", "", "", "", "", toolCall.Function.Arguments, false)
+						sendProgress("tool_deferred", fmt.Sprintf("Tool %s deferred to background", toolCall.Function.Name), map[string]interface{}{
+							"toolName":   toolCall.Function.Name,
+							"toolCallId": toolCall.ID,
+							"index":      idx + 1,
+							"total":      totalTools,
+							"iteration":  i + 1,
+						})
+						a.logger.Info("Sequential tool deferred to background",
+							zap.String("tool", toolCall.Function.Name),
+							zap.Duration("wait", a.parallelToolWait),
+						)
+						// Collect result in background and feed it back
+						go func(tc ToolCall) {
+							out := <-seqDone
+							backgroundResultCh <- parallelToolCallResult{
+								index:      idx,
+								toolCallID: tc.ID,
+								toolName:   tc.Function.Name,
+								arguments:  tc.Function.Arguments,
+								execResult: out.execResult,
+								execErr:    out.execErr,
+							}
+						}(toolCall)
+					}
+
+					if deferred {
+						continue
+					}
+
+					if seqResult.execErr != nil {
 						// Build detailed error message to help AI understand the problem and make decisions
-						errorMsg := a.formatToolError(toolCall.Function.Name, toolCall.Function.Arguments, err)
-						updateToolPool(toolCall.ID, toolCall.Function.Name, "failed", "", "", "", err.Error(), toolCall.Function.Arguments, true)
+						errorMsg := a.formatToolError(toolCall.Function.Name, toolCall.Function.Arguments, seqResult.execErr)
+						updateToolPool(toolCall.ID, toolCall.Function.Name, "failed", "", "", "", seqResult.execErr.Error(), toolCall.Function.Arguments, true)
 						messages = append(messages, ChatMessage{
 							Role:       "tool",
 							ToolCallID: toolCall.ID,
@@ -1484,7 +1652,7 @@ Skills Library:
 							"toolName":   toolCall.Function.Name,
 							"success":    false,
 							"isError":    true,
-							"error":      err.Error(),
+							"error":      seqResult.execErr.Error(),
 							"toolCallId": toolCall.ID,
 							"index":      idx + 1,
 							"total":      totalTools,
@@ -1493,9 +1661,10 @@ Skills Library:
 
 						a.logger.Warn("Tool execution failed, detailed error message returned",
 							zap.String("tool", toolCall.Function.Name),
-							zap.Error(err),
+							zap.Error(seqResult.execErr),
 						)
 					} else {
+						execResult := seqResult.execResult
 						// Even if the tool returned an error result (IsError=true), continue processing and let AI decide the next step
 						messages = append(messages, ChatMessage{
 							Role:       "tool",
@@ -1897,6 +2066,16 @@ func (a *Agent) isRetryableError(err error) bool {
 	return false
 }
 
+func isToolModelNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "status=404") ||
+		strings.Contains(s, "\"detail\":\"not found\"") ||
+		strings.Contains(s, "model") && strings.Contains(s, "does not exist")
+}
+
 // callOpenAI calls the OpenAI API (with retry mechanism)
 func (a *Agent) callOpenAI(ctx context.Context, messages []ChatMessage, tools []Tool) (*OpenAIResponse, error) {
 	maxRetries := 3
@@ -1953,22 +2132,50 @@ func (a *Agent) callOpenAI(ctx context.Context, messages []ChatMessage, tools []
 // callOpenAISingle makes a single OpenAI API call (without retry logic)
 func (a *Agent) callOpenAISingle(ctx context.Context, messages []ChatMessage, tools []Tool) (*OpenAIResponse, error) {
 	model := a.config.Model
-	if len(tools) > 0 && a.config.ToolModel != "" {
+	useToolModel := len(tools) > 0 && a.config.ToolModel != ""
+	if useToolModel {
 		model = a.config.ToolModel
+	}
+
+	// When routing to a dedicated (smaller) tool model, trim the conversation
+	// to the system prompt + the last few messages.  The tool model only needs
+	// enough context to decide which tool to call; it does not need the full
+	// conversation history.
+	msgs := messages
+	if useToolModel && a.toolOpenAIClient != nil {
+		msgs = trimMessagesForToolModel(messages)
+		a.logger.Info("Routing to tool model with trimmed context",
+			zap.String("tool_model", model),
+			zap.Int("originalMessages", len(messages)),
+			zap.Int("trimmedMessages", len(msgs)),
+			zap.Int("originalTools", len(tools)),
+		)
+	} else if useToolModel {
+		a.logger.Warn("Tool model configured but toolOpenAIClient is nil, using main client with full context",
+			zap.String("tool_model", model),
+		)
 	}
 
 	reqBody := OpenAIRequest{
 		Model:    model,
-		Messages: messages,
+		Messages: msgs,
 	}
 
 	if len(tools) > 0 {
-		reqBody.Tools = tools
+		if useToolModel && a.toolOpenAIClient != nil {
+			reqBody.Tools = trimToolsForToolModel(tools)
+		} else {
+			reqBody.Tools = tools
+		}
+		if a.parallelToolExecution {
+			t := true
+			reqBody.ParallelToolCalls = &t
+		}
 	}
 
 	a.logger.Debug("Preparing to send OpenAI request",
-		zap.Int("messagesCount", len(messages)),
-		zap.Int("toolsCount", len(tools)),
+		zap.Int("messagesCount", len(msgs)),
+		zap.Int("toolsCount", len(reqBody.Tools)),
 	)
 
 	// Use the dedicated tool client when tools are present and it's configured.
@@ -1982,10 +2189,177 @@ func (a *Agent) callOpenAISingle(ctx context.Context, messages []ChatMessage, to
 		return nil, fmt.Errorf("OpenAI client not initialized")
 	}
 	if err := client.ChatCompletion(ctx, reqBody, &response); err != nil {
+		// If dedicated tool model/endpoint is misconfigured, fall back to main model
+		// instead of failing the whole session.
+		if len(tools) > 0 && client == a.toolOpenAIClient && isToolModelNotFoundError(err) {
+			a.logger.Warn("Tool model call failed with 404/not-found, falling back to main model",
+				zap.Error(err),
+				zap.String("tool_model", a.config.ToolModel),
+				zap.String("main_model", a.config.Model),
+			)
+			fallbackReq := OpenAIRequest{
+				Model:    a.config.Model,
+				Messages: messages,
+				Tools:    tools,
+			}
+			if a.parallelToolExecution {
+				t := true
+				fallbackReq.ParallelToolCalls = &t
+			}
+			var fallbackResp OpenAIResponse
+			if a.openAIClient == nil {
+				return nil, fmt.Errorf("OpenAI client not initialized for fallback")
+			}
+			if fbErr := a.openAIClient.ChatCompletion(ctx, fallbackReq, &fallbackResp); fbErr != nil {
+				return nil, fbErr
+			}
+			return &fallbackResp, nil
+		}
 		return nil, err
 	}
 
 	return &response, nil
+}
+
+// trimMessagesForToolModel keeps only what the tool model needs to decide
+// which tool to call.
+func trimMessagesForToolModel(messages []ChatMessage) []ChatMessage {
+	const (
+		tailSize           = 3
+		maxSystemChars     = 1200
+		maxToolResultChars = 400
+	)
+
+	// Keep only the first system message, trimmed.
+	var systemMsg *ChatMessage
+	var otherMsgs []ChatMessage
+	for i := range messages {
+		if messages[i].Role == "system" && systemMsg == nil {
+			trimmed := messages[i]
+			if len(trimmed.Content) > maxSystemChars {
+				trimmed.Content = trimmed.Content[:maxSystemChars] + "\n...[trimmed]"
+			}
+			systemMsg = &trimmed
+		} else if messages[i].Role != "system" {
+			otherMsgs = append(otherMsgs, messages[i])
+		}
+	}
+
+	// Keep only the last tailSize non-system messages.
+	if len(otherMsgs) > tailSize {
+		otherMsgs = otherMsgs[len(otherMsgs)-tailSize:]
+	}
+
+	// Truncate long tool results in the tail.
+	for i := range otherMsgs {
+		if otherMsgs[i].Role == "tool" && len(otherMsgs[i].Content) > maxToolResultChars {
+			otherMsgs[i].Content = otherMsgs[i].Content[:maxToolResultChars] + "\n...[truncated]"
+		}
+	}
+
+	result := make([]ChatMessage, 0, 1+len(otherMsgs))
+	if systemMsg != nil {
+		result = append(result, *systemMsg)
+	}
+	result = append(result, otherMsgs...)
+	return result
+}
+
+// trimToolsForToolModel compacts descriptions and parameter schemas so large
+// tool catalogs can fit within smaller tool-model context limits.
+func trimToolsForToolModel(tools []Tool) []Tool {
+	const (
+		maxDescChars = 96
+		maxProps     = 8
+		maxRequired  = 4
+	)
+	trimmed := make([]Tool, len(tools))
+	for i, t := range tools {
+		trimmed[i] = Tool{
+			Type: t.Type,
+			Function: FunctionDefinition{
+				Name:        t.Function.Name,
+				Description: t.Function.Description,
+				Parameters:  compactToolParameters(t.Function.Parameters, maxProps, maxRequired),
+			},
+		}
+		if len(trimmed[i].Function.Description) > maxDescChars {
+			trimmed[i].Function.Description = trimmed[i].Function.Description[:maxDescChars] + "..."
+		}
+	}
+	return trimmed
+}
+
+func compactToolParameters(params map[string]interface{}, maxProps, maxRequired int) map[string]interface{} {
+	if len(params) == 0 {
+		return map[string]interface{}{
+			"type":       "object",
+			"properties": map[string]interface{}{},
+		}
+	}
+
+	result := map[string]interface{}{
+		"type": "object",
+	}
+
+	props, _ := params["properties"].(map[string]interface{})
+	if len(props) > 0 {
+		keys := make([]string, 0, len(props))
+		for k := range props {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		if len(keys) > maxProps {
+			keys = keys[:maxProps]
+		}
+
+		cProps := make(map[string]interface{}, len(keys))
+		for _, k := range keys {
+			entry := map[string]interface{}{}
+			if raw, ok := props[k].(map[string]interface{}); ok {
+				if typ, ok := raw["type"]; ok {
+					entry["type"] = typ
+				}
+				if enumV, ok := raw["enum"]; ok {
+					entry["enum"] = enumV
+				}
+			}
+			if len(entry) == 0 {
+				entry["type"] = "string"
+			}
+			cProps[k] = entry
+		}
+		result["properties"] = cProps
+	} else {
+		result["properties"] = map[string]interface{}{}
+	}
+
+	if rawRequired, ok := params["required"].([]interface{}); ok && len(rawRequired) > 0 {
+		required := make([]string, 0, len(rawRequired))
+		propSet := map[string]struct{}{}
+		if p, ok := result["properties"].(map[string]interface{}); ok {
+			for name := range p {
+				propSet[name] = struct{}{}
+			}
+		}
+		for _, v := range rawRequired {
+			name, ok := v.(string)
+			if !ok {
+				continue
+			}
+			if _, exists := propSet[name]; exists {
+				required = append(required, name)
+			}
+		}
+		if len(required) > maxRequired {
+			required = required[:maxRequired]
+		}
+		if len(required) > 0 {
+			result["required"] = required
+		}
+	}
+
+	return result
 }
 
 // ToolExecutionResult represents the result of a tool execution
@@ -2376,6 +2750,13 @@ Suggestions:
 
 	resultStr := resultText.String()
 	resultSize := len(resultStr)
+	if strings.TrimSpace(executionID) == "" {
+		executionID = uuid.NewString()
+		a.logger.Warn("Tool returned empty execution ID; generated local fallback ID",
+			zap.String("tool", toolName),
+			zap.String("executionID", executionID),
+		)
+	}
 
 	// Detect large results and save
 	a.mu.RLock()
@@ -2384,22 +2765,20 @@ Suggestions:
 	a.mu.RUnlock()
 
 	if resultSize > threshold && storage != nil {
-		// Asynchronously save large result
-		go func() {
-			if err := storage.SaveResult(executionID, toolName, resultStr); err != nil {
-				a.logger.Warn("Failed to save large result",
-					zap.String("executionID", executionID),
-					zap.String("toolName", toolName),
-					zap.Error(err),
-				)
-			} else {
-				a.logger.Info("Large result saved",
-					zap.String("executionID", executionID),
-					zap.String("toolName", toolName),
-					zap.Int("size", resultSize),
-				)
-			}
-		}()
+		// Save synchronously so query_execution_result can read immediately.
+		if err := storage.SaveResult(executionID, toolName, resultStr); err != nil {
+			a.logger.Warn("Failed to save large result",
+				zap.String("executionID", executionID),
+				zap.String("toolName", toolName),
+				zap.Error(err),
+			)
+		} else {
+			a.logger.Info("Large result saved",
+				zap.String("executionID", executionID),
+				zap.String("toolName", toolName),
+				zap.Int("size", resultSize),
+			)
+		}
 
 		// Return minimal notification
 		lines := strings.Split(resultStr, "\n")

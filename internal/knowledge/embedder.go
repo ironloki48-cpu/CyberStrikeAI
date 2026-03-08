@@ -18,18 +18,26 @@ import (
 type Embedder struct {
 	openAIClient *openai.Client
 	config       *config.KnowledgeConfig
-	openAIConfig *config.OpenAIConfig // used to retrieve the API Key
 	logger       *zap.Logger
 }
 
 // NewEmbedder creates a new embedder
-func NewEmbedder(cfg *config.KnowledgeConfig, openAIConfig *config.OpenAIConfig, openAIClient *openai.Client, logger *zap.Logger) *Embedder {
+func NewEmbedder(cfg *config.KnowledgeConfig, openAIClient *openai.Client, logger *zap.Logger) *Embedder {
 	return &Embedder{
 		openAIClient: openAIClient,
 		config:       cfg,
-		openAIConfig: openAIConfig,
 		logger:       logger,
 	}
+}
+
+// Enabled reports whether embedding is fully configured.
+func (e *Embedder) Enabled() bool {
+	if e == nil || e.config == nil {
+		return false
+	}
+	return strings.TrimSpace(e.config.Embedding.BaseURL) != "" &&
+		strings.TrimSpace(e.config.Embedding.Model) != "" &&
+		strings.TrimSpace(e.config.Embedding.APIKey) != ""
 }
 
 // EmbeddingRequest is the OpenAI embedding request
@@ -40,7 +48,7 @@ type EmbeddingRequest struct {
 
 // EmbeddingResponse is the OpenAI embedding response
 type EmbeddingResponse struct {
-	Data []EmbeddingData `json:"data"`
+	Data  []EmbeddingData `json:"data"`
 	Error *EmbeddingError `json:"error,omitempty"`
 }
 
@@ -63,9 +71,9 @@ func (e *Embedder) EmbedText(ctx context.Context, text string) ([]float32, error
 	}
 
 	// use the configured embedding model
-	model := e.config.Embedding.Model
+	model := strings.TrimSpace(e.config.Embedding.Model)
 	if model == "" {
-		model = "text-embedding-3-small"
+		return nil, fmt.Errorf("embedding is disabled: knowledge.embedding.model is not configured")
 	}
 
 	req := EmbeddingRequest{
@@ -77,7 +85,7 @@ func (e *Embedder) EmbedText(ctx context.Context, text string) ([]float32, error
 	baseURL := strings.TrimSpace(e.config.Embedding.BaseURL)
 	baseURL = strings.TrimSuffix(baseURL, "/")
 	if baseURL == "" {
-		baseURL = "https://api.openai.com/v1"
+		return nil, fmt.Errorf("embedding is disabled: knowledge.embedding.base_url is not configured")
 	}
 
 	// build request
@@ -96,11 +104,8 @@ func (e *Embedder) EmbedText(ctx context.Context, text string) ([]float32, error
 
 	// use configured API Key, fall back to OpenAI config if not set
 	apiKey := strings.TrimSpace(e.config.Embedding.APIKey)
-	if apiKey == "" && e.openAIConfig != nil {
-		apiKey = e.openAIConfig.APIKey
-	}
 	if apiKey == "" {
-		return nil, fmt.Errorf("API Key not configured")
+		return nil, fmt.Errorf("embedding is disabled: knowledge.embedding.api_key is not configured")
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 

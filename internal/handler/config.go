@@ -15,6 +15,7 @@ import (
 	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/knowledge"
 	"cyberstrike-ai/internal/mcp"
+	"cyberstrike-ai/internal/openai"
 	"cyberstrike-ai/internal/security"
 
 	"github.com/gin-gonic/gin"
@@ -30,6 +31,9 @@ type VulnerabilityToolRegistrar func() error
 
 // SkillsToolRegistrar Skills tool registrar interface
 type SkillsToolRegistrar func() error
+
+// BuiltinToolRegistrar generic registrar for builtin tools (memory, time, etc.)
+type BuiltinToolRegistrar func() error
 
 // RetrieverUpdater retriever updater interface
 type RetrieverUpdater interface {
@@ -61,6 +65,8 @@ type ConfigHandler struct {
 	knowledgeToolRegistrar     KnowledgeToolRegistrar     // knowledge base tool registrar (optional)
 	vulnerabilityToolRegistrar VulnerabilityToolRegistrar // vulnerability tool registrar (optional)
 	skillsToolRegistrar        SkillsToolRegistrar        // Skills tool registrar (optional)
+	memoryToolRegistrar        BuiltinToolRegistrar       // memory tool registrar (optional)
+	timeToolRegistrar          BuiltinToolRegistrar       // time tool registrar (optional)
 	retrieverUpdater           RetrieverUpdater           // retriever updater (optional)
 	knowledgeInitializer       KnowledgeInitializer       // knowledge base initializer (optional)
 	appUpdater                 AppUpdater                 // App updater (optional)
@@ -127,6 +133,20 @@ func (h *ConfigHandler) SetSkillsToolRegistrar(registrar SkillsToolRegistrar) {
 	h.skillsToolRegistrar = registrar
 }
 
+// SetMemoryToolRegistrar sets the persistent memory tool registrar
+func (h *ConfigHandler) SetMemoryToolRegistrar(registrar BuiltinToolRegistrar) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.memoryToolRegistrar = registrar
+}
+
+// SetTimeToolRegistrar sets the time awareness tool registrar
+func (h *ConfigHandler) SetTimeToolRegistrar(registrar BuiltinToolRegistrar) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.timeToolRegistrar = registrar
+}
+
 // SetRetrieverUpdater sets the retriever updater
 func (h *ConfigHandler) SetRetrieverUpdater(updater RetrieverUpdater) {
 	h.mu.Lock()
@@ -162,13 +182,13 @@ type SecuritySettingsResponse struct {
 
 // GetConfigResponse get configuration response
 type GetConfigResponse struct {
-	OpenAI    config.OpenAIConfig    `json:"openai"`
-	FOFA      config.FofaConfig      `json:"fofa"`
-	MCP       config.MCPConfig       `json:"mcp"`
-	Tools     []ToolConfigInfo       `json:"tools"`
-	Agent     config.AgentConfig     `json:"agent"`
-	Knowledge config.KnowledgeConfig `json:"knowledge"`
-	Robots    config.RobotsConfig    `json:"robots,omitempty"`
+	OpenAI    config.OpenAIConfig      `json:"openai"`
+	FOFA      config.FofaConfig        `json:"fofa"`
+	MCP       config.MCPConfig         `json:"mcp"`
+	Tools     []ToolConfigInfo         `json:"tools"`
+	Agent     config.AgentConfig       `json:"agent"`
+	Knowledge config.KnowledgeConfig   `json:"knowledge"`
+	Robots    config.RobotsConfig      `json:"robots,omitempty"`
 	Security  SecuritySettingsResponse `json:"security"`
 }
 
@@ -502,14 +522,44 @@ type SecuritySettingsRequest struct {
 
 // UpdateConfigRequest update configuration request
 type UpdateConfigRequest struct {
-	OpenAI    *config.OpenAIConfig    `json:"openai,omitempty"`
-	FOFA      *config.FofaConfig      `json:"fofa,omitempty"`
-	MCP       *config.MCPConfig       `json:"mcp,omitempty"`
-	Tools     []ToolEnableStatus      `json:"tools,omitempty"`
-	Agent     *config.AgentConfig     `json:"agent,omitempty"`
-	Knowledge *config.KnowledgeConfig `json:"knowledge,omitempty"`
-	Robots    *config.RobotsConfig    `json:"robots,omitempty"`
+	OpenAI    *config.OpenAIConfig     `json:"openai,omitempty"`
+	FOFA      *config.FofaConfig       `json:"fofa,omitempty"`
+	MCP       *config.MCPConfig        `json:"mcp,omitempty"`
+	Tools     []ToolEnableStatus       `json:"tools,omitempty"`
+	Agent     *config.AgentConfig      `json:"agent,omitempty"`
+	Knowledge *config.KnowledgeConfig  `json:"knowledge,omitempty"`
+	Robots    *config.RobotsConfig     `json:"robots,omitempty"`
 	Security  *SecuritySettingsRequest `json:"security,omitempty"`
+}
+
+type DiscoverModelsRequest struct {
+	BaseURL string `json:"base_url"`
+	APIKey  string `json:"api_key,omitempty"`
+}
+
+// DiscoverModels fetches available models from an OpenAI-compatible endpoint.
+func (h *ConfigHandler) DiscoverModels(c *gin.Context) {
+	var req DiscoverModelsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request parameters: " + err.Error()})
+		return
+	}
+	baseURL := strings.TrimSpace(req.BaseURL)
+	if baseURL == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "base_url is required"})
+		return
+	}
+
+	models, err := openai.FetchModels(baseURL, strings.TrimSpace(req.APIKey), nil)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"base_url": baseURL,
+		"models":   models,
+	})
 }
 
 // ToolEnableStatus tool enable status
@@ -585,6 +635,10 @@ func (h *ConfigHandler) UpdateConfig(c *gin.Context) {
 			zap.Float64("hybrid_weight", h.config.Knowledge.Retrieval.HybridWeight),
 		)
 	}
+
+	// Always normalize model defaults after partial updates so empty fields
+	// automatically inherit default/main model values.
+	h.config.ApplyModelDefaults()
 
 	// Update robot config
 	if req.Robots != nil {
@@ -823,6 +877,26 @@ func (h *ConfigHandler) ApplyConfig(c *gin.Context) {
 			h.logger.Error("Failed to re-register Skills tools", zap.Error(err))
 		} else {
 			h.logger.Info("Skills tools re-registered")
+		}
+	}
+
+	// Re-register memory tools (built-in, must be registered)
+	if h.memoryToolRegistrar != nil {
+		h.logger.Info("Re-registering memory tools")
+		if err := h.memoryToolRegistrar(); err != nil {
+			h.logger.Error("Failed to re-register memory tools", zap.Error(err))
+		} else {
+			h.logger.Info("Memory tools re-registered")
+		}
+	}
+
+	// Re-register time tools (built-in, must be registered)
+	if h.timeToolRegistrar != nil {
+		h.logger.Info("Re-registering time tools")
+		if err := h.timeToolRegistrar(); err != nil {
+			h.logger.Error("Failed to re-register time tools", zap.Error(err))
+		} else {
+			h.logger.Info("Time tools re-registered")
 		}
 	}
 

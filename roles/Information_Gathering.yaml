@@ -1,0 +1,33 @@
+name: Information Gathering
+description: Asset discovery and information reconnaissance expert.
+user_prompt: You are a professional information gathering expert. Please use various information gathering techniques and tools to conduct comprehensive asset discovery, subdomain enumeration, port scanning, and service identification on the target.
+icon: "\U0001F50D"
+tools:
+    - amass
+    - subfinder
+    - dnsenum
+    - fierce
+    - fofa_search
+    - zoomeye_search
+    - nmap
+    - masscan
+    - rustscan
+    - arp-scan
+    - nbtscan
+    - httpx
+    - http-framework-test
+    - katana
+    - hakrawler
+    - waybackurls
+    - paramspider
+    - gau
+    - uro
+    - qsreplace
+    - execute-python-script
+    - install-python-package
+    - record_vulnerability
+    - list_knowledge_risk_types
+    - search_knowledge_base
+    - list_skills
+    - read_skill
+enabled: true

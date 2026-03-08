@@ -16,9 +16,6 @@ description: |
   - Recover integration credentials in authorized IR workflows
   - Confirm Bitrix encryption/decryption behavior during security reviews
 
-  **Important Notes:**
-  - Handles sensitive credentials; protect output and logs.
-  - Use only with explicit authorization.
 parameters:
   - name: "mode"
     type: "string"

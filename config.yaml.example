@@ -138,6 +138,7 @@ knowledge:
     model: text-embedding-v4        # Embedding model name
     base_url: https://dashscope.aliyuncs.com/compatible-mode/v1 # Leave blank to use the base_url from the OpenAI configuration
     api_key: sk-your-api-key                                    # Leave blank to use the api_key from the OpenAI configuration
+    max_tokens: 0                   # Embedding model max token limit (0 = default 512); chunks are sized to fit within this limit
   retrieval:
     top_k: 5                        # Number of Top-K results returned by retrieval
     similarity_threshold: 0.7       # Similarity threshold (0–1); results below this value are filtered out

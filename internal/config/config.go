@@ -40,12 +40,12 @@ type RobotsConfig struct {
 
 // RobotWecomConfig holds the WeCom (Enterprise WeChat) bot configuration.
 type RobotWecomConfig struct {
-	Enabled       bool   `yaml:"enabled" json:"enabled"`
-	Token         string `yaml:"token" json:"token"`                     // Callback URL verification token
+	Enabled        bool   `yaml:"enabled" json:"enabled"`
+	Token          string `yaml:"token" json:"token"`                       // Callback URL verification token
 	EncodingAESKey string `yaml:"encoding_aes_key" json:"encoding_aes_key"` // EncodingAESKey
-	CorpID        string `yaml:"corp_id" json:"corp_id"`               // Enterprise ID
-	Secret        string `yaml:"secret" json:"secret"`                  // Application Secret
-	AgentID       int64  `yaml:"agent_id" json:"agent_id"`              // Application AgentId
+	CorpID         string `yaml:"corp_id" json:"corp_id"`                   // Enterprise ID
+	Secret         string `yaml:"secret" json:"secret"`                     // Application Secret
+	AgentID        int64  `yaml:"agent_id" json:"agent_id"`                 // Application AgentId
 }
 
 // RobotLarkConfig holds the Lark (Feishu) bot configuration.
@@ -59,7 +59,7 @@ type RobotLarkConfig struct {
 // RobotTelegramConfig holds the Telegram bot configuration.
 type RobotTelegramConfig struct {
 	Enabled        bool    `yaml:"enabled" json:"enabled"`
-	BotToken       string  `yaml:"bot_token" json:"bot_token"`                               // Bot token from @BotFather
+	BotToken       string  `yaml:"bot_token" json:"bot_token"`                                   // Bot token from @BotFather
 	AllowedUserIDs []int64 `yaml:"allowed_user_ids,omitempty" json:"allowed_user_ids,omitempty"` // Whitelist of Telegram user IDs; empty = allow all
 }
 
@@ -80,16 +80,38 @@ type MCPConfig struct {
 }
 
 type OpenAIConfig struct {
-	APIKey          string `yaml:"api_key" json:"api_key"`
-	BaseURL         string `yaml:"base_url" json:"base_url"`
-	Model           string `yaml:"model" json:"model"`
-	ToolModel       string `yaml:"tool_model,omitempty" json:"tool_model,omitempty"`
-	ToolBaseURL     string `yaml:"tool_base_url,omitempty" json:"tool_base_url,omitempty"`
-	ToolAPIKey      string `yaml:"tool_api_key,omitempty" json:"tool_api_key,omitempty"`
-	SummaryModel    string `yaml:"summary_model,omitempty" json:"summary_model,omitempty"`
-	SummaryBaseURL  string `yaml:"summary_base_url,omitempty" json:"summary_base_url,omitempty"`
-	SummaryAPIKey   string `yaml:"summary_api_key,omitempty" json:"summary_api_key,omitempty"`
-	MaxTotalTokens  int    `yaml:"max_total_tokens,omitempty" json:"max_total_tokens,omitempty"`
+	APIKey         string `yaml:"api_key" json:"api_key"`
+	BaseURL        string `yaml:"base_url" json:"base_url"`
+	Model          string `yaml:"model" json:"model"`
+	ToolModel      string `yaml:"tool_model,omitempty" json:"tool_model,omitempty"`
+	ToolBaseURL    string `yaml:"tool_base_url,omitempty" json:"tool_base_url,omitempty"`
+	ToolAPIKey     string `yaml:"tool_api_key,omitempty" json:"tool_api_key,omitempty"`
+	SummaryModel   string `yaml:"summary_model,omitempty" json:"summary_model,omitempty"`
+	SummaryBaseURL string `yaml:"summary_base_url,omitempty" json:"summary_base_url,omitempty"`
+	SummaryAPIKey  string `yaml:"summary_api_key,omitempty" json:"summary_api_key,omitempty"`
+	MaxTotalTokens int    `yaml:"max_total_tokens,omitempty" json:"max_total_tokens,omitempty"`
+}
+
+// ApplyModelDefaults normalizes model fields:
+// - If Model is empty, use defaultMainModel.
+// - If ToolModel is empty, fall back to Model.
+// - If SummaryModel is empty, fall back to Model.
+func (c *OpenAIConfig) ApplyModelDefaults(defaultMainModel string) {
+	if c == nil {
+		return
+	}
+	if strings.TrimSpace(defaultMainModel) == "" {
+		defaultMainModel = "gpt-4"
+	}
+	if strings.TrimSpace(c.Model) == "" {
+		c.Model = defaultMainModel
+	}
+	if strings.TrimSpace(c.ToolModel) == "" {
+		c.ToolModel = c.Model
+	}
+	if strings.TrimSpace(c.SummaryModel) == "" {
+		c.SummaryModel = c.Model
+	}
 }
 
 // EffectiveToolConfig returns the base URL and API key to use for tool-calling requests.
@@ -139,15 +161,15 @@ type DatabaseConfig struct {
 }
 
 type AgentConfig struct {
-	MaxIterations          int                   `yaml:"max_iterations" json:"max_iterations"`
-	LargeResultThreshold   int                   `yaml:"large_result_threshold" json:"large_result_threshold"`     // Large-result threshold (bytes), default 50 KB
-	ResultStorageDir       string                `yaml:"result_storage_dir" json:"result_storage_dir"`             // Result storage directory, default tmp
-	ParallelToolExecution  bool                  `yaml:"parallel_tool_execution" json:"parallel_tool_execution"`   // Execute multiple tool calls concurrently (default true)
-	MaxParallelTools       int                   `yaml:"max_parallel_tools" json:"max_parallel_tools"`             // Maximum concurrent tool calls (0 = unlimited)
-	ToolRetryCount         int                   `yaml:"tool_retry_count" json:"tool_retry_count"`                 // Number of retries on transient tool errors (default 0)
-	ParallelToolWaitSeconds int                  `yaml:"parallel_tool_wait_seconds" json:"parallel_tool_wait_seconds"` // Max wait per parallel tool before deferring (default 45s)
-	TimeAwareness          TimeAwarenessConfig   `yaml:"time_awareness" json:"time_awareness"`                     // Temporal context injection settings
-	Memory                 MemoryConfig          `yaml:"memory" json:"memory"`                                     // Persistent memory settings
+	MaxIterations           int                 `yaml:"max_iterations" json:"max_iterations"`
+	LargeResultThreshold    int                 `yaml:"large_result_threshold" json:"large_result_threshold"`         // Large-result threshold (bytes), default 50 KB
+	ResultStorageDir        string              `yaml:"result_storage_dir" json:"result_storage_dir"`                 // Result storage directory, default tmp
+	ParallelToolExecution   bool                `yaml:"parallel_tool_execution" json:"parallel_tool_execution"`       // Execute multiple tool calls concurrently (default true)
+	MaxParallelTools        int                 `yaml:"max_parallel_tools" json:"max_parallel_tools"`                 // Maximum concurrent tool calls (0 = unlimited)
+	ToolRetryCount          int                 `yaml:"tool_retry_count" json:"tool_retry_count"`                     // Number of retries on transient tool errors (default 0)
+	ParallelToolWaitSeconds int                 `yaml:"parallel_tool_wait_seconds" json:"parallel_tool_wait_seconds"` // Max wait per parallel tool before deferring (default 45s)
+	TimeAwareness           TimeAwarenessConfig `yaml:"time_awareness" json:"time_awareness"`                         // Temporal context injection settings
+	Memory                  MemoryConfig        `yaml:"memory" json:"memory"`                                         // Persistent memory settings
 }
 
 // TimeAwarenessConfig controls whether and how the agent injects time context.
@@ -158,8 +180,8 @@ type TimeAwarenessConfig struct {
 
 // MemoryConfig controls persistent cross-conversation memory behaviour.
 type MemoryConfig struct {
-	Enabled    bool `yaml:"enabled" json:"enabled"`           // Enable the persistent memory store (default true)
-	MaxEntries int  `yaml:"max_entries" json:"max_entries"`   // Hard cap on stored memory entries, 0 = unlimited
+	Enabled    bool `yaml:"enabled" json:"enabled"`         // Enable the persistent memory store (default true)
+	MaxEntries int  `yaml:"max_entries" json:"max_entries"` // Hard cap on stored memory entries, 0 = unlimited
 }
 
 type AuthConfig struct {
@@ -237,6 +259,9 @@ func Load(path string) (*Config, error) {
 	if cfg.Auth.SessionDurationHours <= 0 {
 		cfg.Auth.SessionDurationHours = 12
 	}
+
+	// Ensure omitted model fields always fall back to defaults.
+	cfg.ApplyModelDefaults()
 
 	if strings.TrimSpace(cfg.Auth.Password) == "" {
 		password, err := generateStrongPassword(24)
@@ -657,10 +682,24 @@ type KnowledgeConfig struct {
 
 // EmbeddingConfig holds the embedding model configuration.
 type EmbeddingConfig struct {
-	Provider string `yaml:"provider" json:"provider"` // Embedding model provider
-	Model    string `yaml:"model" json:"model"`       // Model name
-	BaseURL  string `yaml:"base_url" json:"base_url"` // API Base URL
-	APIKey   string `yaml:"api_key" json:"api_key"`   // API Key (inherited from OpenAI config)
+	Provider  string `yaml:"provider" json:"provider"`     // Embedding model provider
+	Model     string `yaml:"model" json:"model"`           // Model name
+	BaseURL   string `yaml:"base_url" json:"base_url"`     // API Base URL
+	APIKey    string `yaml:"api_key" json:"api_key"`       // API Key (inherited from OpenAI config)
+	MaxTokens int    `yaml:"max_tokens" json:"max_tokens"` // Embedding model max token limit (0 = default 512); chunks are sized to fit within this limit
+}
+
+// ApplyModelDefaults normalizes model-related fields across config sections.
+// It ensures all model fields have a valid fallback when omitted by user config.
+func (c *Config) ApplyModelDefaults() {
+	if c == nil {
+		return
+	}
+	defaultCfg := Default()
+
+	// Main/tool/summary model fallback chain.
+	c.OpenAI.ApplyModelDefaults(defaultCfg.OpenAI.Model)
+
 }
 
 // RetrievalConfig holds the retrieval configuration.

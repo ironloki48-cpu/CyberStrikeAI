@@ -6,6 +6,169 @@ let dockerLogStreaming = false;
 // Global tool status map, used to save user changes across all pages
 // key: unique tool identifier (toolKey), value: { enabled: boolean, is_external: boolean, external_mcp: string }
 let toolStateMap = new Map();
+const modelDiscoveryCache = new Map();
+let modelDiscoveryListenersBound = false;
+const modelDiscoveryTimers = {};
+
+function isPlaceholderModel(value) {
+    const v = (value || '').trim().toLowerCase();
+    return v === '' || v === 'my_model' || v === 'auto';
+}
+
+function updateModelDatalist(datalistId, models) {
+    const datalist = document.getElementById(datalistId);
+    if (!datalist) return;
+    datalist.innerHTML = '';
+    (models || []).forEach(model => {
+        const option = document.createElement('option');
+        option.value = model;
+        datalist.appendChild(option);
+    });
+}
+
+async function discoverModels(baseUrl, apiKey) {
+    const base = (baseUrl || '').trim();
+    if (!base) return [];
+    const cacheKey = `${base}::${(apiKey || '').trim()}`;
+    if (modelDiscoveryCache.has(cacheKey)) {
+        return modelDiscoveryCache.get(cacheKey);
+    }
+    const response = await apiFetch('/api/config/models', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ base_url: base, api_key: (apiKey || '').trim() })
+    });
+    const result = await response.json();
+    if (!response.ok) {
+        throw new Error(result.error || 'Failed to discover models');
+    }
+    const models = Array.isArray(result.models) ? result.models : [];
+    modelDiscoveryCache.set(cacheKey, models);
+    return models;
+}
+
+function scheduleModelDiscovery(key, fn, delay = 500) {
+    if (modelDiscoveryTimers[key]) {
+        clearTimeout(modelDiscoveryTimers[key]);
+    }
+    modelDiscoveryTimers[key] = setTimeout(fn, delay);
+}
+
+async function refreshMainModelOptions() {
+    const baseUrl = document.getElementById('openai-base-url')?.value || '';
+    const apiKey = document.getElementById('openai-api-key')?.value || '';
+    const modelInput = document.getElementById('openai-model');
+    if (!modelInput || !baseUrl.trim()) return;
+    try {
+        const models = await discoverModels(baseUrl, apiKey);
+        updateModelDatalist('openai-model-options', models);
+        if (isPlaceholderModel(modelInput.value) && models.length > 0) {
+            modelInput.value = models[0];
+        }
+    } catch (err) {
+        console.warn('Main model discovery failed:', err);
+        updateModelDatalist('openai-model-options', []);
+    }
+}
+
+async function refreshToolModelOptions() {
+    const mainBase = document.getElementById('openai-base-url')?.value || '';
+    const mainKey = document.getElementById('openai-api-key')?.value || '';
+    const baseUrl = document.getElementById('openai-tool-base-url')?.value || mainBase;
+    const apiKey = document.getElementById('openai-tool-api-key')?.value || mainKey;
+    const modelInput = document.getElementById('openai-tool-model');
+    if (!modelInput || !baseUrl.trim()) return;
+    try {
+        const models = await discoverModels(baseUrl, apiKey);
+        updateModelDatalist('openai-tool-model-options', models);
+        if (isPlaceholderModel(modelInput.value) && models.length > 0) {
+            modelInput.value = models[0];
+        }
+    } catch (err) {
+        console.warn('Tool model discovery failed:', err);
+        updateModelDatalist('openai-tool-model-options', []);
+    }
+}
+
+async function refreshSummaryModelOptions() {
+    const mainBase = document.getElementById('openai-base-url')?.value || '';
+    const mainKey = document.getElementById('openai-api-key')?.value || '';
+    const baseUrl = document.getElementById('openai-summary-base-url')?.value || mainBase;
+    const apiKey = document.getElementById('openai-summary-api-key')?.value || mainKey;
+    const modelInput = document.getElementById('openai-summary-model');
+    if (!modelInput || !baseUrl.trim()) return;
+    try {
+        const models = await discoverModels(baseUrl, apiKey);
+        updateModelDatalist('openai-summary-model-options', models);
+        if (isPlaceholderModel(modelInput.value) && models.length > 0) {
+            modelInput.value = models[0];
+        }
+    } catch (err) {
+        console.warn('Summary model discovery failed:', err);
+        updateModelDatalist('openai-summary-model-options', []);
+    }
+}
+
+async function refreshEmbeddingModelOptions() {
+    const baseUrl = document.getElementById('knowledge-embedding-base-url')?.value || '';
+    const apiKey = document.getElementById('knowledge-embedding-api-key')?.value || '';
+    const modelInput = document.getElementById('knowledge-embedding-model');
+    if (!modelInput) return;
+    if (!baseUrl.trim()) {
+        updateModelDatalist('knowledge-embedding-model-options', []);
+        return;
+    }
+    try {
+        const models = await discoverModels(baseUrl, apiKey);
+        updateModelDatalist('knowledge-embedding-model-options', models);
+        if (isPlaceholderModel(modelInput.value) && models.length > 0) {
+            modelInput.value = models[0];
+        }
+    } catch (err) {
+        console.warn('Embedding model discovery failed:', err);
+        updateModelDatalist('knowledge-embedding-model-options', []);
+    }
+}
+
+function bindModelDiscoveryListeners() {
+    if (modelDiscoveryListenersBound) return;
+    modelDiscoveryListenersBound = true;
+
+    const mainBase = document.getElementById('openai-base-url');
+    const mainKey = document.getElementById('openai-api-key');
+    const toolBase = document.getElementById('openai-tool-base-url');
+    const toolKey = document.getElementById('openai-tool-api-key');
+    const summaryBase = document.getElementById('openai-summary-base-url');
+    const summaryKey = document.getElementById('openai-summary-api-key');
+    const embBase = document.getElementById('knowledge-embedding-base-url');
+    const embKey = document.getElementById('knowledge-embedding-api-key');
+
+    if (mainBase) mainBase.addEventListener('input', () => scheduleModelDiscovery('main', async () => {
+        await refreshMainModelOptions();
+        await refreshToolModelOptions();
+        await refreshSummaryModelOptions();
+        await refreshEmbeddingModelOptions();
+    }));
+    if (mainKey) mainKey.addEventListener('input', () => scheduleModelDiscovery('mainKey', async () => {
+        await refreshMainModelOptions();
+        await refreshToolModelOptions();
+        await refreshSummaryModelOptions();
+        await refreshEmbeddingModelOptions();
+    }));
+    if (toolBase) toolBase.addEventListener('input', () => scheduleModelDiscovery('tool', refreshToolModelOptions));
+    if (toolKey) toolKey.addEventListener('input', () => scheduleModelDiscovery('toolKey', refreshToolModelOptions));
+    if (summaryBase) summaryBase.addEventListener('input', () => scheduleModelDiscovery('summary', refreshSummaryModelOptions));
+    if (summaryKey) summaryKey.addEventListener('input', () => scheduleModelDiscovery('summaryKey', refreshSummaryModelOptions));
+    if (embBase) embBase.addEventListener('input', () => scheduleModelDiscovery('embedding', refreshEmbeddingModelOptions));
+    if (embKey) embKey.addEventListener('input', () => scheduleModelDiscovery('embeddingKey', refreshEmbeddingModelOptions));
+}
+
+async function refreshAllModelOptions() {
+    await refreshMainModelOptions();
+    await refreshToolModelOptions();
+    await refreshSummaryModelOptions();
+    await refreshEmbeddingModelOptions();
+}
 
 // Generate a unique identifier for a tool to distinguish tools with the same name but different sources
 function getToolKey(tool) {
@@ -378,6 +541,9 @@ async function loadConfig(loadTools = true) {
         if (telegramBotToken) telegramBotToken.value = telegram.bot_token || '';
         const telegramAllowedIds = document.getElementById('robot-telegram-allowed-user-ids');
         if (telegramAllowedIds) telegramAllowedIds.value = (telegram.allowed_user_ids || []).join(',');
+
+        bindModelDiscoveryListeners();
+        await refreshAllModelOptions();
 
         // Only load tool list when needed (MCP management page needs it, system settings does not)
         if (loadTools) {

@@ -1241,14 +1241,16 @@
                                         </div>
                                         <div class="form-group">
                                             <label for="openai-model">Model <span style="color: red;">*</span></label>
-                                            <input type="text" id="openai-model" placeholder="gpt-4" required />
+                                            <input type="text" id="openai-model" list="openai-model-options" placeholder="gpt-4" required />
+                                            <datalist id="openai-model-options"></datalist>
                                         </div>
                                         <div class="settings-subsection-header">
                                             <h5>Tool Model <span style="color: #888; font-weight: normal;">(optional — leave empty to use main config)</span></h5>
                                         </div>
                                         <div class="form-group">
                                             <label for="openai-tool-model">Model</label>
-                                            <input type="text" id="openai-tool-model" placeholder="Leave empty to use main model" />
+                                            <input type="text" id="openai-tool-model" list="openai-tool-model-options" placeholder="Leave empty to use main model" />
+                                            <datalist id="openai-tool-model-options"></datalist>
                                         </div>
                                         <div class="form-group">
                                             <label for="openai-tool-base-url">Base URL</label>
@@ -1263,7 +1265,8 @@
                                         </div>
                                         <div class="form-group">
                                             <label for="openai-summary-model">Model</label>
-                                            <input type="text" id="openai-summary-model" placeholder="Leave empty to use main model" />
+                                            <input type="text" id="openai-summary-model" list="openai-summary-model-options" placeholder="Leave empty to use main model" />
+                                            <datalist id="openai-summary-model-options"></datalist>
                                         </div>
                                         <div class="form-group">
                                             <label for="openai-summary-base-url">Base URL</label>
@@ -1419,17 +1422,19 @@
                                         </div>
                                         <div class="form-group">
                                             <label for="knowledge-embedding-base-url">Base URL</label>
-                                            <input type="text" id="knowledge-embedding-base-url" placeholder="Leave blank to use the base_url from OpenAI config" />
-                                            <small class="form-hint">Leave blank to use the base_url from OpenAI config</small>
+                                            <input type="text" id="knowledge-embedding-base-url" placeholder="Embedding endpoint (required to enable embeddings)" />
+                                            <small class="form-hint">If empty, embedding retrieval/indexing is disabled</small>
                                         </div>
                                         <div class="form-group">
                                             <label for="knowledge-embedding-api-key">API Key</label>
-                                            <input type="password" id="knowledge-embedding-api-key" placeholder="Leave blank to use the api_key from OpenAI config" />
-                                            <small class="form-hint">Leave blank to use the api_key from OpenAI config</small>
+                                            <input type="password" id="knowledge-embedding-api-key" placeholder="Embedding API key (required to enable embeddings)" />
+                                            <small class="form-hint">If empty, embedding retrieval/indexing is disabled</small>
                                         </div>
                                         <div class="form-group">
                                             <label for="knowledge-embedding-model">Model Name</label>
-                                            <input type="text" id="knowledge-embedding-model" placeholder="text-embedding-v4" />
+                                            <input type="text" id="knowledge-embedding-model" list="knowledge-embedding-model-options" placeholder="text-embedding-v4" />
+                                            <datalist id="knowledge-embedding-model-options"></datalist>
+                                            <small class="form-hint">If empty, embedding retrieval/indexing is disabled</small>
                                         </div>
                                         
                                         <div class="settings-subsection-header">

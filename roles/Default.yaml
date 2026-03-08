@@ -1,0 +1,15 @@
+name: Default
+description: Default role — no additional user prompt; uses all enabled tools.
+user_prompt: ""
+icon: "\U0001F535"
+skills:
+    - xxe-testing
+    - xss-testing
+    - vulnerability-assessment
+    - api-security-testing
+    - business-logic-testing
+    - network-penetration-testing
+    - security-automation
+    - sql-injection-testing
+    - xpath-injection-testing
+enabled: true
