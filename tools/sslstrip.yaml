@@ -1,0 +1,145 @@
+name: "sslstrip"
+command: "sslstrip"
+enabled: true
+short_description: "HTTPS stripping MITM tool for intercepting credentials, cookies, and session tokens over downgraded HTTP connections"
+description: |
+  SSLStrip is a MITM (Man-in-the-Middle) attack tool that transparently hijacks HTTP traffic
+  on a network, watches for HTTPS links and redirects, then maps those to either look-alike
+  HTTP links (homograph attack) or regular HTTP links. It allows an attacker to intercept
+  credentials, session cookies, API tokens, and other secrets that would normally be protected
+  by TLS encryption.
+
+  **Attack Principle:**
+  The victim connects to the attacker's machine (via ARP spoofing, rogue AP, DNS poisoning, etc.),
+  which acts as a transparent proxy. When the victim's browser requests an HTTPS page, SSLStrip
+  intercepts the response from the legitimate server, strips the HTTPS URLs to HTTP, and serves
+  the downgraded page to the victim. The attacker maintains a legitimate HTTPS connection to the
+  real server while the victim communicates over plain HTTP.
+
+  **Key Capabilities:**
+  - Strips HTTPS → HTTP transparently in real-time
+  - Intercepts login credentials, cookies, session tokens, API keys
+  - Logs all intercepted POST data (forms, JSON payloads)
+  - Supports favicon replacement (lock icon spoofing)
+  - Handles Set-Cookie secure flag stripping
+  - HSTS bypass via domain rewriting (sslstrip2/sslstrip+)
+  - Full request/response logging for forensic analysis
+
+  **Common Attack Chains:**
+  1. ARP Spoof → iptables redirect → SSLStrip → credential capture
+  2. Rogue AP → DNS redirect → SSLStrip → session hijack
+  3. DHCP spoofing → gateway redirect → SSLStrip → API token theft
+  4. Responder/LLMNR → SSLStrip → NTLM relay
+
+  **Typical Workflow:**
+  1. Enable IP forwarding: echo 1 > /proc/sys/net/ipv4/ip_forward
+  2. Set iptables redirect: iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 10000
+  3. ARP spoof the target: arpspoof -i eth0 -t <target_ip> <gateway_ip>
+  4. Run sslstrip: sslstrip -l 10000 -w sslstrip.log
+  5. Monitor sslstrip.log for captured credentials
+
+  **Integration with CyberStrikeAI Cuttlefish VM:**
+  Can be used alongside the Cuttlefish Android VM to test mobile app certificate validation:
+  - Set Cuttlefish proxy to SSLStrip listener
+  - Install rogue CA cert on device via cuttlefish_install_cert
+  - Monitor app traffic for certificate pinning bypass opportunities
+  - Capture API tokens and session cookies from mobile apps
+
+  **Detection Evasion Notes:**
+  - HSTS-preloaded domains cannot be stripped (Chrome/Firefox maintain preload lists)
+  - Modern browsers show "Not Secure" for HTTP — social engineering may be needed
+  - Certificate Transparency logs don't apply since no fake cert is issued
+  - SSLStrip2 (Leonardo Nve) adds HSTS bypass via subdomain rewriting
+
+  **Prerequisites:**
+  - Root/sudo access for iptables and packet forwarding
+  - Network position (ARP spoof, rogue AP, physical tap)
+  - pip install sslstrip (or sslstrip2 for HSTS bypass)
+
+  **Complementary Tools:**
+  - arpspoof/ettercap (for ARP poisoning)
+  - bettercap (modern alternative with built-in sslstrip module)
+  - mitmproxy (for interactive HTTPS interception with custom certs)
+  - responder (for LLMNR/NBT-NS poisoning to gain network position)
+  - Wireshark/tcpdump (for packet capture verification)
+parameters:
+  - name: "listen_port"
+    type: "int"
+    description: |
+      Port to listen on for redirected HTTP traffic.
+      Must match the iptables REDIRECT --to-port value.
+
+      **Default:** 10000
+      **Example:** -l 8080
+
+      **Note:** Set iptables rule first:
+        iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port <listen_port>
+    required: false
+    flag: "-l"
+    format: "flag"
+    default: 10000
+  - name: "logfile"
+    type: "string"
+    description: |
+      Output file for logging intercepted data (credentials, cookies, URLs, POST data).
+      All intercepted traffic is written here for later analysis.
+
+      **Default:** sslstrip.log
+      **Example:** -w /tmp/target_creds.log
+
+      **Tip:** Monitor in real-time with: tail -f sslstrip.log | grep -i -E "pass|token|cookie|session|auth|key|secret"
+    required: false
+    flag: "-w"
+    format: "flag"
+  - name: "favicon"
+    type: "bool"
+    description: |
+      Replace the site's favicon with a lock icon to make the downgraded HTTP page
+      appear more legitimate. Useful for social engineering when combined with
+      homograph URLs.
+    required: false
+    flag: "-f"
+    format: "flag"
+    default: false
+  - name: "killsessions"
+    type: "bool"
+    description: |
+      Kill active HTTPS sessions being intercepted. Forces clients to re-establish
+      connections through the proxy, ensuring all traffic flows through SSLStrip
+      from the start. Useful when targets already have established HTTPS sessions.
+
+      **Warning:** May cause noticeable disruption — targets may see brief disconnects.
+    required: false
+    flag: "-k"
+    format: "flag"
+    default: false
+  - name: "post_only"
+    type: "bool"
+    description: |
+      Only log HTTP POST requests (form submissions, API calls).
+      Reduces log noise by filtering out GET requests.
+      Focuses capture on credential submissions and data modifications.
+    required: false
+    flag: "-p"
+    format: "flag"
+    default: false
+  - name: "all_traffic"
+    type: "bool"
+    description: |
+      Log all SSL/TLS traffic (including headers and response bodies).
+      Produces larger logs but captures complete request/response pairs
+      for thorough forensic analysis.
+    required: false
+    flag: "-a"
+    format: "flag"
+    default: false
+  - name: "additional_args"
+    type: "string"
+    description: |
+      Additional SSLStrip parameters not covered above.
+
+      **Examples:**
+      - "--ssl-log /tmp/ssl.log" for separate SSL logging
+      - Custom arguments for sslstrip2/sslstrip+ variants
+    required: false
+    format: "positional"
