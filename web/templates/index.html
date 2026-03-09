@@ -1630,6 +1630,34 @@
                                             <small class="form-hint">Path to droidrun-bridge.py (auto-detected if empty)</small>
                                         </div>
 
+                                        <div class="settings-subsection-header" style="margin-top:12px">
+                                            <h5 style="font-size:0.9em">DroidRun Proxy (LLM-friendly UI control)</h5>
+                                        </div>
+                                        <div class="form-row" style="display:flex;gap:12px">
+                                            <div class="form-group" style="flex:1">
+                                                <label for="agent-cuttlefish-proxy-port">Proxy Port</label>
+                                                <input type="number" id="agent-cuttlefish-proxy-port" min="1024" max="65535" placeholder="18090" />
+                                            </div>
+                                            <div class="form-group" style="flex:1">
+                                                <label for="agent-cuttlefish-screenshot-dir">Screenshot Dir</label>
+                                                <input type="text" id="agent-cuttlefish-screenshot-dir" placeholder="/tmp/droidrun_screenshots" />
+                                            </div>
+                                        </div>
+                                        <div class="form-group">
+                                            <label class="checkbox-label">
+                                                <input type="checkbox" id="agent-cuttlefish-proxy-auto-start" class="modern-checkbox" checked />
+                                                <span class="checkbox-custom"></span>
+                                                <span class="checkbox-text">Auto-start DroidRun proxy when VM launches</span>
+                                            </label>
+                                        </div>
+                                        <div class="form-group">
+                                            <label class="checkbox-label">
+                                                <input type="checkbox" id="agent-cuttlefish-vision-enabled" class="modern-checkbox" checked />
+                                                <span class="checkbox-custom"></span>
+                                                <span class="checkbox-text">Include screenshots in state responses (Qwen3.5 VL)</span>
+                                            </label>
+                                        </div>
+
                                         <!-- ── SSLStrip MITM ── -->
                                         <div class="settings-subsection-header">
                                             <h5>SSLStrip (HTTPS MITM)</h5>

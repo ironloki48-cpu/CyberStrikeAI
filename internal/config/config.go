@@ -207,6 +207,10 @@ type CuttlefishConfig struct {
 	DroidRunPath     string `yaml:"droidrun_path" json:"droidrun_path"`          // Path to DroidRun installation (default ~/droidrun)
 	DroidRunConfig   string `yaml:"droidrun_config" json:"droidrun_config"`      // Path to DroidRun config YAML (default <cvd_home>/droidrun/config.yaml)
 	BridgeScript     string `yaml:"bridge_script" json:"bridge_script"`          // Path to droidrun-bridge.py (auto-detected if empty)
+	ProxyPort        int    `yaml:"proxy_port" json:"proxy_port"`                // DroidRun proxy HTTP service port (default 18090)
+	ProxyAutoStart   bool   `yaml:"proxy_auto_start" json:"proxy_auto_start"`   // Auto-start DroidRun proxy when VM launches (default true)
+	ScreenshotDir    string `yaml:"screenshot_dir" json:"screenshot_dir"`       // Directory for screenshots from proxy (default /tmp/droidrun_screenshots)
+	VisionEnabled    bool   `yaml:"vision_enabled" json:"vision_enabled"`       // Include screenshots in state responses for VL models (default true)
 }
 
 // SSLStripConfig controls SSLStrip MITM tool integration.

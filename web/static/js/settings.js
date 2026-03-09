@@ -448,6 +448,8 @@ async function loadConfig(loadTools = true) {
             'agent-cuttlefish-enabled': currentConfig.agent.cuttlefish?.enabled !== false,
             'agent-cuttlefish-auto-launch': currentConfig.agent.cuttlefish?.auto_launch === true,
             'agent-cuttlefish-russian-identity': currentConfig.agent.cuttlefish?.russian_identity !== false,
+            'agent-cuttlefish-proxy-auto-start': currentConfig.agent.cuttlefish?.proxy_auto_start !== false,
+            'agent-cuttlefish-vision-enabled': currentConfig.agent.cuttlefish?.vision_enabled !== false,
             'agent-sslstrip-enabled': currentConfig.agent.sslstrip?.enabled !== false,
             'agent-sslstrip-auto-proxy': currentConfig.agent.sslstrip?.auto_proxy === true,
         };
@@ -463,6 +465,8 @@ async function loadConfig(loadTools = true) {
             'agent-cuttlefish-droidrun-path': currentConfig.agent.cuttlefish?.droidrun_path || '',
             'agent-cuttlefish-droidrun-config': currentConfig.agent.cuttlefish?.droidrun_config || '',
             'agent-cuttlefish-bridge-script': currentConfig.agent.cuttlefish?.bridge_script || '',
+            'agent-cuttlefish-proxy-port': currentConfig.agent.cuttlefish?.proxy_port || 18090,
+            'agent-cuttlefish-screenshot-dir': currentConfig.agent.cuttlefish?.screenshot_dir || '/tmp/droidrun_screenshots',
             'agent-sslstrip-listen-port': currentConfig.agent.sslstrip?.listen_port || 10000,
             'agent-sslstrip-log-dir': currentConfig.agent.sslstrip?.log_dir || '/tmp',
         };
@@ -1146,7 +1150,11 @@ async function applySettings() {
                     webrtc_port: parseInt(document.getElementById('agent-cuttlefish-webrtc-port')?.value) || 8443,
                     droidrun_path: document.getElementById('agent-cuttlefish-droidrun-path')?.value.trim() || '',
                     droidrun_config: document.getElementById('agent-cuttlefish-droidrun-config')?.value.trim() || '',
-                    bridge_script: document.getElementById('agent-cuttlefish-bridge-script')?.value.trim() || ''
+                    bridge_script: document.getElementById('agent-cuttlefish-bridge-script')?.value.trim() || '',
+                    proxy_port: parseInt(document.getElementById('agent-cuttlefish-proxy-port')?.value) || 18090,
+                    proxy_auto_start: document.getElementById('agent-cuttlefish-proxy-auto-start')?.checked !== false,
+                    screenshot_dir: document.getElementById('agent-cuttlefish-screenshot-dir')?.value.trim() || '/tmp/droidrun_screenshots',
+                    vision_enabled: document.getElementById('agent-cuttlefish-vision-enabled')?.checked !== false
                 },
                 sslstrip: {
                     enabled: document.getElementById('agent-sslstrip-enabled')?.checked !== false,

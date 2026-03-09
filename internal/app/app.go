@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"html"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -3027,4 +3029,437 @@ func registerCuttlefishTools(mcpServer *mcp.Server, cvdHome string, cvdCfg *conf
 	})
 
 	logger.Info("registered Cuttlefish MCP tools", zap.Int("count", 16))
+
+	// ── DroidRun Proxy Tools ────────────────────────────────────────────
+	// High-level LLM-friendly device interaction via the DroidRun proxy service.
+	proxyPort := cvdCfg.ProxyPort
+	if proxyPort == 0 {
+		proxyPort = 18090
+	}
+	proxyBase := fmt.Sprintf("http://127.0.0.1:%d", proxyPort)
+	registerDroidRunProxyTools(mcpServer, proxyBase, logger)
+}
+
+// droidRunProxyCall makes a request to the DroidRun proxy HTTP service.
+func droidRunProxyCall(ctx context.Context, proxyBase, method, path string, body interface{}) (map[string]interface{}, error) {
+	var reqBody io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			return nil, err
+		}
+		reqBody = bytes.NewReader(b)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, proxyBase+path, reqBody)
+	if err != nil {
+		return nil, err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("proxy unavailable (is droidrun_proxy.py running on %s?): %w", proxyBase, err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if len(raw) > 200000 {
+		raw = raw[:200000]
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, fmt.Errorf("invalid proxy response: %s", string(raw[:min(len(raw), 500)]))
+	}
+	return result, nil
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// formatProxyResult formats a DroidRun proxy response as LLM-friendly text.
+func formatProxyResult(result map[string]interface{}) string {
+	// If there's an llm_text field, use it directly
+	if t, ok := result["llm_text"].(string); ok {
+		return t
+	}
+	// If there's state_after with llm_text, include it
+	parts := []string{}
+	if action, ok := result["action"].(string); ok {
+		success, _ := result["success"].(bool)
+		status := "OK"
+		if !success {
+			status = "FAILED"
+		}
+		summary, _ := result["summary"].(string)
+		parts = append(parts, fmt.Sprintf("[%s] %s: %s", status, action, summary))
+		if errMsg, ok := result["error"].(string); ok && errMsg != "" {
+			parts = append(parts, "Error: "+errMsg)
+		}
+	}
+	if stateAfter, ok := result["state_after"].(map[string]interface{}); ok {
+		if llm, ok := stateAfter["llm_text"].(string); ok {
+			parts = append(parts, "", llm)
+		}
+	}
+	if len(parts) > 0 {
+		return strings.Join(parts, "\n")
+	}
+	// Fallback: pretty JSON
+	b, _ := json.MarshalIndent(result, "", "  ")
+	return string(b)
+}
+
+func registerDroidRunProxyTools(mcpServer *mcp.Server, proxyBase string, logger *zap.Logger) {
+	logger.Info("registering DroidRun proxy MCP tools (LLM-friendly device interaction)", zap.String("proxy", proxyBase))
+
+	// ── droidrun_connect ────────────────────────────────────────────────
+	mcpServer.RegisterTool(mcp.Tool{
+		Name: builtin.ToolDroidRunConnect,
+		Description: `Connect the DroidRun proxy to the Cuttlefish Android device. Call this before using any droidrun_* tools. The proxy provides high-level, LLM-friendly device control — much easier than raw ADB commands:
+- UI elements are indexed (click by number instead of pixel coordinates)
+- State is formatted as readable text you can reason about
+- Screenshots are base64 PNG for vision analysis (Qwen3.5 VL)
+- Actions return success/failure with descriptions and updated state`,
+		ShortDescription: "Connect DroidRun proxy to Android device",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"serial": map[string]interface{}{
+					"type":        "string",
+					"description": "ADB device serial (auto-detect if empty)",
+				},
+			},
+		},
+	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		result, err := droidRunProxyCall(ctx, proxyBase, "GET", "/status", nil)
+		if err != nil {
+			return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "DroidRun proxy not running. Start it with:\n  python3 ~/CyberStrikeAI/scripts/cuttlefish/droidrun_proxy.py\n\nError: " + err.Error()}}, IsError: true}, nil
+		}
+		connected, _ := result["connected"].(bool)
+		if connected {
+			return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "DroidRun proxy connected and ready. Use droidrun_state to see current screen."}}}, nil
+		}
+		return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "DroidRun proxy running but not connected to device. Ensure Cuttlefish VM is running (cuttlefish_launch)."}}}, nil
+	})
+
+	// ── droidrun_state ──────────────────────────────────────────────────
+	mcpServer.RegisterTool(mcp.Tool{
+		Name: builtin.ToolDroidRunState,
+		Description: `Get the current Android device state in LLM-friendly format. Returns:
+- Current app and activity name
+- All visible UI elements with index numbers (for click/type by index)
+- Screen dimensions, keyboard visibility, focused element
+- Optional base64 PNG screenshot (for vision analysis with Qwen3.5 VL)
+
+The UI elements are indexed — use the index with droidrun_click or droidrun_type.
+Example output: "[3] Button 'Login' (200,400,500,460)" means element 3 is a Login button.
+
+This is the PRIMARY tool for understanding what's on screen. Call it before deciding what action to take.`,
+		ShortDescription: "Get LLM-friendly device state with indexed UI elements",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"include_screenshot": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Include base64 PNG screenshot for vision analysis (default true)",
+				},
+			},
+		},
+	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		query := "?screenshot=true"
+		if ss, ok := args["include_screenshot"].(bool); ok && !ss {
+			query = "?screenshot=false"
+		}
+		result, err := droidRunProxyCall(ctx, proxyBase, "GET", "/state"+query, nil)
+		if err != nil {
+			return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "Error: " + err.Error()}}, IsError: true}, nil
+		}
+		text := formatProxyResult(result)
+		// If screenshot is present, include it as a separate content block for VL models
+		contents := []mcp.Content{{Type: "text", Text: text}}
+		if b64, ok := result["screenshot_b64"].(string); ok && b64 != "" && len(b64) < 500000 {
+			contents = append(contents, mcp.Content{Type: "text", Text: "\n[Screenshot: base64 PNG attached, " + strconv.Itoa(len(b64)) + " chars. Decode and analyze visually.]"})
+		}
+		return &mcp.ToolResult{Content: contents}, nil
+	})
+
+	// ── droidrun_screenshot ─────────────────────────────────────────────
+	mcpServer.RegisterTool(mcp.Tool{
+		Name:             builtin.ToolDroidRunScreenshot,
+		Description:      "Take a screenshot of the Android device. Returns base64 PNG for visual analysis with Qwen3.5 VL, plus the saved file path. Use droidrun_state instead if you also need UI element indices.",
+		ShortDescription: "Take device screenshot (base64 PNG)",
+		InputSchema:      map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
+	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		result, err := droidRunProxyCall(ctx, proxyBase, "GET", "/screenshot", nil)
+		if err != nil {
+			return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "Error: " + err.Error()}}, IsError: true}, nil
+		}
+		path, _ := result["path"].(string)
+		b64, _ := result["base64"].(string)
+		text := fmt.Sprintf("Screenshot saved: %s (%d bytes base64)", path, len(b64))
+		return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: text}}}, nil
+	})
+
+	// ── droidrun_click ──────────────────────────────────────────────────
+	mcpServer.RegisterTool(mcp.Tool{
+		Name: builtin.ToolDroidRunClick,
+		Description: `Click a UI element by its index number. Use droidrun_state first to see available elements and their indices.
+
+Example: if droidrun_state shows "[3] Button 'Login'" then call droidrun_click with index=3 to click it.
+
+Returns action result + updated device state so you can see what happened.`,
+		ShortDescription: "Click UI element by index",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"index": map[string]interface{}{
+					"type":        "integer",
+					"description": "Element index number from droidrun_state output",
+				},
+			},
+			"required": []string{"index"},
+		},
+	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		idx, _ := args["index"].(float64)
+		result, err := droidRunProxyCall(ctx, proxyBase, "POST", "/click", map[string]interface{}{"index": int(idx)})
+		if err != nil {
+			return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "Error: " + err.Error()}}, IsError: true}, nil
+		}
+		return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: formatProxyResult(result)}}}, nil
+	})
+
+	// ── droidrun_type ───────────────────────────────────────────────────
+	mcpServer.RegisterTool(mcp.Tool{
+		Name: builtin.ToolDroidRunType,
+		Description: `Type text into a UI element. If index is provided, clicks the element first then types. If index is -1 or omitted, types into the currently focused element.
+
+Example: droidrun_type with text="admin" index=5 clicks element 5 then types "admin".
+Use clear=true to clear existing text before typing.`,
+		ShortDescription: "Type text into UI element",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"text": map[string]interface{}{
+					"type":        "string",
+					"description": "Text to type",
+				},
+				"index": map[string]interface{}{
+					"type":        "integer",
+					"description": "Element index to click first (-1 = type into focused element)",
+				},
+				"clear": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Clear existing text before typing (default false)",
+				},
+			},
+			"required": []string{"text"},
+		},
+	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		body := map[string]interface{}{"text": args["text"]}
+		if idx, ok := args["index"].(float64); ok {
+			body["index"] = int(idx)
+		} else {
+			body["index"] = -1
+		}
+		if clr, ok := args["clear"].(bool); ok {
+			body["clear"] = clr
+		}
+		result, err := droidRunProxyCall(ctx, proxyBase, "POST", "/type", body)
+		if err != nil {
+			return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "Error: " + err.Error()}}, IsError: true}, nil
+		}
+		return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: formatProxyResult(result)}}}, nil
+	})
+
+	// ── droidrun_swipe ──────────────────────────────────────────────────
+	mcpServer.RegisterTool(mcp.Tool{
+		Name:             builtin.ToolDroidRunSwipe,
+		Description:      "Swipe gesture between two screen coordinates. Use for scrolling, dragging, or custom gestures. For simple scrolling prefer droidrun_scroll.",
+		ShortDescription: "Swipe between coordinates",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"x1":          map[string]interface{}{"type": "integer", "description": "Start X coordinate"},
+				"y1":          map[string]interface{}{"type": "integer", "description": "Start Y coordinate"},
+				"x2":          map[string]interface{}{"type": "integer", "description": "End X coordinate"},
+				"y2":          map[string]interface{}{"type": "integer", "description": "End Y coordinate"},
+				"duration_ms": map[string]interface{}{"type": "integer", "description": "Swipe duration in ms (default 500)"},
+			},
+			"required": []string{"x1", "y1", "x2", "y2"},
+		},
+	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		body := map[string]interface{}{
+			"x1": int(args["x1"].(float64)), "y1": int(args["y1"].(float64)),
+			"x2": int(args["x2"].(float64)), "y2": int(args["y2"].(float64)),
+		}
+		if d, ok := args["duration_ms"].(float64); ok {
+			body["duration_ms"] = int(d)
+		}
+		result, err := droidRunProxyCall(ctx, proxyBase, "POST", "/swipe", body)
+		if err != nil {
+			return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "Error: " + err.Error()}}, IsError: true}, nil
+		}
+		return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: formatProxyResult(result)}}}, nil
+	})
+
+	// ── droidrun_scroll ─────────────────────────────────────────────────
+	mcpServer.RegisterTool(mcp.Tool{
+		Name:             builtin.ToolDroidRunScroll,
+		Description:      "Scroll the screen up or down. Easier than droidrun_swipe for simple scrolling — automatically calculates coordinates based on screen size.",
+		ShortDescription: "Scroll screen up or down",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"direction": map[string]interface{}{
+					"type":        "string",
+					"enum":        []string{"up", "down"},
+					"description": "Scroll direction",
+				},
+			},
+			"required": []string{"direction"},
+		},
+	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		dir, _ := args["direction"].(string)
+		action := "scroll_down"
+		if dir == "up" {
+			action = "scroll_up"
+		}
+		result, err := droidRunProxyCall(ctx, proxyBase, "POST", "/action", map[string]interface{}{"action": action, "params": map[string]interface{}{}})
+		if err != nil {
+			return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "Error: " + err.Error()}}, IsError: true}, nil
+		}
+		return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: formatProxyResult(result)}}}, nil
+	})
+
+	// ── droidrun_button ─────────────────────────────────────────────────
+	mcpServer.RegisterTool(mcp.Tool{
+		Name:             builtin.ToolDroidRunButton,
+		Description:      "Press a system button: back, home, or enter. Use 'back' to navigate back, 'home' to go to home screen, 'enter' to submit text input.",
+		ShortDescription: "Press system button (back/home/enter)",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"button": map[string]interface{}{
+					"type":        "string",
+					"enum":        []string{"back", "home", "enter"},
+					"description": "Button to press",
+				},
+			},
+			"required": []string{"button"},
+		},
+	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		btn, _ := args["button"].(string)
+		action := "press_" + btn
+		result, err := droidRunProxyCall(ctx, proxyBase, "POST", "/action", map[string]interface{}{"action": action, "params": map[string]interface{}{}})
+		if err != nil {
+			return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "Error: " + err.Error()}}, IsError: true}, nil
+		}
+		return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: formatProxyResult(result)}}}, nil
+	})
+
+	// ── droidrun_open_app ───────────────────────────────────────────────
+	mcpServer.RegisterTool(mcp.Tool{
+		Name:             builtin.ToolDroidRunOpenApp,
+		Description:      "Open an app by package name. Use droidrun_list_apps to find available packages. Returns updated device state showing the app's first screen.",
+		ShortDescription: "Open app by package name",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"package_name": map[string]interface{}{
+					"type":        "string",
+					"description": "App package name (e.g. com.android.settings, com.target.app)",
+				},
+			},
+			"required": []string{"package_name"},
+		},
+	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		pkg, _ := args["package_name"].(string)
+		result, err := droidRunProxyCall(ctx, proxyBase, "POST", "/action", map[string]interface{}{"action": "open_app", "params": map[string]interface{}{"package_name": pkg}})
+		if err != nil {
+			return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "Error: " + err.Error()}}, IsError: true}, nil
+		}
+		return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: formatProxyResult(result)}}}, nil
+	})
+
+	// ── droidrun_list_apps ──────────────────────────────────────────────
+	mcpServer.RegisterTool(mcp.Tool{
+		Name:             builtin.ToolDroidRunListApps,
+		Description:      "List installed apps on the device. Returns package names and app labels. Use include_system=true to include system apps.",
+		ShortDescription: "List installed apps",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"include_system": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Include system apps (default false, only user-installed)",
+				},
+			},
+		},
+	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		params := map[string]interface{}{"include_system": false}
+		if sys, ok := args["include_system"].(bool); ok {
+			params["include_system"] = sys
+		}
+		result, err := droidRunProxyCall(ctx, proxyBase, "POST", "/action", map[string]interface{}{"action": "list_apps", "params": params})
+		if err != nil {
+			return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "Error: " + err.Error()}}, IsError: true}, nil
+		}
+		return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: formatProxyResult(result)}}}, nil
+	})
+
+	// ── droidrun_install ────────────────────────────────────────────────
+	mcpServer.RegisterTool(mcp.Tool{
+		Name:             builtin.ToolDroidRunInstall,
+		Description:      "Install an APK via DroidRun (higher-level than cuttlefish_install_apk — handles Portal APK setup automatically).",
+		ShortDescription: "Install APK via DroidRun",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"apk_path": map[string]interface{}{
+					"type":        "string",
+					"description": "Path to APK file on host",
+				},
+			},
+			"required": []string{"apk_path"},
+		},
+	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		apk, _ := args["apk_path"].(string)
+		result, err := droidRunProxyCall(ctx, proxyBase, "POST", "/action", map[string]interface{}{"action": "install_apk", "params": map[string]interface{}{"apk_path": apk}})
+		if err != nil {
+			return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "Error: " + err.Error()}}, IsError: true}, nil
+		}
+		return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: formatProxyResult(result)}}}, nil
+	})
+
+	// ── droidrun_wait ───────────────────────────────────────────────────
+	mcpServer.RegisterTool(mcp.Tool{
+		Name:             builtin.ToolDroidRunWait,
+		Description:      "Wait for a specified duration, then return the updated device state. Useful after actions that trigger animations or loading screens.",
+		ShortDescription: "Wait and refresh state",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"seconds": map[string]interface{}{
+					"type":        "number",
+					"description": "Duration to wait in seconds (default 1.0)",
+				},
+			},
+		},
+	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		secs := 1.0
+		if s, ok := args["seconds"].(float64); ok && s > 0 {
+			secs = s
+		}
+		result, err := droidRunProxyCall(ctx, proxyBase, "POST", "/action", map[string]interface{}{"action": "wait", "params": map[string]interface{}{"seconds": secs}})
+		if err != nil {
+			return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "Error: " + err.Error()}}, IsError: true}, nil
+		}
+		return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: formatProxyResult(result)}}}, nil
+	})
+
+	logger.Info("registered DroidRun proxy MCP tools", zap.Int("count", 12))
 }

@@ -49,6 +49,21 @@ const (
 	ToolCuttlefishSnapshot = "cuttlefish_snapshot"
 	ToolCuttlefishPackages = "cuttlefish_packages"
 	ToolCuttlefishDroidRun = "cuttlefish_droidrun"
+
+	// DroidRun proxy tools — high-level LLM-friendly device interaction
+	// These are easier for the LLM than raw ADB: indexed elements, formatted state, vision support
+	ToolDroidRunConnect    = "droidrun_connect"
+	ToolDroidRunState      = "droidrun_state"
+	ToolDroidRunScreenshot = "droidrun_screenshot"
+	ToolDroidRunClick      = "droidrun_click"
+	ToolDroidRunType       = "droidrun_type"
+	ToolDroidRunSwipe      = "droidrun_swipe"
+	ToolDroidRunScroll     = "droidrun_scroll"
+	ToolDroidRunButton     = "droidrun_button"
+	ToolDroidRunOpenApp    = "droidrun_open_app"
+	ToolDroidRunListApps   = "droidrun_list_apps"
+	ToolDroidRunInstall    = "droidrun_install"
+	ToolDroidRunWait       = "droidrun_wait"
 )
 
 // IsBuiltinTool reports whether the given tool name is a built-in tool.
@@ -86,7 +101,19 @@ func IsBuiltinTool(toolName string) bool {
 		ToolCuttlefishCert,
 		ToolCuttlefishSnapshot,
 		ToolCuttlefishPackages,
-		ToolCuttlefishDroidRun:
+		ToolCuttlefishDroidRun,
+		ToolDroidRunConnect,
+		ToolDroidRunState,
+		ToolDroidRunScreenshot,
+		ToolDroidRunClick,
+		ToolDroidRunType,
+		ToolDroidRunSwipe,
+		ToolDroidRunScroll,
+		ToolDroidRunButton,
+		ToolDroidRunOpenApp,
+		ToolDroidRunListApps,
+		ToolDroidRunInstall,
+		ToolDroidRunWait:
 		return true
 	default:
 		return false
@@ -129,5 +156,17 @@ func GetAllBuiltinTools() []string {
 		ToolCuttlefishSnapshot,
 		ToolCuttlefishPackages,
 		ToolCuttlefishDroidRun,
+		ToolDroidRunConnect,
+		ToolDroidRunState,
+		ToolDroidRunScreenshot,
+		ToolDroidRunClick,
+		ToolDroidRunType,
+		ToolDroidRunSwipe,
+		ToolDroidRunScroll,
+		ToolDroidRunButton,
+		ToolDroidRunOpenApp,
+		ToolDroidRunListApps,
+		ToolDroidRunInstall,
+		ToolDroidRunWait,
 	}
 }

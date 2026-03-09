@@ -971,6 +971,28 @@ Android device (Cuttlefish VM):
 - Use ` + builtin.ToolCuttlefishDroidRun + ` to run DroidRun AI agent for autonomous UI automation via natural language
 - Mobile testing workflow: launch VM → install target APK → setup Frida/proxy/cert → test → snapshot → analyze
 
+DroidRun proxy (recommended for UI interaction — easier than raw cuttlefish_shell commands):
+- The DroidRun proxy provides HIGH-LEVEL, LLM-friendly device control. Prefer these over raw ADB:
+  * UI elements are indexed — say "click element 3" instead of guessing pixel coordinates
+  * State is formatted as readable text you can reason about directly
+  * Screenshots are base64 PNG for your vision analysis (Qwen3.5 VL)
+  * Every action returns success/failure + updated state so you know what happened
+- WORKFLOW: ` + builtin.ToolDroidRunConnect + ` → ` + builtin.ToolDroidRunState + ` → decide → act → observe → repeat
+- Use ` + builtin.ToolDroidRunState + ` to see the screen: indexed UI elements + optional screenshot
+- Use ` + builtin.ToolDroidRunClick + ` to click elements by index (e.g. index=3 for "[3] Button 'Login'")
+- Use ` + builtin.ToolDroidRunType + ` to type text into elements (click element first, then type)
+- Use ` + builtin.ToolDroidRunScroll + ` to scroll up/down (auto-calculates coordinates)
+- Use ` + builtin.ToolDroidRunButton + ` for back/home/enter system buttons
+- Use ` + builtin.ToolDroidRunOpenApp + ` to launch apps by package name
+- Use ` + builtin.ToolDroidRunListApps + ` to discover installed apps
+- Use ` + builtin.ToolDroidRunInstall + ` to install APKs with Portal setup
+- Use ` + builtin.ToolDroidRunScreenshot + ` for just a screenshot (use state instead if you need elements too)
+- Use ` + builtin.ToolDroidRunWait + ` to wait for loading/animations then get fresh state
+- Use ` + builtin.ToolDroidRunSwipe + ` for custom swipe gestures with exact coordinates
+- IMPORTANT: droidrun_state returns the screen description — read it carefully to choose the right element index
+- IMPORTANT: the proxy must be running (python3 scripts/cuttlefish/droidrun_proxy.py). If connection fails, tell the user to start it.
+- For operations not available via proxy (logcat, frida, proxy, cert install), use the lower-level cuttlefish_* tools
+
 SSLStrip (HTTPS MITM):
 - SSLStrip is available as a security tool for HTTPS downgrade attacks and credential interception
 - Standard attack chain: enable IP forwarding → set iptables redirect → ARP spoof target → run sslstrip
