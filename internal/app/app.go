@@ -15,6 +15,7 @@ import (
 	"cyberstrike-ai/internal/agent"
 	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/database"
+	"cyberstrike-ai/internal/filemanager"
 	"cyberstrike-ai/internal/handler"
 	"cyberstrike-ai/internal/knowledge"
 	"cyberstrike-ai/internal/logger"
@@ -46,8 +47,9 @@ type App struct {
 	knowledgeRetriever *knowledge.Retriever      // knowledge base retriever (for dynamic initialization)
 	knowledgeIndexer   *knowledge.Indexer        // knowledge base indexer (for dynamic initialization)
 	knowledgeHandler   *handler.KnowledgeHandler // knowledge base handler (for dynamic initialization)
-	memoryHandler      *handler.MemoryHandler    // memory handler (nil when persistent memory is disabled)
-	agentHandler       *handler.AgentHandler     // Agent handler (for updating knowledge base manager)
+	memoryHandler      *handler.MemoryHandler        // memory handler (nil when persistent memory is disabled)
+	fileManagerHandler *handler.FileManagerHandler   // file manager handler
+	agentHandler       *handler.AgentHandler         // Agent handler (for updating knowledge base manager)
 	robotHandler       *handler.RobotHandler     // robot handler (Lark/WeCom/Telegram)
 	robotMu            sync.Mutex                // protects Lark/Telegram long connection cancel
 	larkCancel         context.CancelFunc        // Lark long connection cancel function, used to restart on config change
@@ -177,6 +179,28 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		agentInstance.SetPersistentMemory(persistentMem)
 		registerMemoryTools(mcpServer, persistentMem, log.Logger)
 		memHandler = handler.NewMemoryHandler(persistentMem, log.Logger)
+	}
+
+	// initialize file manager
+	fmEnabled := cfg.Agent.FileManager.Enabled
+	// Default to enabled when config block is zero-value (backward compat)
+	if !fmEnabled && cfg.Agent.FileManager.StorageDir == "" {
+		fmEnabled = true
+	}
+	var fileMgr *filemanager.Manager
+	if fmEnabled {
+		fileStorageDir := cfg.Agent.FileManager.StorageDir
+		if fileStorageDir == "" {
+			fileStorageDir = "managed_files"
+		}
+		var fmErr error
+		fileMgr, fmErr = filemanager.NewManager(db.DB, fileStorageDir, log.Logger)
+		if fmErr != nil {
+			log.Logger.Warn("failed to initialize file manager, continuing without it", zap.Error(fmErr))
+		} else {
+			registerFileManagerTools(mcpServer, fileMgr, log.Logger)
+			log.Logger.Info("file manager initialized", zap.String("storage_dir", fileStorageDir))
+		}
 	}
 
 	// initialize knowledge base module (if enabled)
@@ -357,6 +381,10 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	// create handlers
 	agentHandler := handler.NewAgentHandler(agentInstance, db, cfg, log.Logger)
 	agentHandler.SetSkillsManager(skillsManager) // set Skills manager
+	// set file manager on AgentHandler for auto-registering chat uploads
+	if fileMgr != nil {
+		agentHandler.SetFileManager(fileMgr)
+	}
 	// if knowledge base is enabled, set knowledge base manager on AgentHandler for retrieval log recording
 	if knowledgeManager != nil {
 		agentHandler.SetKnowledgeManager(knowledgeManager)
@@ -377,6 +405,12 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	dockerHandler := handler.NewDockerHandler(filepath.Dir(configPath), log.Logger)
 	if db != nil {
 		skillsHandler.SetDB(db) // set database connection for fetching call statistics
+	}
+
+	// create file manager handler
+	var fileManagerHandler *handler.FileManagerHandler
+	if fileMgr != nil {
+		fileManagerHandler = handler.NewFileManagerHandler(fileMgr, log.Logger)
 	}
 
 	// create OpenAPI handler
@@ -401,6 +435,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		knowledgeIndexer:   knowledgeIndexer,
 		knowledgeHandler:   knowledgeHandler,
 		memoryHandler:      memHandler,
+		fileManagerHandler: fileManagerHandler,
 		agentHandler:       agentHandler,
 		robotHandler:       robotHandler,
 	}
@@ -979,6 +1014,81 @@ func setupRoutes(
 					return
 				}
 				app.memoryHandler.UpdateMemoryStatus(c)
+			})
+		}
+
+		// file manager
+		fileRoutes := protected.Group("/files")
+		{
+			fileRoutes.GET("", func(c *gin.Context) {
+				if app.fileManagerHandler == nil {
+					c.JSON(http.StatusOK, gin.H{"files": []interface{}{}, "total": 0})
+					return
+				}
+				app.fileManagerHandler.ListFiles(c)
+			})
+			fileRoutes.GET("/stats", func(c *gin.Context) {
+				if app.fileManagerHandler == nil {
+					c.JSON(http.StatusOK, gin.H{"total": 0, "total_size": 0, "by_type": map[string]int{}, "by_status": map[string]int{}})
+					return
+				}
+				app.fileManagerHandler.GetFileStats(c)
+			})
+			fileRoutes.GET("/:id", func(c *gin.Context) {
+				if app.fileManagerHandler == nil {
+					c.JSON(http.StatusNotFound, gin.H{"error": "file manager not available"})
+					return
+				}
+				app.fileManagerHandler.GetFile(c)
+			})
+			fileRoutes.GET("/:id/content", func(c *gin.Context) {
+				if app.fileManagerHandler == nil {
+					c.JSON(http.StatusNotFound, gin.H{"error": "file manager not available"})
+					return
+				}
+				app.fileManagerHandler.ReadFileContent(c)
+			})
+			fileRoutes.POST("/upload", func(c *gin.Context) {
+				if app.fileManagerHandler == nil {
+					c.JSON(http.StatusServiceUnavailable, gin.H{"error": "file manager not available"})
+					return
+				}
+				app.fileManagerHandler.UploadFile(c)
+			})
+			fileRoutes.POST("/register", func(c *gin.Context) {
+				if app.fileManagerHandler == nil {
+					c.JSON(http.StatusServiceUnavailable, gin.H{"error": "file manager not available"})
+					return
+				}
+				app.fileManagerHandler.RegisterFile(c)
+			})
+			fileRoutes.PUT("/:id", func(c *gin.Context) {
+				if app.fileManagerHandler == nil {
+					c.JSON(http.StatusServiceUnavailable, gin.H{"error": "file manager not available"})
+					return
+				}
+				app.fileManagerHandler.UpdateFile(c)
+			})
+			fileRoutes.POST("/:id/log", func(c *gin.Context) {
+				if app.fileManagerHandler == nil {
+					c.JSON(http.StatusServiceUnavailable, gin.H{"error": "file manager not available"})
+					return
+				}
+				app.fileManagerHandler.AppendLog(c)
+			})
+			fileRoutes.POST("/:id/findings", func(c *gin.Context) {
+				if app.fileManagerHandler == nil {
+					c.JSON(http.StatusServiceUnavailable, gin.H{"error": "file manager not available"})
+					return
+				}
+				app.fileManagerHandler.AppendFindings(c)
+			})
+			fileRoutes.DELETE("/:id", func(c *gin.Context) {
+				if app.fileManagerHandler == nil {
+					c.JSON(http.StatusServiceUnavailable, gin.H{"error": "file manager not available"})
+					return
+				}
+				app.fileManagerHandler.DeleteFile(c)
 			})
 		}
 
@@ -1903,4 +2013,375 @@ func corsMiddleware() gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+// registerFileManagerTools registers MCP tools for the file manager so the agent
+// can register, update, and query managed files during conversations.
+func registerFileManagerTools(mcpServer *mcp.Server, fm *filemanager.Manager, logger *zap.Logger) {
+	allFileTypes := []string{"report", "api_docs", "project_file", "target_file", "reversing", "exfiltrated", "other"}
+	allFileStatuses := []string{"pending", "processing", "analyzed", "in_progress", "completed", "archived"}
+
+	// ── register_file ─────────────────────────────────────────────────────────
+	registerTool := mcp.Tool{
+		Name:             builtin.ToolRegisterFile,
+		Description:      "Register a file in the file manager. Use this whenever you encounter, create, download, or receive a file that should be tracked. The file manager maintains metadata, processing status, summaries, findings, and logs for each file.",
+		ShortDescription: "Register a file for tracking in file manager",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"file_name": map[string]interface{}{
+					"type":        "string",
+					"description": "Name of the file",
+				},
+				"file_path": map[string]interface{}{
+					"type":        "string",
+					"description": "Absolute path to the file on disk",
+				},
+				"file_size": map[string]interface{}{
+					"type":        "integer",
+					"description": "File size in bytes",
+				},
+				"file_type": map[string]interface{}{
+					"type":        "string",
+					"description": "Type classification of the file",
+					"enum":        allFileTypes,
+				},
+				"summary": map[string]interface{}{
+					"type":        "string",
+					"description": "Brief summary: what is this file, where it came from, what it contains",
+				},
+				"handle_plan": map[string]interface{}{
+					"type":        "string",
+					"description": "How you plan to handle/process this file",
+				},
+				"conversation_id": map[string]interface{}{
+					"type":        "string",
+					"description": "ID of the conversation this file is associated with",
+				},
+			},
+			"required": []string{"file_name", "file_path", "file_type"},
+		},
+	}
+	mcpServer.RegisterTool(registerTool, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		fileName, _ := args["file_name"].(string)
+		filePath, _ := args["file_path"].(string)
+		fileSize := int64(0)
+		if v, ok := args["file_size"].(float64); ok {
+			fileSize = int64(v)
+		}
+		ft, _ := args["file_type"].(string)
+		convID, _ := args["conversation_id"].(string)
+
+		f, err := fm.Register(fileName, filePath, fileSize, "", filemanager.FileType(ft), convID)
+		if err != nil {
+			return &mcp.ToolResult{
+				Content: []mcp.Content{{Type: "text", Text: "Error registering file: " + err.Error()}},
+				IsError: true,
+			}, nil
+		}
+
+		// Apply summary and handle_plan if provided
+		updates := make(map[string]interface{})
+		if summary, ok := args["summary"].(string); ok && summary != "" {
+			updates["summary"] = summary
+		}
+		if plan, ok := args["handle_plan"].(string); ok && plan != "" {
+			updates["handle_plan"] = plan
+		}
+		if len(updates) > 0 {
+			updates["status"] = string(filemanager.FileStatusAnalyzed)
+			fm.Update(f.ID, updates)
+		}
+
+		return &mcp.ToolResult{
+			Content: []mcp.Content{{Type: "text", Text: fmt.Sprintf("File registered: %s (id: %s, type: %s, path: %s)", fileName, f.ID, ft, filePath)}},
+		}, nil
+	})
+
+	// ── update_file ───────────────────────────────────────────────────────────
+	updateTool := mcp.Tool{
+		Name:             builtin.ToolUpdateFile,
+		Description:      "Update a managed file's metadata. Use this to update summary, progress, findings, status, handle_plan, or tags as you work on a file.",
+		ShortDescription: "Update file metadata in file manager",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"id": map[string]interface{}{
+					"type":        "string",
+					"description": "The file ID to update",
+				},
+				"summary": map[string]interface{}{
+					"type":        "string",
+					"description": "Updated summary of the file",
+				},
+				"handle_plan": map[string]interface{}{
+					"type":        "string",
+					"description": "Updated plan for handling the file",
+				},
+				"progress": map[string]interface{}{
+					"type":        "string",
+					"description": "Current progress notes",
+				},
+				"findings": map[string]interface{}{
+					"type":        "string",
+					"description": "Replace all findings with this text",
+				},
+				"status": map[string]interface{}{
+					"type":        "string",
+					"description": "New status",
+					"enum":        allFileStatuses,
+				},
+				"tags": map[string]interface{}{
+					"type":        "string",
+					"description": "Comma-separated tags",
+				},
+			},
+			"required": []string{"id"},
+		},
+	}
+	mcpServer.RegisterTool(updateTool, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		id, _ := args["id"].(string)
+		if id == "" {
+			return &mcp.ToolResult{
+				Content: []mcp.Content{{Type: "text", Text: "Error: id is required"}},
+				IsError: true,
+			}, nil
+		}
+
+		updates := make(map[string]interface{})
+		for _, field := range []string{"summary", "handle_plan", "progress", "findings", "status", "tags"} {
+			if v, ok := args[field].(string); ok && v != "" {
+				updates[field] = v
+			}
+		}
+
+		f, err := fm.Update(id, updates)
+		if err != nil {
+			return &mcp.ToolResult{
+				Content: []mcp.Content{{Type: "text", Text: "Error updating file: " + err.Error()}},
+				IsError: true,
+			}, nil
+		}
+
+		return &mcp.ToolResult{
+			Content: []mcp.Content{{Type: "text", Text: fmt.Sprintf("File updated: %s (status: %s)", f.FileName, f.Status)}},
+		}, nil
+	})
+
+	// ── list_files ────────────────────────────────────────────────────────────
+	listTool := mcp.Tool{
+		Name:             builtin.ToolListFiles,
+		Description:      "List all managed files with optional filtering by type, status, or search query.",
+		ShortDescription: "List managed files",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"file_type": map[string]interface{}{
+					"type":        "string",
+					"description": "Filter by file type",
+					"enum":        allFileTypes,
+				},
+				"status": map[string]interface{}{
+					"type":        "string",
+					"description": "Filter by status",
+					"enum":        allFileStatuses,
+				},
+				"search": map[string]interface{}{
+					"type":        "string",
+					"description": "Search in file names, summaries, findings, and tags",
+				},
+			},
+			"required": []string{},
+		},
+	}
+	mcpServer.RegisterTool(listTool, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		ft := filemanager.FileType("")
+		if v, ok := args["file_type"].(string); ok {
+			ft = filemanager.FileType(v)
+		}
+		status := filemanager.FileStatus("")
+		if v, ok := args["status"].(string); ok {
+			status = filemanager.FileStatus(v)
+		}
+		search, _ := args["search"].(string)
+
+		files, total, err := fm.List(ft, status, search, 50, 0)
+		if err != nil {
+			return &mcp.ToolResult{
+				Content: []mcp.Content{{Type: "text", Text: "Error listing files: " + err.Error()}},
+				IsError: true,
+			}, nil
+		}
+		if total == 0 {
+			return &mcp.ToolResult{
+				Content: []mcp.Content{{Type: "text", Text: "No managed files found."}},
+			}, nil
+		}
+
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("Found %d managed files:\n", total))
+		for _, f := range files {
+			tags := ""
+			if f.Tags != "" {
+				tags = fmt.Sprintf(" [%s]", f.Tags)
+			}
+			sb.WriteString(fmt.Sprintf("  - %s (id: %s, type: %s, status: %s, size: %d)%s\n    Summary: %s\n    Path: %s\n",
+				f.FileName, f.ID, f.FileType, f.Status, f.FileSize, tags,
+				truncate(f.Summary, 200), f.FilePath))
+		}
+		return &mcp.ToolResult{
+			Content: []mcp.Content{{Type: "text", Text: sb.String()}},
+		}, nil
+	})
+
+	// ── get_file ──────────────────────────────────────────────────────────────
+	getTool := mcp.Tool{
+		Name:             builtin.ToolGetFile,
+		Description:      "Get full details of a managed file including summary, progress, findings, logs, and handle plan.",
+		ShortDescription: "Get managed file details",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"id": map[string]interface{}{
+					"type":        "string",
+					"description": "The file ID",
+				},
+			},
+			"required": []string{"id"},
+		},
+	}
+	mcpServer.RegisterTool(getTool, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		id, _ := args["id"].(string)
+		if id == "" {
+			return &mcp.ToolResult{
+				Content: []mcp.Content{{Type: "text", Text: "Error: id is required"}},
+				IsError: true,
+			}, nil
+		}
+
+		f, err := fm.Get(id)
+		if err != nil {
+			return &mcp.ToolResult{
+				Content: []mcp.Content{{Type: "text", Text: "Error: " + err.Error()}},
+				IsError: true,
+			}, nil
+		}
+
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("File: %s\n", f.FileName))
+		sb.WriteString(fmt.Sprintf("ID: %s\n", f.ID))
+		sb.WriteString(fmt.Sprintf("Type: %s | Status: %s | Size: %d bytes\n", f.FileType, f.Status, f.FileSize))
+		sb.WriteString(fmt.Sprintf("Path: %s\n", f.FilePath))
+		if f.Tags != "" {
+			sb.WriteString(fmt.Sprintf("Tags: %s\n", f.Tags))
+		}
+		sb.WriteString(fmt.Sprintf("Created: %s | Updated: %s\n", f.CreatedAt.Format("2006-01-02 15:04"), f.UpdatedAt.Format("2006-01-02 15:04")))
+		if f.Summary != "" {
+			sb.WriteString(fmt.Sprintf("\nSummary:\n%s\n", f.Summary))
+		}
+		if f.HandlePlan != "" {
+			sb.WriteString(fmt.Sprintf("\nHandle Plan:\n%s\n", f.HandlePlan))
+		}
+		if f.Progress != "" {
+			sb.WriteString(fmt.Sprintf("\nProgress:\n%s\n", f.Progress))
+		}
+		if f.Findings != "" {
+			sb.WriteString(fmt.Sprintf("\nFindings:\n%s\n", f.Findings))
+		}
+		if f.Logs != "" {
+			sb.WriteString(fmt.Sprintf("\nLogs:\n%s\n", f.Logs))
+		}
+		return &mcp.ToolResult{
+			Content: []mcp.Content{{Type: "text", Text: sb.String()}},
+		}, nil
+	})
+
+	// ── append_file_log ───────────────────────────────────────────────────────
+	logTool := mcp.Tool{
+		Name:             builtin.ToolAppendFileLog,
+		Description:      "Append a timestamped log entry to a managed file's processing log.",
+		ShortDescription: "Append log entry to managed file",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"id": map[string]interface{}{
+					"type":        "string",
+					"description": "The file ID",
+				},
+				"entry": map[string]interface{}{
+					"type":        "string",
+					"description": "Log entry text",
+				},
+			},
+			"required": []string{"id", "entry"},
+		},
+	}
+	mcpServer.RegisterTool(logTool, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		id, _ := args["id"].(string)
+		entry, _ := args["entry"].(string)
+		if id == "" || entry == "" {
+			return &mcp.ToolResult{
+				Content: []mcp.Content{{Type: "text", Text: "Error: id and entry are required"}},
+				IsError: true,
+			}, nil
+		}
+		if err := fm.AppendLog(id, entry); err != nil {
+			return &mcp.ToolResult{
+				Content: []mcp.Content{{Type: "text", Text: "Error: " + err.Error()}},
+				IsError: true,
+			}, nil
+		}
+		return &mcp.ToolResult{
+			Content: []mcp.Content{{Type: "text", Text: "Log entry appended."}},
+		}, nil
+	})
+
+	// ── append_file_findings ──────────────────────────────────────────────────
+	findingsTool := mcp.Tool{
+		Name:             builtin.ToolAppendFindings,
+		Description:      "Append a finding or discovery to a managed file's findings section.",
+		ShortDescription: "Append finding to managed file",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"id": map[string]interface{}{
+					"type":        "string",
+					"description": "The file ID",
+				},
+				"finding": map[string]interface{}{
+					"type":        "string",
+					"description": "Finding or discovery text",
+				},
+			},
+			"required": []string{"id", "finding"},
+		},
+	}
+	mcpServer.RegisterTool(findingsTool, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		id, _ := args["id"].(string)
+		finding, _ := args["finding"].(string)
+		if id == "" || finding == "" {
+			return &mcp.ToolResult{
+				Content: []mcp.Content{{Type: "text", Text: "Error: id and finding are required"}},
+				IsError: true,
+			}, nil
+		}
+		if err := fm.AppendFindings(id, finding); err != nil {
+			return &mcp.ToolResult{
+				Content: []mcp.Content{{Type: "text", Text: "Error: " + err.Error()}},
+				IsError: true,
+			}, nil
+		}
+		return &mcp.ToolResult{
+			Content: []mcp.Content{{Type: "text", Text: "Finding appended."}},
+		}, nil
+	})
+
+	logger.Info("file manager MCP tools registered")
+}
+
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }

@@ -15,7 +15,6 @@ description: |
   - Validate credential exposure impact in Bitrix assessments
   - Recover integration credentials in authorized IR workflows
   - Confirm Bitrix encryption/decryption behavior during security reviews
-
 parameters:
   - name: "mode"
     type: "string"

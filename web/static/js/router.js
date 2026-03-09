@@ -8,7 +8,7 @@ function initRouter() {
     if (hash) {
         const hashParts = hash.split('?');
         const pageId = hashParts[0];
-        if (pageId && ['dashboard', 'chat', 'info-collect', 'vulnerabilities', 'mcp-monitor', 'mcp-management', 'knowledge-management', 'knowledge-retrieval-logs', 'roles-management', 'skills-monitor', 'skills-management', 'settings', 'tasks', 'memory'].includes(pageId)) {
+        if (pageId && ['dashboard', 'chat', 'info-collect', 'vulnerabilities', 'mcp-monitor', 'mcp-management', 'knowledge-management', 'knowledge-retrieval-logs', 'roles-management', 'skills-monitor', 'skills-management', 'settings', 'tasks', 'file-manager', 'memory'].includes(pageId)) {
             switchPage(pageId);
             
             // If this is the chat page with a conversation param, load that conversation
@@ -344,6 +344,12 @@ function initPage(pageId) {
                 loadSkills();
             }
             break;
+        case 'file-manager':
+            // Initialize file manager page
+            if (typeof initFileManagerPage === 'function') {
+                initFileManagerPage();
+            }
+            break;
         case 'memory':
             // Initialize persistent memory panel
             if (typeof initMemoryPage === 'function') {
@@ -373,7 +379,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const hashParts = hash.split('?');
         const pageId = hashParts[0];
         
-        if (pageId && ['chat', 'info-collect', 'tasks', 'vulnerabilities', 'mcp-monitor', 'mcp-management', 'knowledge-management', 'knowledge-retrieval-logs', 'roles-management', 'skills-monitor', 'skills-management', 'settings', 'memory'].includes(pageId)) {
+        if (pageId && ['chat', 'info-collect', 'tasks', 'vulnerabilities', 'mcp-monitor', 'mcp-management', 'knowledge-management', 'knowledge-retrieval-logs', 'roles-management', 'skills-monitor', 'skills-management', 'settings', 'file-manager', 'memory'].includes(pageId)) {
             switchPage(pageId);
             
             // If this is the chat page with a conversation param, load that conversation

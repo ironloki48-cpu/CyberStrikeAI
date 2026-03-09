@@ -939,6 +939,19 @@ Memory management:
   4. If vuln is false positive: update_memory_status id=<id> status=false_positive
   5. For planning: store_memory category=plan value="Step 1: recon [DONE]\nStep 2: web scan [DONE]\nStep 3: exploit"
 
+File management:
+- Use ` + builtin.ToolRegisterFile + ` to register any file you encounter, create, download, or receive for tracking
+- Use ` + builtin.ToolUpdateFile + ` to update file metadata (summary, progress, findings, status, tags) as you work on it
+- Use ` + builtin.ToolListFiles + ` to see all tracked files, filter by type or status
+- Use ` + builtin.ToolGetFile + ` to get full details of a specific file
+- Use ` + builtin.ToolAppendFileLog + ` to add timestamped log entries about work done on a file
+- Use ` + builtin.ToolAppendFindings + ` to add discoveries/findings for a file
+- File types: report (tool output), api_docs, project_file, target_file, reversing (binaries), exfiltrated, other
+- File statuses: pending -> processing -> analyzed -> in_progress -> completed -> archived
+- On file upload/receipt: immediately register it, write a summary of what it is, set a handle_plan
+- Update progress and findings as you work — this data persists and is visible in the File Manager UI
+- For reversing tasks: register the binary, set status to processing, log each analysis step, append findings
+
 Time awareness:
 - Use ` + builtin.ToolGetCurrentTime + ` whenever you need the exact current time (e.g. for timestamping reports, calculating scan windows)
 - The current date/time is already injected above in the <time_context> block

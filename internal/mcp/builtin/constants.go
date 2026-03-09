@@ -23,6 +23,14 @@ const (
 	ToolListMemories       = "list_memories"
 	ToolDeleteMemory       = "delete_memory"
 	ToolUpdateMemoryStatus = "update_memory_status"
+
+	// File manager tools
+	ToolRegisterFile     = "register_file"
+	ToolUpdateFile       = "update_file"
+	ToolListFiles        = "list_files"
+	ToolGetFile          = "get_file"
+	ToolAppendFileLog    = "append_file_log"
+	ToolAppendFindings   = "append_file_findings"
 )
 
 // IsBuiltinTool reports whether the given tool name is a built-in tool.
@@ -38,7 +46,13 @@ func IsBuiltinTool(toolName string) bool {
 		ToolRetrieveMemory,
 		ToolListMemories,
 		ToolDeleteMemory,
-		ToolUpdateMemoryStatus:
+		ToolUpdateMemoryStatus,
+		ToolRegisterFile,
+		ToolUpdateFile,
+		ToolListFiles,
+		ToolGetFile,
+		ToolAppendFileLog,
+		ToolAppendFindings:
 		return true
 	default:
 		return false
@@ -59,5 +73,11 @@ func GetAllBuiltinTools() []string {
 		ToolListMemories,
 		ToolDeleteMemory,
 		ToolUpdateMemoryStatus,
+		ToolRegisterFile,
+		ToolUpdateFile,
+		ToolListFiles,
+		ToolGetFile,
+		ToolAppendFileLog,
+		ToolAppendFindings,
 	}
 }

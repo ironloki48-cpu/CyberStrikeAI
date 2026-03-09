@@ -201,6 +201,14 @@
                             </div>
                         </div>
                     </div>
+                    <div class="nav-item" data-page="file-manager">
+                        <div class="nav-item-content" data-title="File Manager" onclick="switchPage('file-manager')">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                            </svg>
+                            <span>File Manager</span>
+                        </div>
+                    </div>
                     <div class="nav-item" data-page="memory">
                         <div class="nav-item-content" data-title="Memory" onclick="switchPage('memory')">
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -241,6 +249,8 @@
                                 <div class="dashboard-kpi-card" role="button" tabindex="0" onclick="switchPage('vulnerabilities')" onkeydown="if(event.key==='Enter'||event.key===' ') { event.preventDefault(); switchPage('vulnerabilities'); }" title="Click to view Vulnerability Management"><div class="dashboard-kpi-value" id="dashboard-vuln-total">-</div><div class="dashboard-kpi-label">Total Vulnerabilities</div></div>
                                 <div class="dashboard-kpi-card" role="button" tabindex="0" onclick="switchPage('mcp-monitor')" onkeydown="if(event.key==='Enter'||event.key===' ') { event.preventDefault(); switchPage('mcp-monitor'); }" title="Click to view MCP Monitor"><div class="dashboard-kpi-value" id="dashboard-kpi-tools-calls">-</div><div class="dashboard-kpi-label">Tool Call Count</div></div>
                                 <div class="dashboard-kpi-card" role="button" tabindex="0" onclick="switchPage('mcp-monitor')" onkeydown="if(event.key==='Enter'||event.key===' ') { event.preventDefault(); switchPage('mcp-monitor'); }" title="Click to view MCP Monitor"><div class="dashboard-kpi-value" id="dashboard-kpi-success-rate">-</div><div class="dashboard-kpi-label">Tool Success Rate</div></div>
+                                <div class="dashboard-kpi-card" role="button" tabindex="0" onclick="switchPage('file-manager')" onkeydown="if(event.key==='Enter'||event.key===' ') { event.preventDefault(); switchPage('file-manager'); }" title="Click to view File Manager"><div class="dashboard-kpi-value" id="dashboard-files-count">-</div><div class="dashboard-kpi-label">Managed Files</div></div>
+                                <div class="dashboard-kpi-card" role="button" tabindex="0" onclick="switchPage('file-manager')" onkeydown="if(event.key==='Enter'||event.key===' ') { event.preventDefault(); switchPage('file-manager'); }" title="Click to view File Manager"><div class="dashboard-kpi-value" id="dashboard-files-size">-</div><div class="dashboard-kpi-label">Files Size</div></div>
                             </div>
                             <!-- Two-column main content area -->
                             <div class="dashboard-grid">
@@ -360,6 +370,7 @@
                                             <a class="dashboard-quick-link" onclick="switchPage('knowledge-management')"><span class="dashboard-quick-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg></span><span>Knowledge Management</span></a>
                                             <a class="dashboard-quick-link" onclick="switchPage('skills-management')"><span class="dashboard-quick-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path><polyline points="14 2 14 8 20 8"></polyline></svg></span><span>Skills Management</span></a>
                                             <a class="dashboard-quick-link" onclick="switchPage('roles-management')"><span class="dashboard-quick-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg></span><span>Role Management</span></a>
+                                            <a class="dashboard-quick-link" onclick="switchPage('file-manager')"><span class="dashboard-quick-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg></span><span>File Manager</span></a>
                                         </div>
                                     </section>
                                 </div>
@@ -1069,6 +1080,155 @@
                 </div>
 
                 <!-- Memory management page -->
+                <!-- File Manager page -->
+                <div id="page-file-manager" class="page">
+                    <div class="page-header">
+                        <h2>File Manager</h2>
+                        <div class="page-header-actions">
+                            <button class="btn-primary" onclick="openFileUploadModal()">+ Upload File</button>
+                            <button class="btn-secondary" onclick="openFileRegisterModal()">+ Register Existing</button>
+                            <button class="btn-secondary" onclick="loadFileList(); loadFileStats();" title="Refresh">Refresh</button>
+                        </div>
+                    </div>
+                    <div class="page-content memory-page-content">
+                        <!-- Stats strip -->
+                        <div id="fm-stats" class="memory-stats-strip"></div>
+
+                        <!-- Toolbar -->
+                        <div class="memory-toolbar">
+                            <div class="memory-search-box">
+                                <svg class="memory-search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <circle cx="11" cy="11" r="8"></circle>
+                                    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                                </svg>
+                                <input id="fm-search-input" type="text" placeholder="Search files..." oninput="onFmSearchInput(this.value)" onkeydown="if(event.key==='Escape') clearFmSearch()" />
+                                <button id="fm-search-clear" class="memory-search-clear" onclick="clearFmSearch()" style="display:none;" title="Clear">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><path d="M15 9l-6 6M9 9l6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+                                </button>
+                            </div>
+                            <select id="fm-type-filter" class="memory-select" onchange="onFmTypeFilter(this.value)">
+                                <option value="">All Types</option>
+                                <option value="report">Report</option>
+                                <option value="api_docs">API Docs</option>
+                                <option value="project_file">Project File</option>
+                                <option value="target_file">Target File</option>
+                                <option value="reversing">Reversing</option>
+                                <option value="exfiltrated">Exfiltrated</option>
+                                <option value="other">Other</option>
+                            </select>
+                            <select id="fm-status-filter" class="memory-select" onchange="onFmStatusFilter(this.value)">
+                                <option value="">All Status</option>
+                                <option value="pending">Pending</option>
+                                <option value="processing">Processing</option>
+                                <option value="analyzed">Analyzed</option>
+                                <option value="in_progress">In Progress</option>
+                                <option value="completed">Completed</option>
+                                <option value="archived">Archived</option>
+                            </select>
+                            <div class="memory-toolbar-right">
+                                <span id="fm-count" class="memory-count"></span>
+                            </div>
+                        </div>
+
+                        <!-- File list -->
+                        <div id="fm-list" class="memory-list"></div>
+                        <div id="fm-list-footer" class="memory-list-footer"></div>
+                    </div>
+                </div>
+
+                <!-- File detail modal -->
+                <div id="fm-detail-modal" class="modal-overlay" style="display:none;" onclick="if(event.target===this) closeFmDetailModal()">
+                    <div class="modal-container" style="max-width:800px;">
+                        <div class="modal-header">
+                            <h3 id="fm-detail-title">File Details</h3>
+                            <button class="modal-close" onclick="closeFmDetailModal()">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                            </button>
+                        </div>
+                        <div class="modal-body" id="fm-detail-body" style="max-height:70vh;overflow-y:auto;"></div>
+                        <div class="modal-footer">
+                            <button class="btn-secondary" onclick="closeFmDetailModal()">Close</button>
+                            <button class="btn-primary" onclick="saveFmDetailEdits()">Save Changes</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- File upload modal -->
+                <div id="fm-upload-modal" class="modal-overlay" style="display:none;" onclick="if(event.target===this) closeFmUploadModal()">
+                    <div class="modal-container modal-medium">
+                        <div class="modal-header">
+                            <h3 id="fm-upload-title">Upload File</h3>
+                            <button class="modal-close" onclick="closeFmUploadModal()">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                            </button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="form-group">
+                                <label>File <span class="required">*</span></label>
+                                <input type="file" id="fm-upload-file" onchange="onFmFileSelected(this)" />
+                            </div>
+                            <div class="form-group">
+                                <label for="fm-upload-type">File Type</label>
+                                <select id="fm-upload-type">
+                                    <option value="other">Other</option>
+                                    <option value="report">Report</option>
+                                    <option value="api_docs">API Docs</option>
+                                    <option value="project_file">Project File</option>
+                                    <option value="target_file">Target File</option>
+                                    <option value="reversing">Reversing</option>
+                                    <option value="exfiltrated">Exfiltrated</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn-secondary" onclick="closeFmUploadModal()">Cancel</button>
+                            <button class="btn-primary" onclick="doFmUpload()">Upload</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- File register modal -->
+                <div id="fm-register-modal" class="modal-overlay" style="display:none;" onclick="if(event.target===this) closeFmRegisterModal()">
+                    <div class="modal-container modal-medium">
+                        <div class="modal-header">
+                            <h3>Register Existing File</h3>
+                            <button class="modal-close" onclick="closeFmRegisterModal()">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                            </button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="form-group">
+                                <label for="fm-reg-name">File Name <span class="required">*</span></label>
+                                <input type="text" id="fm-reg-name" placeholder="e.g. scan_results.json" />
+                            </div>
+                            <div class="form-group">
+                                <label for="fm-reg-path">File Path <span class="required">*</span></label>
+                                <input type="text" id="fm-reg-path" placeholder="/path/to/file" />
+                            </div>
+                            <div class="form-group">
+                                <label for="fm-reg-type">File Type</label>
+                                <select id="fm-reg-type">
+                                    <option value="other">Other</option>
+                                    <option value="report">Report</option>
+                                    <option value="api_docs">API Docs</option>
+                                    <option value="project_file">Project File</option>
+                                    <option value="target_file">Target File</option>
+                                    <option value="reversing">Reversing</option>
+                                    <option value="exfiltrated">Exfiltrated</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="fm-reg-size">File Size (bytes)</label>
+                                <input type="number" id="fm-reg-size" placeholder="0" />
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn-secondary" onclick="closeFmRegisterModal()">Cancel</button>
+                            <button class="btn-primary" onclick="doFmRegister()">Register</button>
+                        </div>
+                    </div>
+                </div>
+
                 <div id="page-memory" class="page">
                     <div class="page-header">
                         <h2>Memory</h2>
@@ -1378,6 +1538,22 @@
                                             <label for="agent-memory-max-entries">Max Memory Entries</label>
                                             <input type="number" id="agent-memory-max-entries" min="0" max="10000" placeholder="200" />
                                             <small class="form-hint">Hard cap on stored memory entries (0 = unlimited)</small>
+                                        </div>
+
+                                        <div class="settings-subsection-header">
+                                            <h5>File Manager</h5>
+                                        </div>
+                                        <div class="form-group">
+                                            <label class="checkbox-label">
+                                                <input type="checkbox" id="agent-file-manager-enabled" class="modern-checkbox" />
+                                                <span class="checkbox-custom"></span>
+                                                <span class="checkbox-text">Enable file manager</span>
+                                            </label>
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="agent-file-manager-storage-dir">Storage Directory</label>
+                                            <input type="text" id="agent-file-manager-storage-dir" placeholder="managed_files" />
+                                            <small class="form-hint">Directory for managed file storage (relative to CWD)</small>
                                         </div>
 
                                         <div class="settings-subsection-header">
@@ -2494,5 +2670,6 @@ Skill content goes here...</small>
     <script src="/static/js/tasks.js"></script>
     <script src="/static/js/roles.js"></script>
     <script src="/static/js/memory.js"></script>
+    <script src="/static/js/filemanager.js"></script>
 </body>
 </html>

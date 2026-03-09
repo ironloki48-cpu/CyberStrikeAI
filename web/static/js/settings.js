@@ -444,6 +444,8 @@ async function loadConfig(loadTools = true) {
             'agent-parallel-tool-execution': currentConfig.agent.parallel_tool_execution !== false,
             'agent-time-awareness-enabled': currentConfig.agent.time_awareness?.enabled !== false,
             'agent-memory-enabled': currentConfig.agent.memory?.enabled !== false,
+            'agent-file-manager-enabled': currentConfig.agent.file_manager?.enabled !== false,
+            'agent-file-manager-storage-dir': currentConfig.agent.file_manager?.storage_dir || 'managed_files',
         };
         for (const [id, val] of Object.entries(agentCheckboxes)) {
             const el = document.getElementById(id);
@@ -1104,6 +1106,10 @@ async function applySettings() {
                 memory: {
                     enabled: document.getElementById('agent-memory-enabled')?.checked !== false,
                     max_entries: parseInt(document.getElementById('agent-memory-max-entries')?.value) || 200
+                },
+                file_manager: {
+                    enabled: document.getElementById('agent-file-manager-enabled')?.checked !== false,
+                    storage_dir: document.getElementById('agent-file-manager-storage-dir')?.value.trim() || 'managed_files'
                 }
             },
             security: {

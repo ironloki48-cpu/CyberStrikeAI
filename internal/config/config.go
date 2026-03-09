@@ -170,6 +170,7 @@ type AgentConfig struct {
 	ParallelToolWaitSeconds int                 `yaml:"parallel_tool_wait_seconds" json:"parallel_tool_wait_seconds"` // Max wait per parallel tool before deferring (default 45s)
 	TimeAwareness           TimeAwarenessConfig `yaml:"time_awareness" json:"time_awareness"`                         // Temporal context injection settings
 	Memory                  MemoryConfig        `yaml:"memory" json:"memory"`                                         // Persistent memory settings
+	FileManager             FileManagerConfig   `yaml:"file_manager" json:"file_manager"`                             // File manager settings
 }
 
 // TimeAwarenessConfig controls whether and how the agent injects time context.
@@ -182,6 +183,12 @@ type TimeAwarenessConfig struct {
 type MemoryConfig struct {
 	Enabled    bool `yaml:"enabled" json:"enabled"`         // Enable the persistent memory store (default true)
 	MaxEntries int  `yaml:"max_entries" json:"max_entries"` // Hard cap on stored memory entries, 0 = unlimited
+}
+
+// FileManagerConfig controls the file manager module.
+type FileManagerConfig struct {
+	Enabled    bool   `yaml:"enabled" json:"enabled"`         // Enable file manager (default true)
+	StorageDir string `yaml:"storage_dir" json:"storage_dir"` // Directory for managed file storage (default "managed_files")
 }
 
 type AuthConfig struct {

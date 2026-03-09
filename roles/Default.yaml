@@ -12,4 +12,17 @@ skills:
     - security-automation
     - sql-injection-testing
     - xpath-injection-testing
+    - cloud-security-audit
+    - command-injection-testing
+    - container-security-testing
+    - csrf-testing
+    - deserialization-testing
+    - file-upload-testing
+    - idor-testing
+    - incident-response
+    - ldap-injection-testing
+    - mobile-app-security-testing
+    - secure-code-review
+    - security-awareness-training
+    - ssrf-testing
 enabled: true

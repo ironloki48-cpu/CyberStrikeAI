@@ -29,13 +29,14 @@ async function refreshDashboard() {
     }
 
     try {
-        const [tasksRes, vulnRes, batchRes, monitorRes, knowledgeRes, skillsRes] = await Promise.all([
+        const [tasksRes, vulnRes, batchRes, monitorRes, knowledgeRes, skillsRes, filesRes] = await Promise.all([
             apiFetch('/api/agent-loop/tasks').then(r => r.ok ? r.json() : null).catch(() => null),
             apiFetch('/api/vulnerabilities/stats').then(r => r.ok ? r.json() : null).catch(() => null),
             apiFetch('/api/batch-tasks?limit=500&page=1').then(r => r.ok ? r.json() : null).catch(() => null),
             apiFetch('/api/monitor/stats').then(r => r.ok ? r.json() : null).catch(() => null),
             apiFetch('/api/knowledge/stats').then(r => r.ok ? r.json() : null).catch(() => null),
-            apiFetch('/api/skills/stats').then(r => r.ok ? r.json() : null).catch(() => null)
+            apiFetch('/api/skills/stats').then(r => r.ok ? r.json() : null).catch(() => null),
+            apiFetch('/api/files/stats').then(r => r.ok ? r.json() : null).catch(() => null)
         ]);
 
         if (tasksRes && Array.isArray(tasksRes.tasks)) {
@@ -191,6 +192,16 @@ async function refreshDashboard() {
             const statusEl = document.getElementById('dashboard-skills-status');
             if (statusEl) statusEl.textContent = '-';
         }
+        // Files: { total, total_size, by_type, by_status }
+        if (filesRes && typeof filesRes === 'object') {
+            const total = filesRes.total ?? 0;
+            const totalSize = filesRes.total_size ?? 0;
+            setEl('dashboard-files-count', formatNumber(total));
+            setEl('dashboard-files-size', formatFileSize(totalSize));
+        } else {
+            setEl('dashboard-files-count', '-');
+            setEl('dashboard-files-size', '-');
+        }
     } catch (e) {
         console.warn('Failed to fetch dashboard stats', e);
         if (runningEl) runningEl.textContent = '-';
@@ -198,6 +209,8 @@ async function refreshDashboard() {
         setDashboardOverviewPlaceholder('-');
         setEl('dashboard-kpi-success-rate', '-');
         setEl('dashboard-kpi-tools-calls', '-');
+        setEl('dashboard-files-count', '-');
+        setEl('dashboard-files-size', '-');
         renderDashboardToolsBar(null);
         var ph = document.getElementById('dashboard-tools-pie-placeholder');
         if (ph) { ph.style.removeProperty('display'); ph.textContent = 'No call data'; }
@@ -224,6 +237,13 @@ function formatNumber(num) {
     if (typeof num !== 'number' || isNaN(num)) return '-';
     if (num === 0) return '0';
     return num.toLocaleString('zh-CN');
+}
+
+function formatFileSize(bytes) {
+    if (!bytes || bytes === 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+    return (bytes / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0) + ' ' + units[i];
 }
 
 // Update progress bar width

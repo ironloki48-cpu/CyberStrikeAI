@@ -37,4 +37,20 @@ tools:
     - paramspider
     - list_memories
     - get_current_time
+    - fofa_search
+    - zoomeye_search
+    - cyberstrike-ai-http::angr
+    - cyberstrike-ai-http::list_knowledge_risk_types
+    - cyberstrike-ai-http::list_memories
+    - cyberstrike-ai-http::smbmap
+    - cyberstrike-ai-http::search_knowledge_base
+skills:
+    - business-logic-testing
+    - ldap-injection-testing
+    - network-penetration-testing
+    - sql-injection-testing
+    - vulnerability-assessment
+    - xss-testing
+    - xxe-testing
+    - xpath-injection-testing
 enabled: true
