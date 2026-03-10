@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -48,18 +50,21 @@ type App struct {
 	db                 *database.DB
 	knowledgeDB        *database.DB // knowledge base database connection (if using a separate database)
 	auth               *security.AuthManager
-	knowledgeManager   *knowledge.Manager        // knowledge base manager (for dynamic initialization)
-	knowledgeRetriever *knowledge.Retriever      // knowledge base retriever (for dynamic initialization)
-	knowledgeIndexer   *knowledge.Indexer        // knowledge base indexer (for dynamic initialization)
-	knowledgeHandler   *handler.KnowledgeHandler // knowledge base handler (for dynamic initialization)
-	memoryHandler      *handler.MemoryHandler        // memory handler (nil when persistent memory is disabled)
-	fileManagerHandler *handler.FileManagerHandler   // file manager handler
-	agentHandler       *handler.AgentHandler         // Agent handler (for updating knowledge base manager)
-	robotHandler       *handler.RobotHandler     // robot handler (Lark/WeCom/Telegram)
-	robotMu            sync.Mutex                // protects Lark/Telegram long connection cancel
-	larkCancel         context.CancelFunc        // Lark long connection cancel function, used to restart on config change
-	telegramCancel     context.CancelFunc        // Telegram polling cancel function, used to restart on config change
-	indexHTML          string                    // cached index.html content
+	timeAwareness      *agent.TimeAwareness
+	persistentMem      *agent.PersistentMemory
+	fileMgr            *filemanager.Manager
+	knowledgeManager   *knowledge.Manager          // knowledge base manager (for dynamic initialization)
+	knowledgeRetriever *knowledge.Retriever        // knowledge base retriever (for dynamic initialization)
+	knowledgeIndexer   *knowledge.Indexer          // knowledge base indexer (for dynamic initialization)
+	knowledgeHandler   *handler.KnowledgeHandler   // knowledge base handler (for dynamic initialization)
+	memoryHandler      *handler.MemoryHandler      // memory handler (nil when persistent memory is disabled)
+	fileManagerHandler *handler.FileManagerHandler // file manager handler
+	agentHandler       *handler.AgentHandler       // Agent handler (for updating knowledge base manager)
+	robotHandler       *handler.RobotHandler       // robot handler (Lark/Telegram)
+	robotMu            sync.Mutex                  // protects Lark/Telegram long connection cancel
+	larkCancel         context.CancelFunc          // Lark long connection cancel function, used to restart on config change
+	telegramCancel     context.CancelFunc          // Telegram polling cancel function, used to restart on config change
+	indexHTML          string                      // cached index.html content
 }
 
 // New creates a new application
@@ -153,9 +158,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	// initialize TimeAwareness before creating the agent variable to avoid
 	// package name shadowing.
 	taEnabled := cfg.Agent.TimeAwareness.Enabled
-	// For backward compatibility: treat a fully zero-value config block as
-	// "not explicitly disabled" and default to enabled.
-	if !taEnabled && cfg.Agent.TimeAwareness.Timezone == "" {
+	if !cfg.Agent.TimeAwareness.EnabledSet {
 		taEnabled = true
 	}
 	timeAwareness := agent.NewTimeAwareness(cfg.Agent.TimeAwareness.Timezone, taEnabled)
@@ -166,12 +169,16 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 
 	// initialize PersistentMemory before creating the agent variable
 	var persistentMem *agent.PersistentMemory
-	memEnabled := cfg.Agent.Memory.Enabled || cfg.Agent.Memory.MaxEntries == 0
+	memEnabled := cfg.Agent.Memory.Enabled
+	if !cfg.Agent.Memory.EnabledSet {
+		memEnabled = true
+	}
 	if memEnabled {
 		pm, pmErr := agent.NewPersistentMemory(db.DB, log.Logger)
 		if pmErr != nil {
 			log.Logger.Warn("failed to initialize persistent memory, continuing without it", zap.Error(pmErr))
 		} else {
+			pm.SetMaxEntries(cfg.Agent.Memory.MaxEntries)
 			persistentMem = pm
 			log.Logger.Info("persistent memory initialized")
 		}
@@ -193,6 +200,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	// attach time awareness and memory to agent
 	agentInstance.SetTimeAwareness(timeAwareness)
 	registerTimeTools(mcpServer, timeAwareness, log.Logger)
+	registerToolDiscovery(mcpServer, log.Logger)
 	var memHandler *handler.MemoryHandler
 	if persistentMem != nil {
 		agentInstance.SetPersistentMemory(persistentMem)
@@ -202,8 +210,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 
 	// initialize file manager
 	fmEnabled := cfg.Agent.FileManager.Enabled
-	// Default to enabled when config block is zero-value (backward compat)
-	if !fmEnabled && cfg.Agent.FileManager.StorageDir == "" {
+	if !cfg.Agent.FileManager.EnabledSet {
 		fmEnabled = true
 	}
 	var fileMgr *filemanager.Manager
@@ -465,6 +472,9 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		db:                 db,
 		knowledgeDB:        knowledgeDBConn,
 		auth:               authManager,
+		timeAwareness:      timeAwareness,
+		persistentMem:      persistentMem,
+		fileMgr:            fileMgr,
 		knowledgeManager:   knowledgeManager,
 		knowledgeRetriever: knowledgeRetriever,
 		knowledgeIndexer:   knowledgeIndexer,
@@ -504,20 +514,33 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	configHandler.SetSkillsToolRegistrar(skillsRegistrar)
 
 	// set memory tool registrar (so memory tools survive config re-apply)
-	if persistentMem != nil {
-		memoryRegistrar := func() error {
-			registerMemoryTools(mcpServer, persistentMem, log.Logger)
+	memoryRegistrar := func() error {
+		if app.persistentMem == nil || !app.config.Agent.Memory.Enabled {
 			return nil
 		}
-		configHandler.SetMemoryToolRegistrar(memoryRegistrar)
+		registerMemoryTools(mcpServer, app.persistentMem, log.Logger)
+		return nil
 	}
+	configHandler.SetMemoryToolRegistrar(memoryRegistrar)
 
 	// set time tool registrar (so time tools survive config re-apply)
 	timeRegistrar := func() error {
-		registerTimeTools(mcpServer, timeAwareness, log.Logger)
+		if app.timeAwareness == nil || !app.config.Agent.TimeAwareness.Enabled {
+			return nil
+		}
+		registerTimeTools(mcpServer, app.timeAwareness, log.Logger)
 		return nil
 	}
 	configHandler.SetTimeToolRegistrar(timeRegistrar)
+
+	fileManagerRegistrar := func() error {
+		if app.fileMgr == nil || !app.config.Agent.FileManager.Enabled {
+			return nil
+		}
+		registerFileManagerTools(mcpServer, app.fileMgr, log.Logger)
+		return nil
+	}
+	configHandler.SetFileManagerToolRegistrar(fileManagerRegistrar)
 
 	// set knowledge base initializer (for dynamic initialization, must be set after App is created)
 	configHandler.SetKnowledgeInitializer(func() (*handler.KnowledgeHandler, error) {
@@ -566,6 +589,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 
 	// set robot connection restarter, so new Lark config takes effect without restarting the service
 	configHandler.SetRobotRestarter(app)
+	configHandler.SetAppUpdater(app)
 
 	// set up routes (using App instance for dynamic handler access)
 	setupRoutes(
@@ -641,9 +665,21 @@ func (a *App) Run() error {
 			a.logger.Info("starting MCP server", zap.String("address", mcpAddr))
 
 			mux := http.NewServeMux()
-			mux.HandleFunc("/mcp", a.mcpServer.HandleHTTP)
+			mux.HandleFunc("/mcp", func(w http.ResponseWriter, r *http.Request) {
+				if !a.config.MCP.AllowRemote && !isLoopbackRequest(r.RemoteAddr) {
+					http.Error(w, "remote MCP access is disabled", http.StatusForbidden)
+					return
+				}
+				a.mcpServer.HandleHTTP(w, r)
+			})
 			// Backward-compatibility alias for legacy SSE endpoint configs.
-			mux.HandleFunc("/mcp/sse", a.mcpServer.HandleHTTP)
+			mux.HandleFunc("/mcp/sse", func(w http.ResponseWriter, r *http.Request) {
+				if !a.config.MCP.AllowRemote && !isLoopbackRequest(r.RemoteAddr) {
+					http.Error(w, "remote MCP access is disabled", http.StatusForbidden)
+					return
+				}
+				a.mcpServer.HandleHTTP(w, r)
+			})
 
 			if err := http.ListenAndServe(mcpAddr, mux); err != nil {
 				a.logger.Error("MCP server failed to start", zap.Error(err))
@@ -683,6 +719,73 @@ func (a *App) Shutdown() {
 			a.logger.Logger.Warn("failed to close knowledge base database connection", zap.Error(err))
 		}
 	}
+}
+
+// ApplyAgentRuntimeConfig updates runtime-owned agent features so ApplyConfig can
+// change behavior without a process restart.
+func (a *App) ApplyAgentRuntimeConfig(cfg *config.AgentConfig) error {
+	if cfg == nil {
+		return nil
+	}
+
+	a.config.Agent = *cfg
+	if a.agent != nil {
+		a.agent.UpdateAgentSettings(cfg)
+	}
+
+	if a.timeAwareness == nil {
+		a.timeAwareness = agent.NewTimeAwareness(cfg.TimeAwareness.Timezone, cfg.TimeAwareness.Enabled)
+	} else {
+		a.timeAwareness.UpdateConfig(cfg.TimeAwareness.Timezone, cfg.TimeAwareness.Enabled)
+	}
+	if a.agent != nil {
+		a.agent.SetTimeAwareness(a.timeAwareness)
+	}
+
+	if cfg.Memory.Enabled {
+		if a.persistentMem == nil {
+			pm, err := agent.NewPersistentMemory(a.db.DB, a.logger.Logger)
+			if err != nil {
+				return fmt.Errorf("initialize persistent memory: %w", err)
+			}
+			a.persistentMem = pm
+		}
+		a.persistentMem.SetMaxEntries(cfg.Memory.MaxEntries)
+		if a.agent != nil {
+			a.agent.SetPersistentMemory(a.persistentMem)
+		}
+		a.memoryHandler = handler.NewMemoryHandler(a.persistentMem, a.logger.Logger)
+	} else {
+		if a.agent != nil {
+			a.agent.SetPersistentMemory(nil)
+		}
+		a.memoryHandler = nil
+	}
+
+	if cfg.FileManager.Enabled {
+		fileStorageDir := cfg.FileManager.StorageDir
+		if fileStorageDir == "" {
+			fileStorageDir = "managed_files"
+		}
+		if a.fileMgr == nil || a.fileMgr.StorageDir() != fileStorageDir {
+			fm, err := filemanager.NewManager(a.db.DB, fileStorageDir, a.logger.Logger)
+			if err != nil {
+				return fmt.Errorf("initialize file manager: %w", err)
+			}
+			a.fileMgr = fm
+		}
+		a.fileManagerHandler = handler.NewFileManagerHandler(a.fileMgr, a.logger.Logger)
+		if a.agentHandler != nil {
+			a.agentHandler.SetFileManager(a.fileMgr)
+		}
+	} else {
+		a.fileManagerHandler = nil
+		if a.agentHandler != nil {
+			a.agentHandler.SetFileManager(nil)
+		}
+	}
+
+	return nil
 }
 
 // startRobotConnections starts Lark/Telegram long connections based on current config (does not close existing connections, for initial startup only)
@@ -772,9 +875,7 @@ func setupRoutes(
 		authRoutes.GET("/validate", security.AuthMiddleware(authManager), authHandler.Validate)
 	}
 
-	// robot callbacks (no login required, called by WeCom/Lark servers)
-	api.GET("/robot/wecom", robotHandler.HandleWecomGET)
-	api.POST("/robot/wecom", robotHandler.HandleWecomPOST)
+	// robot callbacks (no login required, called by Lark servers)
 	api.POST("/robot/lark", robotHandler.HandleLarkPOST)
 
 	protected := api.Group("")
@@ -1616,6 +1717,84 @@ func registerTimeTools(mcpServer *mcp.Server, ta *agent.TimeAwareness, logger *z
 	logger.Info("time tool registered successfully")
 }
 
+// registerToolDiscovery registers the get_tool_details meta-tool that lets the
+// model request full descriptions for specific tools on demand. This enables a
+// compact tool catalog approach: tool definitions are sent with minimal
+// descriptions to save tokens, and the model calls this tool when it needs
+// detailed usage information for a specific tool.
+func registerToolDiscovery(mcpServer *mcp.Server, logger *zap.Logger) {
+	tool := mcp.Tool{
+		Name: builtin.ToolGetToolDetails,
+		Description: "Get full detailed descriptions and usage instructions for one or more tools by name. " +
+			"Use this when you need to understand how to use a specific tool, what parameters it accepts, " +
+			"or what it does in detail. Pass a comma-separated list of tool names.",
+		ShortDescription: "Get full descriptions for tools by name (comma-separated)",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tool_names": map[string]interface{}{
+					"type":        "string",
+					"description": "Comma-separated list of tool names to get details for, e.g. 'nmap,sqlmap,dirsearch'",
+				},
+			},
+			"required": []interface{}{"tool_names"},
+		},
+	}
+	toolHandler := func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		namesRaw, _ := args["tool_names"].(string)
+		if strings.TrimSpace(namesRaw) == "" {
+			return &mcp.ToolResult{
+				Content: []mcp.Content{{Type: "text", Text: "Error: tool_names is required (comma-separated list)"}},
+				IsError: true,
+			}, nil
+		}
+
+		allTools := mcpServer.GetAllTools()
+		toolMap := make(map[string]mcp.Tool, len(allTools))
+		for _, t := range allTools {
+			toolMap[t.Name] = t
+		}
+
+		names := strings.Split(namesRaw, ",")
+		var sb strings.Builder
+		found := 0
+		for _, raw := range names {
+			name := strings.TrimSpace(raw)
+			if name == "" {
+				continue
+			}
+			t, ok := toolMap[name]
+			if !ok {
+				sb.WriteString(fmt.Sprintf("## %s\nNot found. Check tool name spelling.\n\n", name))
+				continue
+			}
+			found++
+			desc := t.Description
+			if desc == "" {
+				desc = t.ShortDescription
+			}
+			sb.WriteString(fmt.Sprintf("## %s\n%s\n", name, desc))
+			// Include parameter schema if available
+			if len(t.InputSchema) > 0 {
+				if props, ok := t.InputSchema["properties"]; ok {
+					if propsJSON, err := json.MarshalIndent(props, "", "  "); err == nil {
+						sb.WriteString(fmt.Sprintf("\nParameters:\n```json\n%s\n```\n", string(propsJSON)))
+					}
+				}
+			}
+			sb.WriteString("\n")
+		}
+		if found == 0 {
+			sb.WriteString("No matching tools found. Use tool names exactly as they appear in the tool list.")
+		}
+		return &mcp.ToolResult{
+			Content: []mcp.Content{{Type: "text", Text: sb.String()}},
+		}, nil
+	}
+	mcpServer.RegisterTool(tool, toolHandler)
+	logger.Info("tool discovery (get_tool_details) registered successfully")
+}
+
 // allMemoryCategories is the complete list of memory category values used in tool schemas.
 var allMemoryCategories = []string{
 	"credential", "target", "vulnerability", "fact", "note",
@@ -2064,18 +2243,43 @@ in the memory context block so the model knows NOT to re-investigate them.`,
 // corsMiddleware CORS middleware
 func corsMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+		origin := strings.TrimSpace(c.Request.Header.Get("Origin"))
+		if origin != "" && sameOrigin(origin, c.Request.Host) {
+			c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
+			c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+			c.Writer.Header().Set("Vary", "Origin")
+		}
 		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
 
 		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(204)
+			if origin != "" && !sameOrigin(origin, c.Request.Host) {
+				c.AbortWithStatus(http.StatusForbidden)
+				return
+			}
+			c.AbortWithStatus(http.StatusNoContent)
 			return
 		}
 
 		c.Next()
 	}
+}
+
+func sameOrigin(origin, host string) bool {
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(u.Host, host)
+}
+
+func isLoopbackRequest(remoteAddr string) bool {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(remoteAddr))
+	if err != nil {
+		host = strings.TrimSpace(remoteAddr)
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // registerFileManagerTools registers MCP tools for the file manager so the agent

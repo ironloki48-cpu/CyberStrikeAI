@@ -34,21 +34,10 @@ type Config struct {
 	SkillsDir   string                `yaml:"skills_dir,omitempty" json:"skills_dir,omitempty"` // Skills configuration file directory
 }
 
-// RobotsConfig holds bot configuration for Lark/Feishu, Telegram, etc.
+// RobotsConfig holds bot configuration for Lark/Feishu and Telegram.
 type RobotsConfig struct {
-	Wecom    RobotWecomConfig    `yaml:"wecom,omitempty" json:"wecom,omitempty"`       // WeCom (Enterprise WeChat)
 	Lark     RobotLarkConfig     `yaml:"lark,omitempty" json:"lark,omitempty"`         // Lark (Feishu)
 	Telegram RobotTelegramConfig `yaml:"telegram,omitempty" json:"telegram,omitempty"` // Telegram
-}
-
-// RobotWecomConfig holds the WeCom (Enterprise WeChat) bot configuration.
-type RobotWecomConfig struct {
-	Enabled        bool   `yaml:"enabled" json:"enabled"`
-	Token          string `yaml:"token" json:"token"`                       // Callback URL verification token
-	EncodingAESKey string `yaml:"encoding_aes_key" json:"encoding_aes_key"` // EncodingAESKey
-	CorpID         string `yaml:"corp_id" json:"corp_id"`                   // Enterprise ID
-	Secret         string `yaml:"secret" json:"secret"`                     // Application Secret
-	AgentID        int64  `yaml:"agent_id" json:"agent_id"`                 // Application AgentId
 }
 
 // RobotLarkConfig holds the Lark (Feishu) bot configuration.
@@ -77,9 +66,11 @@ type LogConfig struct {
 }
 
 type MCPConfig struct {
-	Enabled bool   `yaml:"enabled"`
-	Host    string `yaml:"host"`
-	Port    int    `yaml:"port"`
+	Enabled     bool   `yaml:"enabled"`
+	EnabledSet  bool   `yaml:"-" json:"-"`
+	Host        string `yaml:"host"`
+	Port        int    `yaml:"port"`
+	AllowRemote bool   `yaml:"allow_remote,omitempty" json:"allow_remote,omitempty"`
 }
 
 type OpenAIConfig struct {
@@ -194,48 +185,107 @@ type AgentConfig struct {
 
 // TimeAwarenessConfig controls whether and how the agent injects time context.
 type TimeAwarenessConfig struct {
-	Enabled  bool   `yaml:"enabled" json:"enabled"`   // Inject current date/time into every system prompt (default true)
-	Timezone string `yaml:"timezone" json:"timezone"` // IANA timezone name, e.g. "America/New_York" (default "UTC")
+	Enabled    bool   `yaml:"enabled" json:"enabled"` // Inject current date/time into every system prompt (default true)
+	EnabledSet bool   `yaml:"-" json:"-"`
+	Timezone   string `yaml:"timezone" json:"timezone"` // IANA timezone name, e.g. "America/New_York" (default "UTC")
 }
 
 // MemoryConfig controls persistent cross-conversation memory behaviour.
 type MemoryConfig struct {
-	Enabled    bool `yaml:"enabled" json:"enabled"`         // Enable the persistent memory store (default true)
+	Enabled    bool `yaml:"enabled" json:"enabled"` // Enable the persistent memory store (default true)
+	EnabledSet bool `yaml:"-" json:"-"`
 	MaxEntries int  `yaml:"max_entries" json:"max_entries"` // Hard cap on stored memory entries, 0 = unlimited
 }
 
 // FileManagerConfig controls the file manager module.
 type FileManagerConfig struct {
-	Enabled    bool   `yaml:"enabled" json:"enabled"`         // Enable file manager (default true)
+	Enabled    bool   `yaml:"enabled" json:"enabled"` // Enable file manager (default true)
+	EnabledSet bool   `yaml:"-" json:"-"`
 	StorageDir string `yaml:"storage_dir" json:"storage_dir"` // Directory for managed file storage (default "managed_files")
+}
+
+func markEnabledPresence(node *yaml.Node, target *bool) {
+	if node == nil || node.Kind != yaml.MappingNode || target == nil {
+		return
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Kind == yaml.ScalarNode && node.Content[i].Value == "enabled" {
+			*target = true
+			return
+		}
+	}
+}
+
+func (c *MCPConfig) UnmarshalYAML(value *yaml.Node) error {
+	type raw MCPConfig
+	var out raw
+	if err := value.Decode(&out); err != nil {
+		return err
+	}
+	*c = MCPConfig(out)
+	markEnabledPresence(value, &c.EnabledSet)
+	return nil
+}
+
+func (c *TimeAwarenessConfig) UnmarshalYAML(value *yaml.Node) error {
+	type raw TimeAwarenessConfig
+	var out raw
+	if err := value.Decode(&out); err != nil {
+		return err
+	}
+	*c = TimeAwarenessConfig(out)
+	markEnabledPresence(value, &c.EnabledSet)
+	return nil
+}
+
+func (c *MemoryConfig) UnmarshalYAML(value *yaml.Node) error {
+	type raw MemoryConfig
+	var out raw
+	if err := value.Decode(&out); err != nil {
+		return err
+	}
+	*c = MemoryConfig(out)
+	markEnabledPresence(value, &c.EnabledSet)
+	return nil
+}
+
+func (c *FileManagerConfig) UnmarshalYAML(value *yaml.Node) error {
+	type raw FileManagerConfig
+	var out raw
+	if err := value.Decode(&out); err != nil {
+		return err
+	}
+	*c = FileManagerConfig(out)
+	markEnabledPresence(value, &c.EnabledSet)
+	return nil
 }
 
 // CuttlefishConfig controls the Cuttlefish Android VM integration.
 type CuttlefishConfig struct {
-	Enabled          bool   `yaml:"enabled" json:"enabled"`                       // Enable Cuttlefish tools (default true)
-	CvdHome          string `yaml:"cvd_home" json:"cvd_home"`                    // Cuttlefish workspace directory (default ~/cuttlefish-workspace)
-	MemoryMB         int    `yaml:"memory_mb" json:"memory_mb"`                  // VM RAM in MB (default 8192)
-	CPUs             int    `yaml:"cpus" json:"cpus"`                            // VM CPU count (default 4)
-	DiskMB           int    `yaml:"disk_mb" json:"disk_mb"`                      // Data partition size in MB (default 16000)
-	GPUMode          string `yaml:"gpu_mode" json:"gpu_mode"`                    // GPU mode: guest_swiftshader, drm_virgl (default guest_swiftshader)
-	AutoLaunch       bool   `yaml:"auto_launch" json:"auto_launch"`              // Auto-launch VM on server start (default false)
-	RussianIdentity  bool   `yaml:"russian_identity" json:"russian_identity"`    // Apply Russian phone identity on boot (default true)
-	WebRTCPort       int    `yaml:"webrtc_port" json:"webrtc_port"`              // WebRTC display port (default 8443)
-	DroidRunPath     string `yaml:"droidrun_path" json:"droidrun_path"`          // Path to DroidRun installation (default ~/droidrun)
-	DroidRunConfig   string `yaml:"droidrun_config" json:"droidrun_config"`      // Path to DroidRun config YAML (default <cvd_home>/droidrun/config.yaml)
-	BridgeScript     string `yaml:"bridge_script" json:"bridge_script"`          // Path to droidrun-bridge.py (auto-detected if empty)
-	ProxyPort        int    `yaml:"proxy_port" json:"proxy_port"`                // DroidRun proxy HTTP service port (default 18090)
-	ProxyAutoStart   bool   `yaml:"proxy_auto_start" json:"proxy_auto_start"`   // Auto-start DroidRun proxy when VM launches (default true)
-	ScreenshotDir    string `yaml:"screenshot_dir" json:"screenshot_dir"`       // Directory for screenshots from proxy (default /tmp/droidrun_screenshots)
-	VisionEnabled    bool   `yaml:"vision_enabled" json:"vision_enabled"`       // Include screenshots in state responses for VL models (default true)
+	Enabled         bool   `yaml:"enabled" json:"enabled"`                   // Enable Cuttlefish tools (default true)
+	CvdHome         string `yaml:"cvd_home" json:"cvd_home"`                 // Cuttlefish workspace directory (default ~/cuttlefish-workspace)
+	MemoryMB        int    `yaml:"memory_mb" json:"memory_mb"`               // VM RAM in MB (default 8192)
+	CPUs            int    `yaml:"cpus" json:"cpus"`                         // VM CPU count (default 4)
+	DiskMB          int    `yaml:"disk_mb" json:"disk_mb"`                   // Data partition size in MB (default 16000)
+	GPUMode         string `yaml:"gpu_mode" json:"gpu_mode"`                 // GPU mode: guest_swiftshader, drm_virgl (default guest_swiftshader)
+	AutoLaunch      bool   `yaml:"auto_launch" json:"auto_launch"`           // Auto-launch VM on server start (default false)
+	RussianIdentity bool   `yaml:"russian_identity" json:"russian_identity"` // Apply Russian phone identity on boot (default true)
+	WebRTCPort      int    `yaml:"webrtc_port" json:"webrtc_port"`           // WebRTC display port (default 8443)
+	DroidRunPath    string `yaml:"droidrun_path" json:"droidrun_path"`       // Path to DroidRun installation (default ~/droidrun)
+	DroidRunConfig  string `yaml:"droidrun_config" json:"droidrun_config"`   // Path to DroidRun config YAML (default <cvd_home>/droidrun/config.yaml)
+	BridgeScript    string `yaml:"bridge_script" json:"bridge_script"`       // Path to droidrun-bridge.py (auto-detected if empty)
+	ProxyPort       int    `yaml:"proxy_port" json:"proxy_port"`             // DroidRun proxy HTTP service port (default 18090)
+	ProxyAutoStart  bool   `yaml:"proxy_auto_start" json:"proxy_auto_start"` // Auto-start DroidRun proxy when VM launches (default true)
+	ScreenshotDir   string `yaml:"screenshot_dir" json:"screenshot_dir"`     // Directory for screenshots from proxy (default /tmp/droidrun_screenshots)
+	VisionEnabled   bool   `yaml:"vision_enabled" json:"vision_enabled"`     // Include screenshots in state responses for VL models (default true)
 }
 
 // SSLStripConfig controls SSLStrip MITM tool integration.
 type SSLStripConfig struct {
-	Enabled    bool   `yaml:"enabled" json:"enabled"`           // Enable SSLStrip tool (default true)
-	ListenPort int    `yaml:"listen_port" json:"listen_port"`   // Default listen port (default 10000)
-	LogDir     string `yaml:"log_dir" json:"log_dir"`           // Directory for SSLStrip capture logs (default /tmp)
-	AutoProxy  bool   `yaml:"auto_proxy" json:"auto_proxy"`     // Auto-configure Cuttlefish proxy when SSLStrip starts (default false)
+	Enabled    bool   `yaml:"enabled" json:"enabled"`         // Enable SSLStrip tool (default true)
+	ListenPort int    `yaml:"listen_port" json:"listen_port"` // Default listen port (default 10000)
+	LogDir     string `yaml:"log_dir" json:"log_dir"`         // Directory for SSLStrip capture logs (default /tmp)
+	AutoProxy  bool   `yaml:"auto_proxy" json:"auto_proxy"`   // Auto-configure Cuttlefish proxy when SSLStrip starts (default false)
 }
 
 type AuthConfig struct {
@@ -678,9 +728,11 @@ func Default() *Config {
 			Output: "stdout",
 		},
 		MCP: MCPConfig{
-			Enabled: true,
-			Host:    "0.0.0.0",
-			Port:    8081,
+			Enabled:     true,
+			EnabledSet:  true,
+			Host:        "0.0.0.0",
+			Port:        8081,
+			AllowRemote: false,
 		},
 		OpenAI: OpenAIConfig{
 			BaseURL:        "https://api.openai.com/v1",
@@ -690,11 +742,13 @@ func Default() *Config {
 		Agent: AgentConfig{
 			MaxIterations: 30, // Default maximum iteration count
 			TimeAwareness: TimeAwarenessConfig{
-				Enabled:  true,
-				Timezone: "UTC",
+				Enabled:    true,
+				EnabledSet: true,
+				Timezone:   "UTC",
 			},
 			Memory: MemoryConfig{
 				Enabled:    true,
+				EnabledSet: true,
 				MaxEntries: 200,
 			},
 		},

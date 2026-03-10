@@ -171,6 +171,7 @@ mcp:
   enabled: true # Whether to enable the MCP server (HTTP mode)
   host: 0.0.0.0 # MCP server listen address
   port: 18081 # MCP server port
+  allow_remote: false # Set true only when you intentionally expose MCP beyond localhost
 # External MCP configuration
 external_mcp:
   servers:
@@ -215,18 +216,11 @@ knowledge:
     similarity_threshold: 0.7 # Similarity threshold (0–1); results below this value are filtered out
     hybrid_weight: 0.7 # Hybrid retrieval weight (0–1); weight of vector retrieval — 1.0 = pure vector retrieval, 0.0 = pure keyword retrieval
 # ============================================
-# Bot Configuration (WeCom, DingTalk, Lark/Feishu)
+# Bot Configuration (Lark/Feishu, Telegram)
 # ============================================
-# Used to chat with CyberStrikeAI via WeCom/DingTalk/Lark on mobile; no server deployment required.
+# Used to chat with CyberStrikeAI via supported bots on mobile; no server deployment required.
 # Can be configured under System Settings -> Bot Settings.
 robots:
-  wecom: # WeCom (Enterprise WeChat)
-    enabled: false
-    token: ""
-    encoding_aes_key: ""
-    corp_id: ""
-    secret: ""
-    agent_id: 0
   dingtalk: # DingTalk
     enabled: false
     client_id: ""

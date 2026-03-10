@@ -78,8 +78,8 @@ type AgentHandler struct {
 	knowledgeManager interface {    // knowledge base manager interface
 		LogRetrieval(conversationID, messageID, query, riskType string, retrievedItems []string) error
 	}
-	skillsManager *skills.Manager          // Skills manager
-	fileManager   *filemanager.Manager     // File manager (nil if not initialized)
+	skillsManager *skills.Manager      // Skills manager
+	fileManager   *filemanager.Manager // File manager (nil if not initialized)
 }
 
 // NewAgentHandler creates a new Agent handler
@@ -591,7 +591,7 @@ func (h *AgentHandler) AgentLoop(c *gin.Context) {
 	})
 }
 
-// ProcessMessageForRobot is called by robots (WeCom/Lark): same execution path as /api/agent-loop/stream
+// ProcessMessageForRobot is called by chat bots: same execution path as /api/agent-loop/stream
 // (includes progressCallback and process details), but without sending SSE, and returns the full reply at the end
 func (h *AgentHandler) ProcessMessageForRobot(ctx context.Context, conversationID, message, role string) (response string, convID string, err error) {
 	if conversationID == "" {

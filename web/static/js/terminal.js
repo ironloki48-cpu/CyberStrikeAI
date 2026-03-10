@@ -61,26 +61,11 @@
         t.term.write(suffix);
     }
 
-    // Get the current login token from local storage (consistent with the structure used by auth.js)
-    function getStoredAuthToken() {
-        try {
-            var raw = localStorage.getItem('cyberstrike-auth');
-            if (!raw) return null;
-            var o = JSON.parse(raw);
-            if (o && o.token) return o.token;
-        } catch (e) {}
-        return null;
-    }
-
-    // Build WebSocket URL (supports http/https; pass token via query param for backend auth)
+    // Build WebSocket URL (supports http/https). Authentication uses the
+    // same-origin HttpOnly auth cookie set at login time.
     function buildTerminalWSURL() {
         var proto = (window.location.protocol === 'https:') ? 'wss://' : 'ws://';
-        var url = proto + window.location.host + '/api/terminal/ws';
-        var token = getStoredAuthToken();
-        if (token) {
-            url += '?token=' + encodeURIComponent(token);
-        }
-        return url;
+        return proto + window.location.host + '/api/terminal/ws';
     }
 
     function ensureTerminalWS(tab) {

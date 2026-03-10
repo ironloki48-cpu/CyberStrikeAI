@@ -561,21 +561,8 @@ async function loadConfig(loadTools = true) {
 
         // Fill bot config
         const robots = currentConfig.robots || {};
-        const wecom = robots.wecom || {};
         const lark = robots.lark || {};
         const telegram = robots.telegram || {};
-        const wecomEnabled = document.getElementById('robot-wecom-enabled');
-        if (wecomEnabled) wecomEnabled.checked = wecom.enabled === true;
-        const wecomToken = document.getElementById('robot-wecom-token');
-        if (wecomToken) wecomToken.value = wecom.token || '';
-        const wecomAes = document.getElementById('robot-wecom-encoding-aes-key');
-        if (wecomAes) wecomAes.value = wecom.encoding_aes_key || '';
-        const wecomCorp = document.getElementById('robot-wecom-corp-id');
-        if (wecomCorp) wecomCorp.value = wecom.corp_id || '';
-        const wecomSecret = document.getElementById('robot-wecom-secret');
-        if (wecomSecret) wecomSecret.value = wecom.secret || '';
-        const wecomAgentId = document.getElementById('robot-wecom-agent-id');
-        if (wecomAgentId) wecomAgentId.value = wecom.agent_id || '0';
         const larkEnabled = document.getElementById('robot-lark-enabled');
         if (larkEnabled) larkEnabled.checked = lark.enabled === true;
         const larkAppId = document.getElementById('robot-lark-app-id');
@@ -1119,7 +1106,6 @@ async function applySettings() {
             }
         };
         
-        const wecomAgentIdVal = document.getElementById('robot-wecom-agent-id')?.value.trim();
         const config = {
             openai: {
                 api_key: apiKey,
@@ -1198,14 +1184,6 @@ async function applySettings() {
             },
             knowledge: knowledgeConfig,
             robots: {
-                wecom: {
-                    enabled: document.getElementById('robot-wecom-enabled')?.checked === true,
-                    token: document.getElementById('robot-wecom-token')?.value.trim() || '',
-                    encoding_aes_key: document.getElementById('robot-wecom-encoding-aes-key')?.value.trim() || '',
-                    corp_id: document.getElementById('robot-wecom-corp-id')?.value.trim() || '',
-                    secret: document.getElementById('robot-wecom-secret')?.value.trim() || '',
-                    agent_id: parseInt(wecomAgentIdVal, 10) || 0
-                },
                 lark: {
                     enabled: document.getElementById('robot-lark-enabled')?.checked === true,
                     app_id: document.getElementById('robot-lark-app-id')?.value.trim() || '',

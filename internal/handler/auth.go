@@ -53,6 +53,9 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
+	c.SetSameSite(http.SameSiteStrictMode)
+	c.SetCookie("auth_token", token, int(time.Until(expiresAt).Seconds()), "/", "", c.Request.TLS != nil, true)
+
 	c.JSON(http.StatusOK, gin.H{
 		"token":               token,
 		"expires_at":          expiresAt.UTC().Format(time.RFC3339),
@@ -73,6 +76,8 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	}
 
 	h.manager.RevokeToken(token)
+	c.SetSameSite(http.SameSiteStrictMode)
+	c.SetCookie("auth_token", "", -1, "/", "", c.Request.TLS != nil, true)
 	c.JSON(http.StatusOK, gin.H{"message": "logged out successfully"})
 }
 
@@ -132,6 +137,8 @@ func (h *AuthHandler) ChangePassword(c *gin.Context) {
 		h.logger.Info("login password updated, all sessions invalidated")
 	}
 
+	c.SetSameSite(http.SameSiteStrictMode)
+	c.SetCookie("auth_token", "", -1, "/", "", c.Request.TLS != nil, true)
 	c.JSON(http.StatusOK, gin.H{"message": "password updated, please log in again with the new password"})
 }
 

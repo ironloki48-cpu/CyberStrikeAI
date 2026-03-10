@@ -874,7 +874,7 @@
                         </div><!-- /recon-panel-fofa -->
 
                         <!-- ZoomEye panel -->
-                        <div class="recon-panel" id="recon-panel-zoomeye" style="display:none">
+                        <div class="recon-panel" id="recon-panel-zoomeye">
                         <div class="info-collect-panel">
                             <div class="info-collect-form">
                                 <div class="form-group">
@@ -922,7 +922,7 @@
                         </div><!-- /recon-panel-zoomeye -->
 
                         <!-- Shodan panel -->
-                        <div class="recon-panel" id="recon-panel-shodan" style="display:none">
+                        <div class="recon-panel" id="recon-panel-shodan">
                         <div class="info-collect-panel">
                             <div class="info-collect-form">
                                 <div class="form-group">
@@ -966,7 +966,7 @@
                         </div><!-- /recon-panel-shodan -->
 
                         <!-- Censys panel -->
-                        <div class="recon-panel" id="recon-panel-censys" style="display:none">
+                        <div class="recon-panel" id="recon-panel-censys">
                         <div class="info-collect-panel">
                             <div class="info-collect-form">
                                 <div class="form-group">
@@ -1994,41 +1994,7 @@
                             <div id="settings-section-robots" class="settings-section-content">
                                 <div class="settings-section-header">
                                     <h3>Bot Settings</h3>
-                                    <p class="settings-description">Configure WeCom, Lark, and other bots to chat with CyberStrikeAI on mobile without opening a browser.</p>
-                                </div>
-
-                                <!-- WeCom (Enterprise WeChat) -->
-                                <div class="settings-subsection">
-                                    <h4>WeCom (Enterprise WeChat)</h4>
-                                    <div class="settings-form">
-                                        <div class="form-group">
-                                            <label class="checkbox-label">
-                                                <input type="checkbox" id="robot-wecom-enabled" class="modern-checkbox" />
-                                                <span class="checkbox-custom"></span>
-                                                <span class="checkbox-text">Enable WeCom bot</span>
-                                            </label>
-                                        </div>
-                                        <div class="form-group">
-                                            <label for="robot-wecom-token">Token</label>
-                                            <input type="text" id="robot-wecom-token" placeholder="Token" autocomplete="off" />
-                                        </div>
-                                        <div class="form-group">
-                                            <label for="robot-wecom-encoding-aes-key">EncodingAESKey</label>
-                                            <input type="text" id="robot-wecom-encoding-aes-key" placeholder="EncodingAESKey (can be empty for plaintext mode)" autocomplete="off" />
-                                        </div>
-                                        <div class="form-group">
-                                            <label for="robot-wecom-corp-id">CorpID</label>
-                                            <input type="text" id="robot-wecom-corp-id" placeholder="Enterprise ID" autocomplete="off" />
-                                        </div>
-                                        <div class="form-group">
-                                            <label for="robot-wecom-secret">Secret</label>
-                                            <input type="password" id="robot-wecom-secret" placeholder="Application Secret" autocomplete="off" />
-                                        </div>
-                                        <div class="form-group">
-                                            <label for="robot-wecom-agent-id">AgentID</label>
-                                            <input type="number" id="robot-wecom-agent-id" placeholder="Application AgentId" />
-                                        </div>
-                                    </div>
+                                    <p class="settings-description">Configure supported bots to chat with CyberStrikeAI on mobile without opening a browser.</p>
                                 </div>
 
                                 <!-- Lark (Feishu) -->

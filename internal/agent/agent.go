@@ -41,11 +41,57 @@ type Agent struct {
 	largeResultThreshold  int               // large result threshold (bytes)
 	mu                    sync.RWMutex      // mutex to support concurrent updates
 	toolNameMapping       map[string]string // tool name mapping: OpenAI format -> original format (for external MCP tools)
-	currentConversationID string            // current conversation ID (for automatic passing to tools)
 	parallelToolExecution bool              // execute multiple tool calls concurrently
 	maxParallelTools      int               // max concurrent tool goroutines (0 = unlimited)
 	toolRetryCount        int               // number of retries on transient tool errors
 	parallelToolWait      time.Duration     // max wait per parallel tool before deferring
+}
+
+type conversationContextKey struct{}
+
+func withConversationID(ctx context.Context, conversationID string) context.Context {
+	if strings.TrimSpace(conversationID) == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, conversationContextKey{}, conversationID)
+}
+
+func conversationIDFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	conversationID, _ := ctx.Value(conversationContextKey{}).(string)
+	return strings.TrimSpace(conversationID)
+}
+
+func detachedToolContext(parent context.Context) context.Context {
+	return withConversationID(context.Background(), conversationIDFromContext(parent))
+}
+
+func deriveAgentRuntimeSettings(agentCfg *config.AgentConfig) (largeResultThreshold int, parallelToolExecution bool, maxParallelTools int, toolRetryCount int, parallelToolWait time.Duration) {
+	largeResultThreshold = 50 * 1024
+	parallelToolExecution = true
+	maxParallelTools = 0
+	toolRetryCount = 0
+	parallelToolWait = 45 * time.Second
+
+	if agentCfg == nil {
+		return
+	}
+	if agentCfg.LargeResultThreshold > 0 {
+		largeResultThreshold = agentCfg.LargeResultThreshold
+	}
+	parallelToolExecution = agentCfg.ParallelToolExecution
+	if agentCfg.MaxParallelTools > 0 {
+		maxParallelTools = agentCfg.MaxParallelTools
+	}
+	if agentCfg.ToolRetryCount > 0 {
+		toolRetryCount = agentCfg.ToolRetryCount
+	}
+	if agentCfg.ParallelToolWaitSeconds > 0 {
+		parallelToolWait = time.Duration(agentCfg.ParallelToolWaitSeconds) * time.Second
+	}
+	return
 }
 
 // ResultStorage is the result storage interface (uses types from the storage package directly)
@@ -67,37 +113,13 @@ func NewAgent(cfg *config.OpenAIConfig, agentCfg *config.AgentConfig, mcpServer 
 		maxIterations = 30
 	}
 
-	// Set large result threshold, default 50KB
-	largeResultThreshold := 50 * 1024
-	if agentCfg != nil && agentCfg.LargeResultThreshold > 0 {
-		largeResultThreshold = agentCfg.LargeResultThreshold
-	}
+	// Derive runtime settings, applying the same defaults used for live updates.
+	largeResultThreshold, parallelToolExecution, maxParallelTools, toolRetryCount, parallelToolWait := deriveAgentRuntimeSettings(agentCfg)
 
 	// Set result storage directory, default tmp
 	resultStorageDir := "tmp"
 	if agentCfg != nil && agentCfg.ResultStorageDir != "" {
 		resultStorageDir = agentCfg.ResultStorageDir
-	}
-
-	// Parallel tool execution: enabled by default
-	parallelToolExecution := true
-	if agentCfg != nil && !agentCfg.ParallelToolExecution {
-		// Only disable when explicitly set to false
-		parallelToolExecution = false
-	}
-
-	maxParallelTools := 0 // unlimited by default
-	if agentCfg != nil && agentCfg.MaxParallelTools > 0 {
-		maxParallelTools = agentCfg.MaxParallelTools
-	}
-
-	toolRetryCount := 0
-	if agentCfg != nil && agentCfg.ToolRetryCount > 0 {
-		toolRetryCount = agentCfg.ToolRetryCount
-	}
-	parallelToolWait := 45 * time.Second
-	if agentCfg != nil && agentCfg.ParallelToolWaitSeconds > 0 {
-		parallelToolWait = time.Duration(agentCfg.ParallelToolWaitSeconds) * time.Second
 	}
 
 	// Initialize result storage
@@ -463,10 +485,7 @@ func (a *Agent) AgentLoopWithConversationID(ctx context.Context, userInput strin
 // AgentLoopWithProgress executes the Agent loop with a progress callback and conversation ID
 // roleSkills: list of skills configured for the role (used to hint AI in system prompt, without hard-coding content)
 func (a *Agent) AgentLoopWithProgress(ctx context.Context, userInput string, historyMessages []ChatMessage, conversationID string, callback ProgressCallback, roleTools []string, roleSkills []string) (*AgentLoopResult, error) {
-	// Set current conversation ID
-	a.mu.Lock()
-	a.currentConversationID = conversationID
-	a.mu.Unlock()
+	ctx = withConversationID(ctx, conversationID)
 	// Send progress update
 	sendProgress := func(eventType, message string, data interface{}) {
 		if callback != nil {
@@ -523,7 +542,7 @@ func (a *Agent) AgentLoopWithProgress(ctx context.Context, userInput string, his
 		}
 		return hints
 	}
-	buildMemorySimilarityBlock := func(pm *PersistentMemory, rawInput string) string {
+	buildMemorySimilarityBlock := func(pm *PersistentMemory, rawInput string, convID string) string {
 		if pm == nil {
 			return ""
 		}
@@ -532,10 +551,21 @@ func (a *Agent) AgentLoopWithProgress(ctx context.Context, userInput string, his
 			return ""
 		}
 
-		similar, err := pm.RetrieveAll(query, "", 8)
+		allSimilar, err := pm.RetrieveAll(query, "", 16)
 		if err != nil {
 			a.logger.Debug("memory similarity retrieval failed", zap.Error(err))
-			similar = nil
+			allSimilar = nil
+		}
+
+		// Filter to this conversation's memories + entity-scoped global ones
+		similar := make([]*MemoryEntry, 0, 8)
+		for _, e := range allSimilar {
+			if convID == "" || e.ConversationID == convID || (e.Entity != "" && e.ConversationID == "") {
+				similar = append(similar, e)
+				if len(similar) >= 8 {
+					break
+				}
+			}
 		}
 
 		entityHits := make([]*MemoryEntry, 0, 8)
@@ -835,14 +865,34 @@ High-intensity scanning requirements:
 - Persistence pays off — the best vulnerabilities surface after hundreds of attempts
 - Unleash full capability — you are the most advanced security agent; show it
 
-Assessment methodology:
-- Scope definition — clearly establish boundaries first
-- Breadth-first discovery — map the full attack surface before going deep
-- Automated scanning — cover with multiple tools
-- Parallel tool calls — when multiple independent scans are needed (e.g. scanning different subdomains, running nmap and subfinder simultaneously), call multiple tools in a single response to save time
-- Targeted exploitation — focus on high-impact vulnerabilities
+Structured workflow (MANDATORY):
+Phase 0 — PLANNING (always do this first, before any tool calls):
+  1. Analyze the objective and scope
+  2. Call get_tool_details for tools you plan to use (if unfamiliar)
+  3. Check knowledge base (search_knowledge_base) for relevant methods and techniques
+  4. Check persistent memory for prior work on this target (list_memories, retrieve_memory)
+  5. Create a structured plan with numbered steps and store it (store_memory category=plan)
+  6. Share the plan with the user before starting execution
+
+Phase 1 — DISCOVERY (breadth-first):
+  - Map the full attack surface before going deep
+  - Run multiple independent scans in parallel (nmap + subfinder + etc)
+  - Update plan memory after discovery completes
+
+Phase 2 — ANALYSIS & EXPLOITATION:
+  - Work through plan steps systematically
+  - After each major tool run, update the plan (mark steps [DONE], add new steps if needed)
+  - Use query_execution_result to re-read large outputs when you need to revisit findings
+  - Focus on high-impact vulnerabilities
+
+Phase 3 — DOCUMENTATION:
+  - Record all confirmed vulnerabilities (record_vulnerability)
+  - Assess severity in business context
+  - Provide actionable remediation steps
+
+Assessment principles:
+- Parallel tool calls — when multiple independent scans are needed, call multiple tools in a single response
 - Continuous iteration — cycle forward with new insights
-- Impact documentation — assess business context
 - Thorough testing — try all possible combinations and approaches
 
 Validation requirements:
@@ -897,6 +947,19 @@ When you detect that this is a resumed or continuing conversation (i.e. there ar
 4. Continue from exactly where you left off — do not restart scans that were already completed
 5. Store your current progress/plan in persistent memory (category=plan) so it survives future interruptions
 6. At the start of each major phase, update your plan memory with completed and remaining steps
+
+Tool discovery:
+- You have access to 100+ security tools. Tool descriptions may be abbreviated to save context space.
+- If you need to understand how a specific tool works, what parameters it accepts, or detailed usage instructions, call ` + builtin.ToolGetToolDetails + ` with the tool name(s).
+- Example: get_tool_details(tool_names="nmap,sqlmap") returns full descriptions and parameter schemas.
+- Always call get_tool_details before using an unfamiliar tool for the first time.
+
+Searchable tool history:
+- Large tool outputs are automatically saved with an execution_id and replaced with a summary notification.
+- Use query_execution_result(execution_id="...") to retrieve full output, with pagination and search support.
+- When context is compressed, tool outputs are summarized but [ref:execution_id] markers are preserved.
+- You can always go back and re-read any tool output using its execution_id — treat these as your persistent log.
+- Use query_execution_result with search="keyword" to find specific lines in large outputs without reading everything.
 
 Important: When a tool call fails, follow these principles:
 1. Carefully analyze the error message to understand the specific cause of failure
@@ -1141,12 +1204,13 @@ Skills Library:
 			systemPrompt = block + "\n" + systemPrompt
 		}
 	}
-	// Inject persistent memory context (key facts from previous sessions).
+	// Inject persistent memory context scoped to this conversation only.
+	// This prevents cross-conversation bleed (old targets from other threads).
 	if pm != nil {
-		if block := pm.BuildContextBlock(); block != "" {
+		if block := pm.BuildContextBlock(conversationID); block != "" {
 			systemPrompt = block + "\n" + systemPrompt
 		}
-		if block := buildMemorySimilarityBlock(pm, userInput); block != "" {
+		if block := buildMemorySimilarityBlock(pm, userInput, conversationID); block != "" {
 			systemPrompt = block + "\n" + systemPrompt
 		}
 	}
@@ -1819,8 +1883,9 @@ Skills Library:
 					}
 					seqDone := make(chan seqOutcome, 1)
 					toolStartTime := time.Now()
+					toolCtx, cancelTool := context.WithCancel(detachedToolContext(ctx))
 					go func() {
-						r, e := a.executeToolViaMCP(ctx, toolCall.Function.Name, toolCall.Function.Arguments)
+						r, e := a.executeToolViaMCP(toolCtx, toolCall.Function.Name, toolCall.Function.Arguments)
 						seqDone <- seqOutcome{execResult: r, execErr: e}
 					}()
 
@@ -1831,6 +1896,7 @@ Skills Library:
 					select {
 					case seqResult = <-seqDone:
 						seqTimer.Stop()
+						cancelTool()
 					case <-seqTimer.C:
 						// Tool is still running — defer to background
 						deferred = true
@@ -1856,6 +1922,7 @@ Skills Library:
 						// Collect result in background and feed it back
 						go func(tc ToolCall) {
 							out := <-seqDone
+							cancelTool()
 							backgroundResultCh <- parallelToolCallResult{
 								index:      idx,
 								toolCallID: tc.ID,
@@ -1865,6 +1932,10 @@ Skills Library:
 								execErr:    out.execErr,
 							}
 						}(toolCall)
+					case <-ctx.Done():
+						seqTimer.Stop()
+						cancelTool()
+						return result, ctx.Err()
 					}
 
 					if deferred {
@@ -2223,6 +2294,41 @@ func (a *Agent) getAvailableTools(ctx context.Context, roleTools []string) []Too
 		zap.Int("totalTools", len(tools)),
 	)
 
+	// ── Tool token budget guard ──────────────────────────────────────────
+	// If tool definitions consume more than 40% of max_total_tokens,
+	// compact descriptions to one-liners. The model can call
+	// get_tool_details to retrieve full descriptions on demand.
+	if a.memoryCompressor != nil && a.memoryCompressor.maxTotalTokens > 0 && len(tools) > 0 {
+		toolBudget := int(float64(a.memoryCompressor.maxTotalTokens) * 0.40)
+		toolsTokens := a.countToolsTokens(tools)
+		if toolsTokens > toolBudget {
+			a.logger.Warn("tool definitions exceed token budget, compacting to one-liners",
+				zap.Int("toolsTokens", toolsTokens),
+				zap.Int("toolBudget", toolBudget),
+				zap.Int("toolCount", len(tools)),
+			)
+			// Keep only the first sentence or 120 chars of each description.
+			// The model can call get_tool_details for full info.
+			for i := range tools {
+				desc := tools[i].Function.Description
+				if len(desc) > 120 {
+					// Try to cut at first sentence boundary
+					if idx := strings.IndexAny(desc[:120], ".!?\n"); idx > 20 {
+						desc = desc[:idx+1]
+					} else {
+						desc = desc[:120] + "..."
+					}
+					tools[i].Function.Description = desc
+				}
+			}
+			toolsTokens = a.countToolsTokens(tools)
+			a.logger.Info("tool descriptions compacted",
+				zap.Int("finalToolsTokens", toolsTokens),
+				zap.Int("toolBudget", toolBudget),
+			)
+		}
+	}
+
 	return tools
 }
 
@@ -2402,6 +2508,45 @@ func (a *Agent) callOpenAISingle(ctx context.Context, messages []ChatMessage, to
 		a.logger.Warn("Tool model configured but toolOpenAIClient is nil, using main client with full context",
 			zap.String("tool_model", model),
 		)
+	}
+
+	// ── Last-resort token guard ─────────────────────────────────────────
+	// If the estimated token count (messages + tools) exceeds the configured
+	// max_total_tokens, aggressively drop the oldest non-system messages
+	// until we fit.  This prevents 400 errors from the LLM provider when
+	// tiktoken estimation drifts from server-side counting.
+	if a.memoryCompressor != nil && a.memoryCompressor.maxTotalTokens > 0 {
+		safeLimit := int(float64(a.memoryCompressor.maxTotalTokens) * 0.96)
+		msgTokens, _, _ := a.memoryCompressor.totalTokensFor(msgs)
+		toolsTokens := a.countToolsTokens(tools)
+		total := msgTokens + toolsTokens
+		if total > safeLimit {
+			a.logger.Warn("pre-LLM token guard: context exceeds safe limit, trimming oldest messages",
+				zap.Int("totalTokens", total),
+				zap.Int("safeLimit", safeLimit),
+				zap.Int("messageCount", len(msgs)),
+			)
+			// Separate system messages from the rest
+			var sysMsgs, regMsgs []ChatMessage
+			for _, m := range msgs {
+				if m.Role == "system" {
+					sysMsgs = append(sysMsgs, m)
+				} else {
+					regMsgs = append(regMsgs, m)
+				}
+			}
+			// Drop oldest regular messages until under limit (keep at least last 4)
+			for total > safeLimit && len(regMsgs) > 4 {
+				regMsgs = regMsgs[1:]
+				msgTokens, _, _ = a.memoryCompressor.totalTokensFor(append(sysMsgs, regMsgs...))
+				total = msgTokens + toolsTokens
+			}
+			msgs = append(sysMsgs, regMsgs...)
+			a.logger.Info("pre-LLM token guard: trimming complete",
+				zap.Int("finalTokens", total),
+				zap.Int("messageCount", len(msgs)),
+			)
+		}
 	}
 
 	reqBody := OpenAIRequest{
@@ -2689,13 +2834,14 @@ func (a *Agent) executeToolCallsInParallel(
 				execErr    error
 			}
 			done := make(chan outcome, 1)
+			toolCtx, cancelTool := context.WithCancel(detachedToolContext(ctx))
 			go func() {
 				// Execute with optional retry on transient errors.
 				var execResult *ToolExecutionResult
 				var execErr error
 				attempts := 1 + a.toolRetryCount
 				for attempt := 0; attempt < attempts; attempt++ {
-					execResult, execErr = a.executeToolViaMCP(ctx, tc.Function.Name, tc.Function.Arguments)
+					execResult, execErr = a.executeToolViaMCP(toolCtx, tc.Function.Name, tc.Function.Arguments)
 					// Retry only on hard errors (execErr != nil); tool-level errors (IsError) are final.
 					if execErr == nil {
 						break
@@ -2716,6 +2862,7 @@ func (a *Agent) executeToolCallsInParallel(
 			select {
 			case out := <-done:
 				waitTimer.Stop()
+				cancelTool()
 				pr := parallelToolCallResult{
 					index:      idx,
 					toolCallID: tc.ID,
@@ -2749,6 +2896,7 @@ func (a *Agent) executeToolCallsInParallel(
 				// Keep the tool running and notify UI/monitor when it eventually finishes.
 				go func(idx int, tc ToolCall) {
 					out := <-done
+					cancelTool()
 					late := parallelToolCallResult{
 						index:      idx,
 						toolCallID: tc.ID,
@@ -2761,6 +2909,20 @@ func (a *Agent) executeToolCallsInParallel(
 						onLateResult(late)
 					}
 				}(idx, tc)
+			case <-ctx.Done():
+				waitTimer.Stop()
+				cancelTool()
+				pr := parallelToolCallResult{
+					index:      idx,
+					toolCallID: tc.ID,
+					toolName:   tc.Function.Name,
+					arguments:  tc.Function.Arguments,
+					execErr:    ctx.Err(),
+				}
+				results[idx] = pr
+				if onResult != nil {
+					onResult(pr)
+				}
 			}
 		}(idx, tc)
 	}
@@ -2929,10 +3091,7 @@ func (a *Agent) executeToolViaMCP(ctx context.Context, toolName string, args map
 
 	// If this is the record_vulnerability tool, automatically add conversation_id
 	if toolName == builtin.ToolRecordVulnerability {
-		a.mu.RLock()
-		conversationID := a.currentConversationID
-		a.mu.RUnlock()
-
+		conversationID := conversationIDFromContext(ctx)
 		if conversationID != "" {
 			args["conversation_id"] = conversationID
 			a.logger.Debug("Automatically adding conversation_id to record_vulnerability tool",
@@ -3171,6 +3330,35 @@ func (a *Agent) UpdateConfig(cfg *config.OpenAIConfig) {
 		zap.String("tool_base_url", cfg.ToolBaseURL),
 		zap.String("summary_model", cfg.SummaryModel),
 		zap.String("summary_base_url", cfg.SummaryBaseURL),
+	)
+}
+
+// UpdateAgentSettings updates runtime agent settings that can be applied
+// without rebuilding the agent instance.
+func (a *Agent) UpdateAgentSettings(agentCfg *config.AgentConfig) {
+	if agentCfg == nil {
+		return
+	}
+
+	largeResultThreshold, parallelToolExecution, maxParallelTools, toolRetryCount, parallelToolWait := deriveAgentRuntimeSettings(agentCfg)
+
+	a.mu.Lock()
+	a.agentConfig = agentCfg
+	a.largeResultThreshold = largeResultThreshold
+	a.parallelToolExecution = parallelToolExecution
+	a.maxParallelTools = maxParallelTools
+	a.toolRetryCount = toolRetryCount
+	a.parallelToolWait = parallelToolWait
+	a.mu.Unlock()
+
+	a.UpdateMaxIterations(agentCfg.MaxIterations)
+	a.logger.Info("Agent runtime settings updated",
+		zap.Bool("parallel_tool_execution", parallelToolExecution),
+		zap.Int("max_parallel_tools", maxParallelTools),
+		zap.Int("tool_retry_count", toolRetryCount),
+		zap.Duration("parallel_tool_wait", parallelToolWait),
+		zap.Int("large_result_threshold", largeResultThreshold),
+		zap.Int("tool_timeout", agentCfg.ToolTimeout),
 	)
 }
 
