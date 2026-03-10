@@ -1,13 +1,20 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"html"
+	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -15,6 +22,7 @@ import (
 	"cyberstrike-ai/internal/agent"
 	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/database"
+	"cyberstrike-ai/internal/filemanager"
 	"cyberstrike-ai/internal/handler"
 	"cyberstrike-ai/internal/knowledge"
 	"cyberstrike-ai/internal/logger"
@@ -42,24 +50,41 @@ type App struct {
 	db                 *database.DB
 	knowledgeDB        *database.DB // knowledge base database connection (if using a separate database)
 	auth               *security.AuthManager
-	knowledgeManager   *knowledge.Manager        // knowledge base manager (for dynamic initialization)
-	knowledgeRetriever *knowledge.Retriever      // knowledge base retriever (for dynamic initialization)
-	knowledgeIndexer   *knowledge.Indexer        // knowledge base indexer (for dynamic initialization)
-	knowledgeHandler   *handler.KnowledgeHandler // knowledge base handler (for dynamic initialization)
-	memoryHandler      *handler.MemoryHandler    // memory handler (nil when persistent memory is disabled)
-	agentHandler       *handler.AgentHandler     // Agent handler (for updating knowledge base manager)
-	robotHandler       *handler.RobotHandler     // robot handler (DingTalk/Lark/WeCom/Telegram)
-	robotMu            sync.Mutex                // protects DingTalk/Lark/Telegram long connection cancel
-	dingCancel         context.CancelFunc        // DingTalk Stream cancel function, used to restart on config change
-	larkCancel         context.CancelFunc        // Lark long connection cancel function, used to restart on config change
-	telegramCancel     context.CancelFunc        // Telegram polling cancel function, used to restart on config change
-	indexHTML          string                    // cached index.html content
+	timeAwareness      *agent.TimeAwareness
+	persistentMem      *agent.PersistentMemory
+	fileMgr            *filemanager.Manager
+	knowledgeManager   *knowledge.Manager          // knowledge base manager (for dynamic initialization)
+	knowledgeRetriever *knowledge.Retriever        // knowledge base retriever (for dynamic initialization)
+	knowledgeIndexer   *knowledge.Indexer          // knowledge base indexer (for dynamic initialization)
+	knowledgeHandler   *handler.KnowledgeHandler   // knowledge base handler (for dynamic initialization)
+	memoryHandler      *handler.MemoryHandler      // memory handler (nil when persistent memory is disabled)
+	fileManagerHandler *handler.FileManagerHandler // file manager handler
+	agentHandler       *handler.AgentHandler       // Agent handler (for updating knowledge base manager)
+	robotHandler       *handler.RobotHandler       // robot handler (Lark/Telegram)
+	robotMu            sync.Mutex                  // protects Lark/Telegram long connection cancel
+	larkCancel         context.CancelFunc          // Lark long connection cancel function, used to restart on config change
+	telegramCancel     context.CancelFunc          // Telegram polling cancel function, used to restart on config change
+	indexHTML          string                      // cached index.html content
 }
 
 // New creates a new application
 func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.Default()
+
+	// Export recon engine API keys as env vars for tool subprocesses
+	if k := strings.TrimSpace(cfg.ZoomEye.APIKey); k != "" {
+		os.Setenv("ZOOMEYE_API_KEY", k)
+	}
+	if k := strings.TrimSpace(cfg.Shodan.APIKey); k != "" {
+		os.Setenv("SHODAN_API_KEY", k)
+	}
+	if k := strings.TrimSpace(cfg.Censys.APIID); k != "" {
+		os.Setenv("CENSYS_API_ID", k)
+	}
+	if k := strings.TrimSpace(cfg.Censys.APISecret); k != "" {
+		os.Setenv("CENSYS_API_SECRET", k)
+	}
 
 	// CORS middleware
 	router.Use(corsMiddleware())
@@ -133,9 +158,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	// initialize TimeAwareness before creating the agent variable to avoid
 	// package name shadowing.
 	taEnabled := cfg.Agent.TimeAwareness.Enabled
-	// For backward compatibility: treat a fully zero-value config block as
-	// "not explicitly disabled" and default to enabled.
-	if !taEnabled && cfg.Agent.TimeAwareness.Timezone == "" {
+	if !cfg.Agent.TimeAwareness.EnabledSet {
 		taEnabled = true
 	}
 	timeAwareness := agent.NewTimeAwareness(cfg.Agent.TimeAwareness.Timezone, taEnabled)
@@ -146,12 +169,16 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 
 	// initialize PersistentMemory before creating the agent variable
 	var persistentMem *agent.PersistentMemory
-	memEnabled := cfg.Agent.Memory.Enabled || cfg.Agent.Memory.MaxEntries == 0
+	memEnabled := cfg.Agent.Memory.Enabled
+	if !cfg.Agent.Memory.EnabledSet {
+		memEnabled = true
+	}
 	if memEnabled {
 		pm, pmErr := agent.NewPersistentMemory(db.DB, log.Logger)
 		if pmErr != nil {
 			log.Logger.Warn("failed to initialize persistent memory, continuing without it", zap.Error(pmErr))
 		} else {
+			pm.SetMaxEntries(cfg.Agent.Memory.MaxEntries)
 			persistentMem = pm
 			log.Logger.Info("persistent memory initialized")
 		}
@@ -173,11 +200,48 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	// attach time awareness and memory to agent
 	agentInstance.SetTimeAwareness(timeAwareness)
 	registerTimeTools(mcpServer, timeAwareness, log.Logger)
+	registerToolDiscovery(mcpServer, log.Logger)
 	var memHandler *handler.MemoryHandler
 	if persistentMem != nil {
 		agentInstance.SetPersistentMemory(persistentMem)
 		registerMemoryTools(mcpServer, persistentMem, log.Logger)
 		memHandler = handler.NewMemoryHandler(persistentMem, log.Logger)
+	}
+
+	// initialize file manager
+	fmEnabled := cfg.Agent.FileManager.Enabled
+	if !cfg.Agent.FileManager.EnabledSet {
+		fmEnabled = true
+	}
+	var fileMgr *filemanager.Manager
+	if fmEnabled {
+		fileStorageDir := cfg.Agent.FileManager.StorageDir
+		if fileStorageDir == "" {
+			fileStorageDir = "managed_files"
+		}
+		var fmErr error
+		fileMgr, fmErr = filemanager.NewManager(db.DB, fileStorageDir, log.Logger)
+		if fmErr != nil {
+			log.Logger.Warn("failed to initialize file manager, continuing without it", zap.Error(fmErr))
+		} else {
+			registerFileManagerTools(mcpServer, fileMgr, log.Logger)
+			log.Logger.Info("file manager initialized", zap.String("storage_dir", fileStorageDir))
+		}
+	}
+
+	// ── Cuttlefish (Android VM) tools ──────────────────────────────────────
+	cvdCfg := cfg.Agent.Cuttlefish
+	if cvdCfg.Enabled {
+		cvdHome := cvdCfg.CvdHome
+		if cvdHome == "" {
+			cvdHome = os.Getenv("CVD_HOME")
+		}
+		if cvdHome == "" {
+			cvdHome = filepath.Join(os.Getenv("HOME"), "cuttlefish-workspace")
+		}
+		registerCuttlefishTools(mcpServer, cvdHome, &cvdCfg, log.Logger)
+	} else {
+		log.Logger.Info("cuttlefish tools disabled via config")
 	}
 
 	// initialize knowledge base module (if enabled)
@@ -216,20 +280,13 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		// create knowledge base manager
 		knowledgeManager = knowledge.NewManager(knowledgeDB, cfg.Knowledge.BasePath, log.Logger)
 
-		// create embedder
-		// use OpenAI config API Key (if not specified in knowledge base config)
-		if cfg.Knowledge.Embedding.APIKey == "" {
-			cfg.Knowledge.Embedding.APIKey = cfg.OpenAI.APIKey
-		}
-		if cfg.Knowledge.Embedding.BaseURL == "" {
-			cfg.Knowledge.Embedding.BaseURL = cfg.OpenAI.BaseURL
-		}
-
+		// create embedder (no implicit fallback to OpenAI endpoint for embeddings)
 		httpClient := &http.Client{
 			Timeout: 30 * time.Minute,
 		}
 		openAIClient := openai.NewClient(&cfg.OpenAI, httpClient, log.Logger)
-		embedder := knowledge.NewEmbedder(&cfg.Knowledge, &cfg.OpenAI, openAIClient, log.Logger)
+		embedder := knowledge.NewEmbedder(&cfg.Knowledge, openAIClient, log.Logger)
+		embeddingEnabled := embedder.Enabled()
 
 		// create retriever
 		retrievalConfig := &knowledge.RetrievalConfig{
@@ -240,7 +297,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		knowledgeRetriever = knowledge.NewRetriever(knowledgeDB, embedder, retrievalConfig, log.Logger)
 
 		// create indexer
-		knowledgeIndexer = knowledge.NewIndexer(knowledgeDB, embedder, log.Logger)
+		knowledgeIndexer = knowledge.NewIndexer(knowledgeDB, embedder, log.Logger, cfg.Knowledge.Embedding.MaxTokens)
 
 		// register knowledge retrieval tool to MCP server
 		knowledge.RegisterKnowledgeTool(mcpServer, knowledgeRetriever, knowledgeManager, log.Logger)
@@ -249,87 +306,93 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		knowledgeHandler = handler.NewKnowledgeHandler(knowledgeManager, knowledgeRetriever, knowledgeIndexer, db, log.Logger)
 		log.Logger.Info("knowledge base module initialization complete", zap.Bool("handler_created", knowledgeHandler != nil))
 
-		// attach proactive RAG context injector to the agent so that relevant
-		// knowledge is automatically embedded in the system prompt at the start
-		// of every agent loop run.
-		ragInjector := agent.NewRAGContextInjector(
-			knowledgeRetriever,
-			log.Logger,
-			agent.RAGContextConfig{}, // use library defaults
-		)
-		agentInstance.SetRAGInjector(ragInjector)
-		log.Logger.Info("RAG context injector attached to agent")
+		if embeddingEnabled {
+			// attach proactive RAG context injector to the agent so that relevant
+			// knowledge is automatically embedded in the system prompt at the start
+			// of every agent loop run.
+			ragInjector := agent.NewRAGContextInjector(
+				knowledgeRetriever,
+				log.Logger,
+				agent.RAGContextConfig{}, // use library defaults
+			)
+			agentInstance.SetRAGInjector(ragInjector)
+			log.Logger.Info("RAG context injector attached to agent")
+		} else {
+			log.Logger.Warn("knowledge embedding disabled: missing embedding base_url/model/api_key; skipping RAG injector and index build")
+		}
 
 		// scan knowledge base and build index (async)
-		go func() {
-			itemsToIndex, err := knowledgeManager.ScanKnowledgeBase()
-			if err != nil {
-				log.Logger.Warn("failed to scan knowledge base", zap.Error(err))
-				return
-			}
-
-			// check if index already exists
-			hasIndex, err := knowledgeIndexer.HasIndex()
-			if err != nil {
-				log.Logger.Warn("failed to check index status", zap.Error(err))
-				return
-			}
-
-			if hasIndex {
-				// if index exists, only index newly added or updated items
-				if len(itemsToIndex) > 0 {
-					log.Logger.Info("existing knowledge base index detected, starting incremental indexing", zap.Int("count", len(itemsToIndex)))
-					ctx := context.Background()
-					consecutiveFailures := 0
-					var firstFailureItemID string
-					var firstFailureError error
-					failedCount := 0
-
-					for _, itemID := range itemsToIndex {
-						if err := knowledgeIndexer.IndexItem(ctx, itemID); err != nil {
-							failedCount++
-							consecutiveFailures++
-
-							if consecutiveFailures == 1 {
-								firstFailureItemID = itemID
-								firstFailureError = err
-								log.Logger.Warn("failed to index knowledge item", zap.String("itemId", itemID), zap.Error(err))
-							}
-
-							// if 2 consecutive failures, immediately stop incremental indexing
-							if consecutiveFailures >= 2 {
-								log.Logger.Error("too many consecutive index failures, stopping incremental indexing immediately",
-									zap.Int("consecutiveFailures", consecutiveFailures),
-									zap.Int("totalItems", len(itemsToIndex)),
-									zap.String("firstFailureItemId", firstFailureItemID),
-									zap.Error(firstFailureError),
-								)
-								break
-							}
-							continue
-						}
-
-						// reset consecutive failure count on success
-						if consecutiveFailures > 0 {
-							consecutiveFailures = 0
-							firstFailureItemID = ""
-							firstFailureError = nil
-						}
-					}
-					log.Logger.Info("incremental indexing complete", zap.Int("totalItems", len(itemsToIndex)), zap.Int("failedCount", failedCount))
-				} else {
-					log.Logger.Info("existing knowledge base index detected, no new or updated items to index")
+		if embeddingEnabled {
+			go func() {
+				itemsToIndex, err := knowledgeManager.ScanKnowledgeBase()
+				if err != nil {
+					log.Logger.Warn("failed to scan knowledge base", zap.Error(err))
+					return
 				}
-				return
-			}
 
-			// only auto-rebuild when no index exists
-			log.Logger.Info("no knowledge base index detected, starting automatic index build")
-			ctx := context.Background()
-			if err := knowledgeIndexer.RebuildIndex(ctx); err != nil {
-				log.Logger.Warn("failed to rebuild knowledge base index", zap.Error(err))
-			}
-		}()
+				// check if index already exists
+				hasIndex, err := knowledgeIndexer.HasIndex()
+				if err != nil {
+					log.Logger.Warn("failed to check index status", zap.Error(err))
+					return
+				}
+
+				if hasIndex {
+					// if index exists, only index newly added or updated items
+					if len(itemsToIndex) > 0 {
+						log.Logger.Info("existing knowledge base index detected, starting incremental indexing", zap.Int("count", len(itemsToIndex)))
+						ctx := context.Background()
+						consecutiveFailures := 0
+						var firstFailureItemID string
+						var firstFailureError error
+						failedCount := 0
+
+						for _, itemID := range itemsToIndex {
+							if err := knowledgeIndexer.IndexItem(ctx, itemID); err != nil {
+								failedCount++
+								consecutiveFailures++
+
+								if consecutiveFailures == 1 {
+									firstFailureItemID = itemID
+									firstFailureError = err
+									log.Logger.Warn("failed to index knowledge item", zap.String("itemId", itemID), zap.Error(err))
+								}
+
+								// if 2 consecutive failures, immediately stop incremental indexing
+								if consecutiveFailures >= 2 {
+									log.Logger.Error("too many consecutive index failures, stopping incremental indexing immediately",
+										zap.Int("consecutiveFailures", consecutiveFailures),
+										zap.Int("totalItems", len(itemsToIndex)),
+										zap.String("firstFailureItemId", firstFailureItemID),
+										zap.Error(firstFailureError),
+									)
+									break
+								}
+								continue
+							}
+
+							// reset consecutive failure count on success
+							if consecutiveFailures > 0 {
+								consecutiveFailures = 0
+								firstFailureItemID = ""
+								firstFailureError = nil
+							}
+						}
+						log.Logger.Info("incremental indexing complete", zap.Int("totalItems", len(itemsToIndex)), zap.Int("failedCount", failedCount))
+					} else {
+						log.Logger.Info("existing knowledge base index detected, no new or updated items to index")
+					}
+					return
+				}
+
+				// only auto-rebuild when no index exists
+				log.Logger.Info("no knowledge base index detected, starting automatic index build")
+				ctx := context.Background()
+				if err := knowledgeIndexer.RebuildIndex(ctx); err != nil {
+					log.Logger.Warn("failed to rebuild knowledge base index", zap.Error(err))
+				}
+			}()
+		}
 	}
 
 	// Resolve the effective config path from CLI args; required for settings/auth persistence.
@@ -359,6 +422,10 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	// create handlers
 	agentHandler := handler.NewAgentHandler(agentInstance, db, cfg, log.Logger)
 	agentHandler.SetSkillsManager(skillsManager) // set Skills manager
+	// set file manager on AgentHandler for auto-registering chat uploads
+	if fileMgr != nil {
+		agentHandler.SetFileManager(fileMgr)
+	}
 	// if knowledge base is enabled, set knowledge base manager on AgentHandler for retrieval log recording
 	if knowledgeManager != nil {
 		agentHandler.SetKnowledgeManager(knowledgeManager)
@@ -375,10 +442,17 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	roleHandler.SetSkillsManager(skillsManager) // set Skills manager on RoleHandler
 	skillsHandler := handler.NewSkillsHandler(skillsManager, cfg, configPath, log.Logger)
 	fofaHandler := handler.NewFofaHandler(cfg, log.Logger)
+	reconHandler := handler.NewReconHandler(cfg, log.Logger)
 	terminalHandler := handler.NewTerminalHandler(log.Logger)
 	dockerHandler := handler.NewDockerHandler(filepath.Dir(configPath), log.Logger)
 	if db != nil {
 		skillsHandler.SetDB(db) // set database connection for fetching call statistics
+	}
+
+	// create file manager handler
+	var fileManagerHandler *handler.FileManagerHandler
+	if fileMgr != nil {
+		fileManagerHandler = handler.NewFileManagerHandler(fileMgr, log.Logger)
 	}
 
 	// create OpenAPI handler
@@ -398,11 +472,15 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		db:                 db,
 		knowledgeDB:        knowledgeDBConn,
 		auth:               authManager,
+		timeAwareness:      timeAwareness,
+		persistentMem:      persistentMem,
+		fileMgr:            fileMgr,
 		knowledgeManager:   knowledgeManager,
 		knowledgeRetriever: knowledgeRetriever,
 		knowledgeIndexer:   knowledgeIndexer,
 		knowledgeHandler:   knowledgeHandler,
 		memoryHandler:      memHandler,
+		fileManagerHandler: fileManagerHandler,
 		agentHandler:       agentHandler,
 		robotHandler:       robotHandler,
 	}
@@ -413,7 +491,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	}
 	app.indexHTML = string(indexHTMLBytes)
 
-	// Lark/DingTalk long connections (no public network needed), start in background when enabled; will be restarted via RestartRobotConnections when frontend applies config
+	// Lark long connections (no public network needed), start in background when enabled; will be restarted via RestartRobotConnections when frontend applies config
 	app.startRobotConnections()
 
 	// set vulnerability tool registrar (built-in tool, must be set)
@@ -434,6 +512,35 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		return nil
 	}
 	configHandler.SetSkillsToolRegistrar(skillsRegistrar)
+
+	// set memory tool registrar (so memory tools survive config re-apply)
+	memoryRegistrar := func() error {
+		if app.persistentMem == nil || !app.config.Agent.Memory.Enabled {
+			return nil
+		}
+		registerMemoryTools(mcpServer, app.persistentMem, log.Logger)
+		return nil
+	}
+	configHandler.SetMemoryToolRegistrar(memoryRegistrar)
+
+	// set time tool registrar (so time tools survive config re-apply)
+	timeRegistrar := func() error {
+		if app.timeAwareness == nil || !app.config.Agent.TimeAwareness.Enabled {
+			return nil
+		}
+		registerTimeTools(mcpServer, app.timeAwareness, log.Logger)
+		return nil
+	}
+	configHandler.SetTimeToolRegistrar(timeRegistrar)
+
+	fileManagerRegistrar := func() error {
+		if app.fileMgr == nil || !app.config.Agent.FileManager.Enabled {
+			return nil
+		}
+		registerFileManagerTools(mcpServer, app.fileMgr, log.Logger)
+		return nil
+	}
+	configHandler.SetFileManagerToolRegistrar(fileManagerRegistrar)
 
 	// set knowledge base initializer (for dynamic initialization, must be set after App is created)
 	configHandler.SetKnowledgeInitializer(func() (*handler.KnowledgeHandler, error) {
@@ -480,8 +587,9 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		configHandler.SetRetrieverUpdater(knowledgeRetriever)
 	}
 
-	// set robot connection restarter, so new DingTalk/Lark config takes effect without restarting the service
+	// set robot connection restarter, so new Lark config takes effect without restarting the service
 	configHandler.SetRobotRestarter(app)
+	configHandler.SetAppUpdater(app)
 
 	// set up routes (using App instance for dynamic handler access)
 	setupRoutes(
@@ -500,6 +608,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		roleHandler,
 		skillsHandler,
 		fofaHandler,
+		reconHandler,
 		terminalHandler,
 		dockerHandler,
 		mcpServer,
@@ -556,7 +665,21 @@ func (a *App) Run() error {
 			a.logger.Info("starting MCP server", zap.String("address", mcpAddr))
 
 			mux := http.NewServeMux()
-			mux.HandleFunc("/mcp", a.mcpServer.HandleHTTP)
+			mux.HandleFunc("/mcp", func(w http.ResponseWriter, r *http.Request) {
+				if !a.config.MCP.AllowRemote && !isLoopbackRequest(r.RemoteAddr) {
+					http.Error(w, "remote MCP access is disabled", http.StatusForbidden)
+					return
+				}
+				a.mcpServer.HandleHTTP(w, r)
+			})
+			// Backward-compatibility alias for legacy SSE endpoint configs.
+			mux.HandleFunc("/mcp/sse", func(w http.ResponseWriter, r *http.Request) {
+				if !a.config.MCP.AllowRemote && !isLoopbackRequest(r.RemoteAddr) {
+					http.Error(w, "remote MCP access is disabled", http.StatusForbidden)
+					return
+				}
+				a.mcpServer.HandleHTTP(w, r)
+			})
 
 			if err := http.ListenAndServe(mcpAddr, mux); err != nil {
 				a.logger.Error("MCP server failed to start", zap.Error(err))
@@ -573,12 +696,8 @@ func (a *App) Run() error {
 
 // Shutdown shuts down the application
 func (a *App) Shutdown() {
-	// stop DingTalk/Lark/Telegram long connections
+	// stop Lark/Telegram long connections
 	a.robotMu.Lock()
-	if a.dingCancel != nil {
-		a.dingCancel()
-		a.dingCancel = nil
-	}
 	if a.larkCancel != nil {
 		a.larkCancel()
 		a.larkCancel = nil
@@ -602,7 +721,74 @@ func (a *App) Shutdown() {
 	}
 }
 
-// startRobotConnections starts DingTalk/Lark/Telegram long connections based on current config (does not close existing connections, for initial startup only)
+// ApplyAgentRuntimeConfig updates runtime-owned agent features so ApplyConfig can
+// change behavior without a process restart.
+func (a *App) ApplyAgentRuntimeConfig(cfg *config.AgentConfig) error {
+	if cfg == nil {
+		return nil
+	}
+
+	a.config.Agent = *cfg
+	if a.agent != nil {
+		a.agent.UpdateAgentSettings(cfg)
+	}
+
+	if a.timeAwareness == nil {
+		a.timeAwareness = agent.NewTimeAwareness(cfg.TimeAwareness.Timezone, cfg.TimeAwareness.Enabled)
+	} else {
+		a.timeAwareness.UpdateConfig(cfg.TimeAwareness.Timezone, cfg.TimeAwareness.Enabled)
+	}
+	if a.agent != nil {
+		a.agent.SetTimeAwareness(a.timeAwareness)
+	}
+
+	if cfg.Memory.Enabled {
+		if a.persistentMem == nil {
+			pm, err := agent.NewPersistentMemory(a.db.DB, a.logger.Logger)
+			if err != nil {
+				return fmt.Errorf("initialize persistent memory: %w", err)
+			}
+			a.persistentMem = pm
+		}
+		a.persistentMem.SetMaxEntries(cfg.Memory.MaxEntries)
+		if a.agent != nil {
+			a.agent.SetPersistentMemory(a.persistentMem)
+		}
+		a.memoryHandler = handler.NewMemoryHandler(a.persistentMem, a.logger.Logger)
+	} else {
+		if a.agent != nil {
+			a.agent.SetPersistentMemory(nil)
+		}
+		a.memoryHandler = nil
+	}
+
+	if cfg.FileManager.Enabled {
+		fileStorageDir := cfg.FileManager.StorageDir
+		if fileStorageDir == "" {
+			fileStorageDir = "managed_files"
+		}
+		if a.fileMgr == nil || a.fileMgr.StorageDir() != fileStorageDir {
+			fm, err := filemanager.NewManager(a.db.DB, fileStorageDir, a.logger.Logger)
+			if err != nil {
+				return fmt.Errorf("initialize file manager: %w", err)
+			}
+			a.fileMgr = fm
+		}
+		a.fileManagerHandler = handler.NewFileManagerHandler(a.fileMgr, a.logger.Logger)
+		if a.agentHandler != nil {
+			a.agentHandler.SetFileManager(a.fileMgr)
+		}
+	} else {
+		a.fileManagerHandler = nil
+		if a.agentHandler != nil {
+			a.agentHandler.SetFileManager(nil)
+		}
+	}
+
+	return nil
+}
+
+// startRobotConnections starts Lark/Telegram long connections based on current config (does not close existing connections, for initial startup only)
 func (a *App) startRobotConnections() {
 	a.robotMu.Lock()
 	defer a.robotMu.Unlock()
@@ -612,11 +798,6 @@ func (a *App) startRobotConnections() {
 		a.larkCancel = cancel
 		go robot.StartLark(ctx, cfg.Robots.Lark, a.robotHandler, a.logger.Logger)
 	}
-	if cfg.Robots.Dingtalk.Enabled && cfg.Robots.Dingtalk.ClientID != "" && cfg.Robots.Dingtalk.ClientSecret != "" {
-		ctx, cancel := context.WithCancel(context.Background())
-		a.dingCancel = cancel
-		go robot.StartDing(ctx, cfg.Robots.Dingtalk, a.robotHandler, a.logger.Logger)
-	}
 	if cfg.Robots.Telegram.Enabled && cfg.Robots.Telegram.BotToken != "" {
 		ctx, cancel := context.WithCancel(context.Background())
 		a.telegramCancel = cancel
@@ -624,13 +805,9 @@ func (a *App) startRobotConnections() {
 	}
 }
 
-// RestartRobotConnections restarts DingTalk/Lark/Telegram long connections so frontend config changes take effect immediately (implements handler.RobotRestarter)
+// RestartRobotConnections restarts Lark/Telegram long connections so frontend config changes take effect immediately (implements handler.RobotRestarter)
 func (a *App) RestartRobotConnections() {
 	a.robotMu.Lock()
-	if a.dingCancel != nil {
-		a.dingCancel()
-		a.dingCancel = nil
-	}
 	if a.larkCancel != nil {
 		a.larkCancel()
 		a.larkCancel = nil
@@ -662,6 +839,7 @@ func setupRoutes(
 	roleHandler *handler.RoleHandler,
 	skillsHandler *handler.SkillsHandler,
 	fofaHandler *handler.FofaHandler,
+	reconHandler *handler.ReconHandler,
 	terminalHandler *handler.TerminalHandler,
 	dockerHandler *handler.DockerHandler,
 	mcpServer *mcp.Server,
@@ -670,6 +848,23 @@ func setupRoutes(
 ) {
 	// API routes
 	api := router.Group("/api")
+
+	// Health endpoint (no auth required)
+	api.GET("/health", func(c *gin.Context) {
+		health := gin.H{
+			"status": "ok",
+			"time":   time.Now().UTC().Format(time.RFC3339),
+		}
+		// External MCP stats
+		if app.externalMCPMgr != nil {
+			health["external_mcp"] = app.externalMCPMgr.GetStats()
+		}
+		// Internal MCP tool count
+		if app.mcpServer != nil {
+			health["internal_tools"] = len(app.mcpServer.GetAllTools())
+		}
+		c.JSON(http.StatusOK, health)
+	})
 
 	// authentication routes
 	authRoutes := api.Group("/auth")
@@ -680,16 +875,13 @@ func setupRoutes(
 		authRoutes.GET("/validate", security.AuthMiddleware(authManager), authHandler.Validate)
 	}
 
-	// robot callbacks (no login required, called by WeCom/DingTalk/Lark servers)
-	api.GET("/robot/wecom", robotHandler.HandleWecomGET)
-	api.POST("/robot/wecom", robotHandler.HandleWecomPOST)
-	api.POST("/robot/dingtalk", robotHandler.HandleDingtalkPOST)
+	// robot callbacks (no login required, called by Lark servers)
 	api.POST("/robot/lark", robotHandler.HandleLarkPOST)
 
 	protected := api.Group("")
 	protected.Use(security.AuthMiddleware(authManager))
 	{
-		// robot test (login required): POST /api/robot/test, body: {"platform":"dingtalk","user_id":"test","text":"help"}, used to verify robot logic
+		// robot test (login required): POST /api/robot/test, body: {"platform":"lark","user_id":"test","text":"help"}, used to verify robot logic
 		protected.POST("/robot/test", robotHandler.HandleRobotTest)
 
 		// Agent Loop
@@ -705,6 +897,15 @@ func setupRoutes(
 		protected.POST("/fofa/search", fofaHandler.Search)
 		// information gathering - parse natural language to FOFA syntax (requires manual confirmation before querying)
 		protected.POST("/fofa/parse", fofaHandler.ParseNaturalLanguage)
+
+		// Multi-engine recon: search proxies and API key validation
+		protected.POST("/recon/fofa/validate", reconHandler.ValidateFofaKey)
+		protected.POST("/recon/zoomeye/search", reconHandler.ZoomEyeSearch)
+		protected.POST("/recon/zoomeye/validate", reconHandler.ValidateZoomEyeKey)
+		protected.POST("/recon/shodan/search", reconHandler.ShodanSearch)
+		protected.POST("/recon/shodan/validate", reconHandler.ValidateShodanKey)
+		protected.POST("/recon/censys/search", reconHandler.CensysSearch)
+		protected.POST("/recon/censys/validate", reconHandler.ValidateCensysKey)
 
 		// batch task management
 		protected.POST("/batch-tasks", agentHandler.CreateBatchQueue)
@@ -747,6 +948,7 @@ func setupRoutes(
 		// configuration management
 		protected.GET("/config", configHandler.GetConfig)
 		protected.GET("/config/tools", configHandler.GetTools)
+		protected.POST("/config/models", configHandler.DiscoverModels)
 		protected.PUT("/config", configHandler.UpdateConfig)
 		protected.POST("/config/apply", configHandler.ApplyConfig)
 
@@ -979,6 +1181,81 @@ func setupRoutes(
 			})
 		}
 
+		// file manager
+		fileRoutes := protected.Group("/files")
+		{
+			fileRoutes.GET("", func(c *gin.Context) {
+				if app.fileManagerHandler == nil {
+					c.JSON(http.StatusOK, gin.H{"files": []interface{}{}, "total": 0})
+					return
+				}
+				app.fileManagerHandler.ListFiles(c)
+			})
+			fileRoutes.GET("/stats", func(c *gin.Context) {
+				if app.fileManagerHandler == nil {
+					c.JSON(http.StatusOK, gin.H{"total": 0, "total_size": 0, "by_type": map[string]int{}, "by_status": map[string]int{}})
+					return
+				}
+				app.fileManagerHandler.GetFileStats(c)
+			})
+			fileRoutes.GET("/:id", func(c *gin.Context) {
+				if app.fileManagerHandler == nil {
+					c.JSON(http.StatusNotFound, gin.H{"error": "file manager not available"})
+					return
+				}
+				app.fileManagerHandler.GetFile(c)
+			})
+			fileRoutes.GET("/:id/content", func(c *gin.Context) {
+				if app.fileManagerHandler == nil {
+					c.JSON(http.StatusNotFound, gin.H{"error": "file manager not available"})
+					return
+				}
+				app.fileManagerHandler.ReadFileContent(c)
+			})
+			fileRoutes.POST("/upload", func(c *gin.Context) {
+				if app.fileManagerHandler == nil {
+					c.JSON(http.StatusServiceUnavailable, gin.H{"error": "file manager not available"})
+					return
+				}
+				app.fileManagerHandler.UploadFile(c)
+			})
+			fileRoutes.POST("/register", func(c *gin.Context) {
+				if app.fileManagerHandler == nil {
+					c.JSON(http.StatusServiceUnavailable, gin.H{"error": "file manager not available"})
+					return
+				}
+				app.fileManagerHandler.RegisterFile(c)
+			})
+			fileRoutes.PUT("/:id", func(c *gin.Context) {
+				if app.fileManagerHandler == nil {
+					c.JSON(http.StatusServiceUnavailable, gin.H{"error": "file manager not available"})
+					return
+				}
+				app.fileManagerHandler.UpdateFile(c)
+			})
+			fileRoutes.POST("/:id/log", func(c *gin.Context) {
+				if app.fileManagerHandler == nil {
+					c.JSON(http.StatusServiceUnavailable, gin.H{"error": "file manager not available"})
+					return
+				}
+				app.fileManagerHandler.AppendLog(c)
+			})
+			fileRoutes.POST("/:id/findings", func(c *gin.Context) {
+				if app.fileManagerHandler == nil {
+					c.JSON(http.StatusServiceUnavailable, gin.H{"error": "file manager not available"})
+					return
+				}
+				app.fileManagerHandler.AppendFindings(c)
+			})
+			fileRoutes.DELETE("/:id", func(c *gin.Context) {
+				if app.fileManagerHandler == nil {
+					c.JSON(http.StatusServiceUnavailable, gin.H{"error": "file manager not available"})
+					return
+				}
+				app.fileManagerHandler.DeleteFile(c)
+			})
+		}
+
 		// vulnerability management
 		protected.GET("/vulnerabilities", vulnerabilityHandler.ListVulnerabilities)
 		protected.GET("/vulnerabilities/stats", vulnerabilityHandler.GetVulnerabilityStats)
@@ -1050,7 +1327,7 @@ func registerVulnerabilityTool(mcpServer *mcp.Server, db *database.DB, logger *z
 			"properties": map[string]interface{}{
 				"title": map[string]interface{}{
 					"type":        "string",
-					"description": "Vulnerability title (required)",
+					"description": "Vulnerability title (optional; auto-generated from description when omitted)",
 				},
 				"description": map[string]interface{}{
 					"type":        "string",
@@ -1082,7 +1359,7 @@ func registerVulnerabilityTool(mcpServer *mcp.Server, db *database.DB, logger *z
 					"description": "Remediation recommendations",
 				},
 			},
-			"required": []string{"title", "severity"},
+			"required": []string{"severity"},
 		},
 	}
 
@@ -1101,18 +1378,8 @@ func registerVulnerabilityTool(mcpServer *mcp.Server, db *database.DB, logger *z
 			}, nil
 		}
 
-		title, ok := args["title"].(string)
-		if !ok || title == "" {
-			return &mcp.ToolResult{
-				Content: []mcp.Content{
-					{
-						Type: "text",
-						Text: "Error: title parameter is required and cannot be empty",
-					},
-				},
-				IsError: true,
-			}, nil
-		}
+		title, _ := args["title"].(string)
+		title = strings.TrimSpace(title)
 
 		severity, ok := args["severity"].(string)
 		if !ok || severity == "" {
@@ -1178,6 +1445,10 @@ func registerVulnerabilityTool(mcpServer *mcp.Server, db *database.DB, logger *z
 			recommendation = r
 		}
 
+		if title == "" {
+			title = autoGenerateVulnerabilityTitle(description, vulnType, target, severity)
+		}
+
 		// create vulnerability record
 		vuln := &database.Vulnerability{
 			ConversationID: conversationID,
@@ -1228,6 +1499,47 @@ func registerVulnerabilityTool(mcpServer *mcp.Server, db *database.DB, logger *z
 	logger.Info("vulnerability recording tool registered successfully")
 }
 
+func autoGenerateVulnerabilityTitle(description, vulnType, target, severity string) string {
+	clean := func(s string) string {
+		return strings.TrimSpace(strings.Join(strings.Fields(s), " "))
+	}
+	clip := func(s string, n int) string {
+		if n <= 0 {
+			return ""
+		}
+		r := []rune(s)
+		if len(r) <= n {
+			return s
+		}
+		return string(r[:n]) + "..."
+	}
+
+	description = clean(description)
+	vulnType = clean(vulnType)
+	target = clean(target)
+	severity = strings.ToUpper(clean(severity))
+
+	if description != "" {
+		return clip(description, 96)
+	}
+
+	parts := make([]string, 0, 3)
+	if severity != "" {
+		parts = append(parts, severity)
+	}
+	if vulnType != "" {
+		parts = append(parts, vulnType)
+	} else {
+		parts = append(parts, "Vulnerability")
+	}
+
+	title := strings.Join(parts, " ")
+	if target != "" {
+		title += " on " + target
+	}
+	return clip(title, 96)
+}
+
 // initializeKnowledge initializes knowledge base components (for dynamic initialization)
 func initializeKnowledge(
 	cfg *config.Config,
@@ -1265,20 +1577,13 @@ func initializeKnowledge(
 	// create knowledge base manager
 	knowledgeManager := knowledge.NewManager(knowledgeDB, cfg.Knowledge.BasePath, logger)
 
-	// create embedder
-	// use OpenAI config API Key (if not specified in knowledge base config)
-	if cfg.Knowledge.Embedding.APIKey == "" {
-		cfg.Knowledge.Embedding.APIKey = cfg.OpenAI.APIKey
-	}
-	if cfg.Knowledge.Embedding.BaseURL == "" {
-		cfg.Knowledge.Embedding.BaseURL = cfg.OpenAI.BaseURL
-	}
-
+	// create embedder (no implicit fallback to OpenAI endpoint for embeddings)
 	httpClient := &http.Client{
 		Timeout: 30 * time.Minute,
 	}
 	openAIClient := openai.NewClient(&cfg.OpenAI, httpClient, logger)
-	embedder := knowledge.NewEmbedder(&cfg.Knowledge, &cfg.OpenAI, openAIClient, logger)
+	embedder := knowledge.NewEmbedder(&cfg.Knowledge, openAIClient, logger)
+	embeddingEnabled := embedder.Enabled()
 
 	// create retriever
 	retrievalConfig := &knowledge.RetrievalConfig{
@@ -1289,7 +1594,7 @@ func initializeKnowledge(
 	knowledgeRetriever := knowledge.NewRetriever(knowledgeDB, embedder, retrievalConfig, logger)
 
 	// create indexer
-	knowledgeIndexer := knowledge.NewIndexer(knowledgeDB, embedder, logger)
+	knowledgeIndexer := knowledge.NewIndexer(knowledgeDB, embedder, logger, cfg.Knowledge.Embedding.MaxTokens)
 
 	// register knowledge retrieval tool to MCP server
 	knowledge.RegisterKnowledgeTool(mcpServer, knowledgeRetriever, knowledgeManager, logger)
@@ -1315,75 +1620,79 @@ func initializeKnowledge(
 	}
 
 	// scan knowledge base and build index (async)
-	go func() {
-		itemsToIndex, err := knowledgeManager.ScanKnowledgeBase()
-		if err != nil {
-			logger.Warn("failed to scan knowledge base", zap.Error(err))
-			return
-		}
-
-		// check if index already exists
-		hasIndex, err := knowledgeIndexer.HasIndex()
-		if err != nil {
-			logger.Warn("failed to check index status", zap.Error(err))
-			return
-		}
-
-		if hasIndex {
-			// if index exists, only index newly added or updated items
-			if len(itemsToIndex) > 0 {
-				logger.Info("existing knowledge base index detected, starting incremental indexing", zap.Int("count", len(itemsToIndex)))
-				ctx := context.Background()
-				consecutiveFailures := 0
-				var firstFailureItemID string
-				var firstFailureError error
-				failedCount := 0
-
-				for _, itemID := range itemsToIndex {
-					if err := knowledgeIndexer.IndexItem(ctx, itemID); err != nil {
-						failedCount++
-						consecutiveFailures++
-
-						if consecutiveFailures == 1 {
-							firstFailureItemID = itemID
-							firstFailureError = err
-							logger.Warn("failed to index knowledge item", zap.String("itemId", itemID), zap.Error(err))
-						}
-
-						// if 2 consecutive failures, immediately stop incremental indexing
-						if consecutiveFailures >= 2 {
-							logger.Error("too many consecutive index failures, stopping incremental indexing immediately",
-								zap.Int("consecutiveFailures", consecutiveFailures),
-								zap.Int("totalItems", len(itemsToIndex)),
-								zap.String("firstFailureItemId", firstFailureItemID),
-								zap.Error(firstFailureError),
-							)
-							break
-						}
-						continue
-					}
-
-					// reset consecutive failure count on success
-					if consecutiveFailures > 0 {
-						consecutiveFailures = 0
-						firstFailureItemID = ""
-						firstFailureError = nil
-					}
-				}
-				logger.Info("incremental indexing complete", zap.Int("totalItems", len(itemsToIndex)), zap.Int("failedCount", failedCount))
-			} else {
-				logger.Info("existing knowledge base index detected, no new or updated items to index")
+	if embeddingEnabled {
+		go func() {
+			itemsToIndex, err := knowledgeManager.ScanKnowledgeBase()
+			if err != nil {
+				logger.Warn("failed to scan knowledge base", zap.Error(err))
+				return
 			}
-			return
-		}
 
-		// only auto-rebuild when no index exists
-		logger.Info("no knowledge base index detected, starting automatic index build")
-		ctx := context.Background()
-		if err := knowledgeIndexer.RebuildIndex(ctx); err != nil {
-			logger.Warn("failed to rebuild knowledge base index", zap.Error(err))
-		}
-	}()
+			// check if index already exists
+			hasIndex, err := knowledgeIndexer.HasIndex()
+			if err != nil {
+				logger.Warn("failed to check index status", zap.Error(err))
+				return
+			}
+
+			if hasIndex {
+				// if index exists, only index newly added or updated items
+				if len(itemsToIndex) > 0 {
+					logger.Info("existing knowledge base index detected, starting incremental indexing", zap.Int("count", len(itemsToIndex)))
+					ctx := context.Background()
+					consecutiveFailures := 0
+					var firstFailureItemID string
+					var firstFailureError error
+					failedCount := 0
+
+					for _, itemID := range itemsToIndex {
+						if err := knowledgeIndexer.IndexItem(ctx, itemID); err != nil {
+							failedCount++
+							consecutiveFailures++
+
+							if consecutiveFailures == 1 {
+								firstFailureItemID = itemID
+								firstFailureError = err
+								logger.Warn("failed to index knowledge item", zap.String("itemId", itemID), zap.Error(err))
+							}
+
+							// if 2 consecutive failures, immediately stop incremental indexing
+							if consecutiveFailures >= 2 {
+								logger.Error("too many consecutive index failures, stopping incremental indexing immediately",
+									zap.Int("consecutiveFailures", consecutiveFailures),
+									zap.Int("totalItems", len(itemsToIndex)),
+									zap.String("firstFailureItemId", firstFailureItemID),
+									zap.Error(firstFailureError),
+								)
+								break
+							}
+							continue
+						}
+
+						// reset consecutive failure count on success
+						if consecutiveFailures > 0 {
+							consecutiveFailures = 0
+							firstFailureItemID = ""
+							firstFailureError = nil
+						}
+					}
+					logger.Info("incremental indexing complete", zap.Int("totalItems", len(itemsToIndex)), zap.Int("failedCount", failedCount))
+				} else {
+					logger.Info("existing knowledge base index detected, no new or updated items to index")
+				}
+				return
+			}
+
+			// only auto-rebuild when no index exists
+			logger.Info("no knowledge base index detected, starting automatic index build")
+			ctx := context.Background()
+			if err := knowledgeIndexer.RebuildIndex(ctx); err != nil {
+				logger.Warn("failed to rebuild knowledge base index", zap.Error(err))
+			}
+		}()
+	} else {
+		logger.Warn("knowledge embedding disabled: missing embedding base_url/model/api_key; skipping index build")
+	}
 
 	return knowledgeHandler, nil
 }
@@ -1406,6 +1715,84 @@ func registerTimeTools(mcpServer *mcp.Server, ta *agent.TimeAwareness, logger *z
 	}
 	mcpServer.RegisterTool(tool, handler)
 	logger.Info("time tool registered successfully")
+}
+
+// registerToolDiscovery registers the get_tool_details meta-tool that lets the
+// model request full descriptions for specific tools on demand. This enables a
+// compact tool catalog approach: tool definitions are sent with minimal
+// descriptions to save tokens, and the model calls this tool when it needs
+// detailed usage information for a specific tool.
+func registerToolDiscovery(mcpServer *mcp.Server, logger *zap.Logger) {
+	tool := mcp.Tool{
+		Name: builtin.ToolGetToolDetails,
+		Description: "Get full detailed descriptions and usage instructions for one or more tools by name. " +
+			"Use this when you need to understand how to use a specific tool, what parameters it accepts, " +
+			"or what it does in detail. Pass a comma-separated list of tool names.",
+		ShortDescription: "Get full descriptions for tools by name (comma-separated)",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tool_names": map[string]interface{}{
+					"type":        "string",
+					"description": "Comma-separated list of tool names to get details for, e.g. 'nmap,sqlmap,dirsearch'",
+				},
+			},
+			"required": []interface{}{"tool_names"},
+		},
+	}
+	toolHandler := func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		namesRaw, _ := args["tool_names"].(string)
+		if strings.TrimSpace(namesRaw) == "" {
+			return &mcp.ToolResult{
+				Content: []mcp.Content{{Type: "text", Text: "Error: tool_names is required (comma-separated list)"}},
+				IsError: true,
+			}, nil
+		}
+
+		allTools := mcpServer.GetAllTools()
+		toolMap := make(map[string]mcp.Tool, len(allTools))
+		for _, t := range allTools {
+			toolMap[t.Name] = t
+		}
+
+		names := strings.Split(namesRaw, ",")
+		var sb strings.Builder
+		found := 0
+		for _, raw := range names {
+			name := strings.TrimSpace(raw)
+			if name == "" {
+				continue
+			}
+			t, ok := toolMap[name]
+			if !ok {
+				sb.WriteString(fmt.Sprintf("## %s\nNot found. Check tool name spelling.\n\n", name))
+				continue
+			}
+			found++
+			desc := t.Description
+			if desc == "" {
+				desc = t.ShortDescription
+			}
+			sb.WriteString(fmt.Sprintf("## %s\n%s\n", name, desc))
+			// Include parameter schema if available
+			if len(t.InputSchema) > 0 {
+				if props, ok := t.InputSchema["properties"]; ok {
+					if propsJSON, err := json.MarshalIndent(props, "", "  "); err == nil {
+						sb.WriteString(fmt.Sprintf("\nParameters:\n```json\n%s\n```\n", string(propsJSON)))
+					}
+				}
+			}
+			sb.WriteString("\n")
+		}
+		if found == 0 {
+			sb.WriteString("No matching tools found. Use tool names exactly as they appear in the tool list.")
+		}
+		return &mcp.ToolResult{
+			Content: []mcp.Content{{Type: "text", Text: sb.String()}},
+		}, nil
+	}
+	mcpServer.RegisterTool(tool, toolHandler)
+	logger.Info("tool discovery (get_tool_details) registered successfully")
 }
 
 // allMemoryCategories is the complete list of memory category values used in tool schemas.
@@ -1856,16 +2243,1491 @@ in the memory context block so the model knows NOT to re-investigate them.`,
 // corsMiddleware CORS middleware
 func corsMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+		origin := strings.TrimSpace(c.Request.Header.Get("Origin"))
+		if origin != "" && sameOrigin(origin, c.Request.Host) {
+			c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
+			c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+			c.Writer.Header().Set("Vary", "Origin")
+		}
 		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
 
 		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(204)
+			if origin != "" && !sameOrigin(origin, c.Request.Host) {
+				c.AbortWithStatus(http.StatusForbidden)
+				return
+			}
+			c.AbortWithStatus(http.StatusNoContent)
 			return
 		}
 
 		c.Next()
 	}
+}
+
+func sameOrigin(origin, host string) bool {
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(u.Host, host)
+}
+
+func isLoopbackRequest(remoteAddr string) bool {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(remoteAddr))
+	if err != nil {
+		host = strings.TrimSpace(remoteAddr)
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// registerFileManagerTools registers MCP tools for the file manager so the agent
+// can register, update, and query managed files during conversations.
+func registerFileManagerTools(mcpServer *mcp.Server, fm *filemanager.Manager, logger *zap.Logger) {
+	allFileTypes := []string{"report", "api_docs", "project_file", "target_file", "reversing", "exfiltrated", "other"}
+	allFileStatuses := []string{"pending", "processing", "analyzed", "in_progress", "completed", "archived"}
+
+	// ── register_file ─────────────────────────────────────────────────────────
+	registerTool := mcp.Tool{
+		Name:             builtin.ToolRegisterFile,
+		Description:      "Register a file in the file manager. Use this whenever you encounter, create, download, or receive a file that should be tracked. The file manager maintains metadata, processing status, summaries, findings, and logs for each file.",
+		ShortDescription: "Register a file for tracking in file manager",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"file_name": map[string]interface{}{
+					"type":        "string",
+					"description": "Name of the file",
+				},
+				"file_path": map[string]interface{}{
+					"type":        "string",
+					"description": "Absolute path to the file on disk",
+				},
+				"file_size": map[string]interface{}{
+					"type":        "integer",
+					"description": "File size in bytes",
+				},
+				"file_type": map[string]interface{}{
+					"type":        "string",
+					"description": "Type classification of the file",
+					"enum":        allFileTypes,
+				},
+				"summary": map[string]interface{}{
+					"type":        "string",
+					"description": "Brief summary: what is this file, where it came from, what it contains",
+				},
+				"handle_plan": map[string]interface{}{
+					"type":        "string",
+					"description": "How you plan to handle/process this file",
+				},
+				"conversation_id": map[string]interface{}{
+					"type":        "string",
+					"description": "ID of the conversation this file is associated with",
+				},
+			},
+			"required": []string{"file_name", "file_path", "file_type"},
+		},
+	}
+	mcpServer.RegisterTool(registerTool, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		fileName, _ := args["file_name"].(string)
+		filePath, _ := args["file_path"].(string)
+		fileSize := int64(0)
+		if v, ok := args["file_size"].(float64); ok {
+			fileSize = int64(v)
+		}
+		ft, _ := args["file_type"].(string)
+		convID, _ := args["conversation_id"].(string)
+
+		f, err := fm.Register(fileName, filePath, fileSize, "", filemanager.FileType(ft), convID)
+		if err != nil {
+			return &mcp.ToolResult{
+				Content: []mcp.Content{{Type: "text", Text: "Error registering file: " + err.Error()}},
+				IsError: true,
+			}, nil
+		}
+
+		// Apply summary and handle_plan if provided
+		updates := make(map[string]interface{})
+		if summary, ok := args["summary"].(string); ok && summary != "" {
+			updates["summary"] = summary
+		}
+		if plan, ok := args["handle_plan"].(string); ok && plan != "" {
+			updates["handle_plan"] = plan
+		}
+		if len(updates) > 0 {
+			updates["status"] = string(filemanager.FileStatusAnalyzed)
+			fm.Update(f.ID, updates)
+		}
+
+		return &mcp.ToolResult{
+			Content: []mcp.Content{{Type: "text", Text: fmt.Sprintf("File registered: %s (id: %s, type: %s, path: %s)", fileName, f.ID, ft, filePath)}},
+		}, nil
+	})
+
+	// ── update_file ───────────────────────────────────────────────────────────
+	updateTool := mcp.Tool{
+		Name:             builtin.ToolUpdateFile,
+		Description:      "Update a managed file's metadata. Use this to update summary, progress, findings, status, handle_plan, or tags as you work on a file.",
+		ShortDescription: "Update file metadata in file manager",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"id": map[string]interface{}{
+					"type":        "string",
+					"description": "The file ID to update",
+				},
+				"summary": map[string]interface{}{
+					"type":        "string",
+					"description": "Updated summary of the file",
+				},
+				"handle_plan": map[string]interface{}{
+					"type":        "string",
+					"description": "Updated plan for handling the file",
+				},
+				"progress": map[string]interface{}{
+					"type":        "string",
+					"description": "Current progress notes",
+				},
+				"findings": map[string]interface{}{
+					"type":        "string",
+					"description": "Replace all findings with this text",
+				},
+				"status": map[string]interface{}{
+					"type":        "string",
+					"description": "New status",
+					"enum":        allFileStatuses,
+				},
+				"tags": map[string]interface{}{
+					"type":        "string",
+					"description": "Comma-separated tags",
+				},
+			},
+			"required": []string{"id"},
+		},
+	}
+	mcpServer.RegisterTool(updateTool, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		id, _ := args["id"].(string)
+		if id == "" {
+			return &mcp.ToolResult{
+				Content: []mcp.Content{{Type: "text", Text: "Error: id is required"}},
+				IsError: true,
+			}, nil
+		}
+
+		updates := make(map[string]interface{})
+		for _, field := range []string{"summary", "handle_plan", "progress", "findings", "status", "tags"} {
+			if v, ok := args[field].(string); ok && v != "" {
+				updates[field] = v
+			}
+		}
+
+		f, err := fm.Update(id, updates)
+		if err != nil {
+			return &mcp.ToolResult{
+				Content: []mcp.Content{{Type: "text", Text: "Error updating file: " + err.Error()}},
+				IsError: true,
+			}, nil
+		}
+
+		return &mcp.ToolResult{
+			Content: []mcp.Content{{Type: "text", Text: fmt.Sprintf("File updated: %s (status: %s)", f.FileName, f.Status)}},
+		}, nil
+	})
+
+	// ── list_files ────────────────────────────────────────────────────────────
+	listTool := mcp.Tool{
+		Name:             builtin.ToolListFiles,
+		Description:      "List all managed files with optional filtering by type, status, or search query.",
+		ShortDescription: "List managed files",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"file_type": map[string]interface{}{
+					"type":        "string",
+					"description": "Filter by file type",
+					"enum":        allFileTypes,
+				},
+				"status": map[string]interface{}{
+					"type":        "string",
+					"description": "Filter by status",
+					"enum":        allFileStatuses,
+				},
+				"search": map[string]interface{}{
+					"type":        "string",
+					"description": "Search in file names, summaries, findings, and tags",
+				},
+			},
+			"required": []string{},
+		},
+	}
+	mcpServer.RegisterTool(listTool, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		ft := filemanager.FileType("")
+		if v, ok := args["file_type"].(string); ok {
+			ft = filemanager.FileType(v)
+		}
+		status := filemanager.FileStatus("")
+		if v, ok := args["status"].(string); ok {
+			status = filemanager.FileStatus(v)
+		}
+		search, _ := args["search"].(string)
+
+		files, total, err := fm.List(ft, status, search, 50, 0)
+		if err != nil {
+			return &mcp.ToolResult{
+				Content: []mcp.Content{{Type: "text", Text: "Error listing files: " + err.Error()}},
+				IsError: true,
+			}, nil
+		}
+		if total == 0 {
+			return &mcp.ToolResult{
+				Content: []mcp.Content{{Type: "text", Text: "No managed files found."}},
+			}, nil
+		}
+
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("Found %d managed files:\n", total))
+		for _, f := range files {
+			tags := ""
+			if f.Tags != "" {
+				tags = fmt.Sprintf(" [%s]", f.Tags)
+			}
+			sb.WriteString(fmt.Sprintf("  - %s (id: %s, type: %s, status: %s, size: %d)%s\n    Summary: %s\n    Path: %s\n",
+				f.FileName, f.ID, f.FileType, f.Status, f.FileSize, tags,
+				truncate(f.Summary, 200), f.FilePath))
+		}
+		return &mcp.ToolResult{
+			Content: []mcp.Content{{Type: "text", Text: sb.String()}},
+		}, nil
+	})
+
+	// ── get_file ──────────────────────────────────────────────────────────────
+	getTool := mcp.Tool{
+		Name:             builtin.ToolGetFile,
+		Description:      "Get full details of a managed file including summary, progress, findings, logs, and handle plan.",
+		ShortDescription: "Get managed file details",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"id": map[string]interface{}{
+					"type":        "string",
+					"description": "The file ID",
+				},
+			},
+			"required": []string{"id"},
+		},
+	}
+	mcpServer.RegisterTool(getTool, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		id, _ := args["id"].(string)
+		if id == "" {
+			return &mcp.ToolResult{
+				Content: []mcp.Content{{Type: "text", Text: "Error: id is required"}},
+				IsError: true,
+			}, nil
+		}
+
+		f, err := fm.Get(id)
+		if err != nil {
+			return &mcp.ToolResult{
+				Content: []mcp.Content{{Type: "text", Text: "Error: " + err.Error()}},
+				IsError: true,
+			}, nil
+		}
+
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("File: %s\n", f.FileName))
+		sb.WriteString(fmt.Sprintf("ID: %s\n", f.ID))
+		sb.WriteString(fmt.Sprintf("Type: %s | Status: %s | Size: %d bytes\n", f.FileType, f.Status, f.FileSize))
+		sb.WriteString(fmt.Sprintf("Path: %s\n", f.FilePath))
+		if f.Tags != "" {
+			sb.WriteString(fmt.Sprintf("Tags: %s\n", f.Tags))
+		}
+		sb.WriteString(fmt.Sprintf("Created: %s | Updated: %s\n", f.CreatedAt.Format("2006-01-02 15:04"), f.UpdatedAt.Format("2006-01-02 15:04")))
+		if f.Summary != "" {
+			sb.WriteString(fmt.Sprintf("\nSummary:\n%s\n", f.Summary))
+		}
+		if f.HandlePlan != "" {
+			sb.WriteString(fmt.Sprintf("\nHandle Plan:\n%s\n", f.HandlePlan))
+		}
+		if f.Progress != "" {
+			sb.WriteString(fmt.Sprintf("\nProgress:\n%s\n", f.Progress))
+		}
+		if f.Findings != "" {
+			sb.WriteString(fmt.Sprintf("\nFindings:\n%s\n", f.Findings))
+		}
+		if f.Logs != "" {
+			sb.WriteString(fmt.Sprintf("\nLogs:\n%s\n", f.Logs))
+		}
+		return &mcp.ToolResult{
+			Content: []mcp.Content{{Type: "text", Text: sb.String()}},
+		}, nil
+	})
+
+	// ── append_file_log ───────────────────────────────────────────────────────
+	logTool := mcp.Tool{
+		Name:             builtin.ToolAppendFileLog,
+		Description:      "Append a timestamped log entry to a managed file's processing log.",
+		ShortDescription: "Append log entry to managed file",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"id": map[string]interface{}{
+					"type":        "string",
+					"description": "The file ID",
+				},
+				"entry": map[string]interface{}{
+					"type":        "string",
+					"description": "Log entry text",
+				},
+			},
+			"required": []string{"id", "entry"},
+		},
+	}
+	mcpServer.RegisterTool(logTool, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		id, _ := args["id"].(string)
+		entry, _ := args["entry"].(string)
+		if id == "" || entry == "" {
+			return &mcp.ToolResult{
+				Content: []mcp.Content{{Type: "text", Text: "Error: id and entry are required"}},
+				IsError: true,
+			}, nil
+		}
+		if err := fm.AppendLog(id, entry); err != nil {
+			return &mcp.ToolResult{
+				Content: []mcp.Content{{Type: "text", Text: "Error: " + err.Error()}},
+				IsError: true,
+			}, nil
+		}
+		return &mcp.ToolResult{
+			Content: []mcp.Content{{Type: "text", Text: "Log entry appended."}},
+		}, nil
+	})
+
+	// ── append_file_findings ──────────────────────────────────────────────────
+	findingsTool := mcp.Tool{
+		Name:             builtin.ToolAppendFindings,
+		Description:      "Append a finding or discovery to a managed file's findings section.",
+		ShortDescription: "Append finding to managed file",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"id": map[string]interface{}{
+					"type":        "string",
+					"description": "The file ID",
+				},
+				"finding": map[string]interface{}{
+					"type":        "string",
+					"description": "Finding or discovery text",
+				},
+			},
+			"required": []string{"id", "finding"},
+		},
+	}
+	mcpServer.RegisterTool(findingsTool, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		id, _ := args["id"].(string)
+		finding, _ := args["finding"].(string)
+		if id == "" || finding == "" {
+			return &mcp.ToolResult{
+				Content: []mcp.Content{{Type: "text", Text: "Error: id and finding are required"}},
+				IsError: true,
+			}, nil
+		}
+		if err := fm.AppendFindings(id, finding); err != nil {
+			return &mcp.ToolResult{
+				Content: []mcp.Content{{Type: "text", Text: "Error: " + err.Error()}},
+				IsError: true,
+			}, nil
+		}
+		return &mcp.ToolResult{
+			Content: []mcp.Content{{Type: "text", Text: "Finding appended."}},
+		}, nil
+	})
+
+	logger.Info("file manager MCP tools registered")
+}
+
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cuttlefish (Android VM) MCP Tools
+// ─────────────────────────────────────────────────────────────────────────────
+
+// cvdExec runs a command in the Cuttlefish workspace and returns combined output.
+func cvdExec(ctx context.Context, cvdHome string, name string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = cvdHome
+	cmd.Env = append(os.Environ(), "CVD_HOME="+cvdHome)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	out := stdout.String()
+	if stderr.Len() > 0 {
+		out += "\n" + stderr.String()
+	}
+	if len(out) > 100000 {
+		out = out[:100000] + "\n... (truncated)"
+	}
+	return out, err
+}
+
+// cvdADB returns the path to the Cuttlefish-bundled adb, falling back to system adb.
+func cvdADB(cvdHome string) string {
+	p := filepath.Join(cvdHome, "bin", "adb")
+	if _, err := os.Stat(p); err == nil {
+		return p
+	}
+	return "adb"
+}
+
+func registerCuttlefishTools(mcpServer *mcp.Server, cvdHome string, cvdCfg *config.CuttlefishConfig, logger *zap.Logger) {
+	adb := cvdADB(cvdHome)
+
+	// Resolve DroidRun bridge script path from config or auto-detect
+	bridgeScript := cvdCfg.BridgeScript
+	if bridgeScript == "" {
+		bridgeScript = filepath.Join(cvdHome, "..", "CyberStrikeAI", "scripts", "cuttlefish", "droidrun-bridge.py")
+		if _, err := os.Stat(bridgeScript); err != nil {
+			bridgeScript = filepath.Join(os.Getenv("HOME"), "CyberStrikeAI", "scripts", "cuttlefish", "droidrun-bridge.py")
+		}
+	}
+
+	// Resolve DroidRun config path
+	droidrunCfgPath := cvdCfg.DroidRunConfig
+	if droidrunCfgPath == "" {
+		droidrunCfgPath = filepath.Join(cvdHome, "droidrun", "config.yaml")
+	}
+
+	logger.Info("registering Cuttlefish (Android VM) MCP tools",
+		zap.String("cvd_home", cvdHome),
+		zap.String("adb", adb),
+		zap.Int("memory_mb", cvdCfg.MemoryMB),
+		zap.Int("cpus", cvdCfg.CPUs),
+		zap.String("gpu_mode", cvdCfg.GPUMode),
+		zap.Bool("russian_identity", cvdCfg.RussianIdentity),
+		zap.String("bridge_script", bridgeScript),
+	)
+
+	// ── cuttlefish_launch ────────────────────────────────────────────────
+	mcpServer.RegisterTool(mcp.Tool{
+		Name:             builtin.ToolCuttlefishLaunch,
+		Description:      "Launch the Cuttlefish Android virtual device. Starts an AOSP VM with QEMU/KVM preconfigured as a Russian-owned Xiaomi Redmi Note 12 Pro (MTS carrier, Moscow timezone, ru-RU locale). The device becomes available via ADB and WebRTC (https://localhost:8443). Takes 2-4 minutes for first boot.",
+		ShortDescription: "Launch Cuttlefish Android VM",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"fresh": map[string]interface{}{
+					"type":        "boolean",
+					"description": "If true, create a fresh data partition (factory reset). Default false.",
+				},
+				"memory_mb": map[string]interface{}{
+					"type":        "integer",
+					"description": "RAM in MB (default 8192)",
+				},
+				"cpus": map[string]interface{}{
+					"type":        "integer",
+					"description": "Number of virtual CPUs (default 4)",
+				},
+			},
+		},
+	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		env := os.Environ()
+		env = append(env, "CVD_HOME="+cvdHome)
+		if fresh, ok := args["fresh"].(bool); ok && fresh {
+			env = append(env, "FRESH=1")
+		}
+		// Use config defaults, allow per-call override
+		mem := cvdCfg.MemoryMB
+		if mem == 0 {
+			mem = 8192
+		}
+		if m, ok := args["memory_mb"].(float64); ok && int(m) > 0 {
+			mem = int(m)
+		}
+		env = append(env, "CVD_MEMORY="+strconv.Itoa(mem))
+
+		cpus := cvdCfg.CPUs
+		if cpus == 0 {
+			cpus = 4
+		}
+		if c, ok := args["cpus"].(float64); ok && int(c) > 0 {
+			cpus = int(c)
+		}
+		env = append(env, "CVD_CPUS="+strconv.Itoa(cpus))
+
+		gpuMode := cvdCfg.GPUMode
+		if gpuMode == "" {
+			gpuMode = "guest_swiftshader"
+		}
+		env = append(env, "CVD_GPU="+gpuMode)
+
+		if cvdCfg.DiskMB > 0 {
+			env = append(env, "CVD_DISK_MB="+strconv.Itoa(cvdCfg.DiskMB))
+		}
+
+		webrtcPort := cvdCfg.WebRTCPort
+		if webrtcPort == 0 {
+			webrtcPort = 8443
+		}
+		env = append(env, "CVD_WEBRTC_PORT="+strconv.Itoa(webrtcPort))
+
+		launchScript := filepath.Join(cvdHome, "cvd-launch.sh")
+		cmd := exec.CommandContext(ctx, launchScript)
+		cmd.Dir = cvdHome
+		cmd.Env = env
+		var buf bytes.Buffer
+		cmd.Stdout = &buf
+		cmd.Stderr = &buf
+		err := cmd.Run()
+		out := buf.String()
+		if err != nil {
+			return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "Launch failed: " + err.Error() + "\n" + out}}, IsError: true}, nil
+		}
+
+		// Auto-open WebRTC viewer in browser so user can see and interact with the device
+		webrtcURL := "https://localhost:" + strconv.Itoa(webrtcPort)
+		go func() {
+			// Try xdg-open (Linux), then sensible-browser, then direct browsers
+			for _, opener := range []string{"xdg-open", "sensible-browser", "google-chrome", "firefox", "chromium-browser"} {
+				if path, err := exec.LookPath(opener); err == nil {
+					_ = exec.Command(path, webrtcURL).Start()
+					logger.Info("Opened Cuttlefish WebRTC viewer", zap.String("url", webrtcURL), zap.String("opener", opener))
+					return
+				}
+			}
+			logger.Warn("Could not auto-open browser for Cuttlefish WebRTC viewer — open manually", zap.String("url", webrtcURL))
+		}()
+
+		return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: out + "\nWebRTC viewer: " + webrtcURL + " (opening in browser...)"}}}, nil
+	})
+
+	// ── cuttlefish_stop ─────────────────────────────────────────────────
+	mcpServer.RegisterTool(mcp.Tool{
+		Name:             builtin.ToolCuttlefishStop,
+		Description:      "Stop the running Cuttlefish Android virtual device.",
+		ShortDescription: "Stop Cuttlefish Android VM",
+		InputSchema:      map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
+	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		out, err := cvdExec(ctx, cvdHome, filepath.Join(cvdHome, "cvd-stop.sh"))
+		if err != nil {
+			return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "Stop failed: " + err.Error() + "\n" + out}}, IsError: true}, nil
+		}
+		return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: out}}}, nil
+	})
+
+	// ── cuttlefish_status ───────────────────────────────────────────────
+	mcpServer.RegisterTool(mcp.Tool{
+		Name:             builtin.ToolCuttlefishStatus,
+		Description:      "Check if Cuttlefish is running, get ADB device serial, and current device properties (locale, carrier, model).",
+		ShortDescription: "Check Cuttlefish device status",
+		InputSchema:      map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
+	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		// Check ADB devices
+		devOut, _ := cvdExec(ctx, cvdHome, adb, "devices", "-l")
+		// Get key properties if device is connected
+		propsOut, _ := cvdExec(ctx, cvdHome, adb, "shell",
+			"echo 'boot_completed='$(getprop sys.boot_completed)"+
+				" && echo 'locale='$(getprop persist.sys.locale)"+
+				" && echo 'timezone='$(getprop persist.sys.timezone)"+
+				" && echo 'carrier='$(getprop gsm.sim.operator.alpha)"+
+				" && echo 'model='$(getprop ro.product.model)"+
+				" && echo 'manufacturer='$(getprop ro.product.manufacturer)"+
+				" && echo 'sdk='$(getprop ro.build.version.sdk)"+
+				" && echo 'android='$(getprop ro.build.version.release)")
+		return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "ADB Devices:\n" + devOut + "\nProperties:\n" + propsOut}}}, nil
+	})
+
+	// ── cuttlefish_install_apk ──────────────────────────────────────────
+	mcpServer.RegisterTool(mcp.Tool{
+		Name:             builtin.ToolCuttlefishInstall,
+		Description:      "Install an APK on the Cuttlefish Android device. Supports debug (-t), downgrade (-d), and replace (-r) flags.",
+		ShortDescription: "Install APK on Cuttlefish",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"apk_path": map[string]interface{}{
+					"type":        "string",
+					"description": "Absolute path to the APK file",
+				},
+				"replace": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Replace existing app (default true)",
+				},
+				"downgrade": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Allow version downgrade",
+				},
+				"debug": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Allow test-only APKs",
+				},
+			},
+			"required": []string{"apk_path"},
+		},
+	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		apkPath, _ := args["apk_path"].(string)
+		installArgs := []string{"install"}
+		if r, ok := args["replace"].(bool); !ok || r {
+			installArgs = append(installArgs, "-r")
+		}
+		if d, ok := args["downgrade"].(bool); ok && d {
+			installArgs = append(installArgs, "-d")
+		}
+		if t, ok := args["debug"].(bool); ok && t {
+			installArgs = append(installArgs, "-t")
+		}
+		installArgs = append(installArgs, apkPath)
+		out, err := cvdExec(ctx, cvdHome, adb, installArgs...)
+		if err != nil {
+			return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "Install failed: " + err.Error() + "\n" + out}}, IsError: true}, nil
+		}
+		return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: out}}}, nil
+	})
+
+	// ── cuttlefish_hotswap ──────────────────────────────────────────────
+	mcpServer.RegisterTool(mcp.Tool{
+		Name:             builtin.ToolCuttlefishHotswap,
+		Description:      "Hot-swap reinstall an APK: force-stops the running app, reinstalls with -r -d -t flags, and relaunches. Use for rapid iteration during testing/reversing.",
+		ShortDescription: "Hot-swap APK on Cuttlefish",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"apk_path": map[string]interface{}{
+					"type":        "string",
+					"description": "Path to the APK file",
+				},
+				"package_name": map[string]interface{}{
+					"type":        "string",
+					"description": "Package name (e.g. com.example.app). Auto-detected if omitted.",
+				},
+			},
+			"required": []string{"apk_path"},
+		},
+	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		apkPath, _ := args["apk_path"].(string)
+		cmdArgs := []string{apkPath}
+		if pkg, ok := args["package_name"].(string); ok && pkg != "" {
+			cmdArgs = append(cmdArgs, pkg)
+		}
+		out, err := cvdExec(ctx, cvdHome, filepath.Join(cvdHome, "cvd-hotswap.sh"), cmdArgs...)
+		if err != nil {
+			return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "Hotswap failed: " + err.Error() + "\n" + out}}, IsError: true}, nil
+		}
+		return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: out}}}, nil
+	})
+
+	// ── cuttlefish_shell ────────────────────────────────────────────────
+	mcpServer.RegisterTool(mcp.Tool{
+		Name:             builtin.ToolCuttlefishShell,
+		Description:      "Execute a shell command on the Cuttlefish Android device via ADB. Returns stdout/stderr. Use for any direct device interaction: file browsing, process listing, property queries, app management, etc.",
+		ShortDescription: "Run shell command on Android device",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"command": map[string]interface{}{
+					"type":        "string",
+					"description": "Shell command to execute on device (e.g. 'ls /data/local/tmp', 'pm list packages -3', 'getprop ro.product.model')",
+				},
+			},
+			"required": []string{"command"},
+		},
+	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		command, _ := args["command"].(string)
+		out, err := cvdExec(ctx, cvdHome, adb, "shell", command)
+		if err != nil {
+			// ADB shell returns the device command's exit code, which may be non-zero
+			// but still have useful output
+			return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: out}}}, nil
+		}
+		return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: out}}}, nil
+	})
+
+	// ── cuttlefish_push ─────────────────────────────────────────────────
+	mcpServer.RegisterTool(mcp.Tool{
+		Name:             builtin.ToolCuttlefishPush,
+		Description:      "Push a file from host to the Cuttlefish Android device via ADB.",
+		ShortDescription: "Push file to Android device",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"local_path": map[string]interface{}{
+					"type":        "string",
+					"description": "Path to the file on the host",
+				},
+				"device_path": map[string]interface{}{
+					"type":        "string",
+					"description": "Destination path on the device (e.g. /data/local/tmp/file)",
+				},
+			},
+			"required": []string{"local_path", "device_path"},
+		},
+	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		localPath, _ := args["local_path"].(string)
+		devicePath, _ := args["device_path"].(string)
+		out, err := cvdExec(ctx, cvdHome, adb, "push", localPath, devicePath)
+		if err != nil {
+			return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "Push failed: " + err.Error() + "\n" + out}}, IsError: true}, nil
+		}
+		return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: out}}}, nil
+	})
+
+	// ── cuttlefish_pull ─────────────────────────────────────────────────
+	mcpServer.RegisterTool(mcp.Tool{
+		Name:             builtin.ToolCuttlefishPull,
+		Description:      "Pull a file from the Cuttlefish Android device to the host via ADB.",
+		ShortDescription: "Pull file from Android device",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"device_path": map[string]interface{}{
+					"type":        "string",
+					"description": "Path on the device to pull (e.g. /data/data/com.app/databases/db.sqlite)",
+				},
+				"local_path": map[string]interface{}{
+					"type":        "string",
+					"description": "Destination path on the host",
+				},
+			},
+			"required": []string{"device_path", "local_path"},
+		},
+	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		devicePath, _ := args["device_path"].(string)
+		localPath, _ := args["local_path"].(string)
+		out, err := cvdExec(ctx, cvdHome, adb, "pull", devicePath, localPath)
+		if err != nil {
+			return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "Pull failed: " + err.Error() + "\n" + out}}, IsError: true}, nil
+		}
+		return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: out}}}, nil
+	})
+
+	// ── cuttlefish_screenshot ───────────────────────────────────────────
+	mcpServer.RegisterTool(mcp.Tool{
+		Name:             builtin.ToolCuttlefishScreenshot,
+		Description:      "Take a screenshot of the Cuttlefish Android device. Returns the path to the saved PNG file.",
+		ShortDescription: "Screenshot Android device",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"output_path": map[string]interface{}{
+					"type":        "string",
+					"description": "Where to save the screenshot (default: /tmp/cvd_screenshot.png)",
+				},
+			},
+		},
+	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		outPath := "/tmp/cvd_screenshot.png"
+		if p, ok := args["output_path"].(string); ok && p != "" {
+			outPath = p
+		}
+		cmd := exec.CommandContext(ctx, adb, "exec-out", "screencap", "-p")
+		cmd.Dir = cvdHome
+		var buf bytes.Buffer
+		cmd.Stdout = &buf
+		if err := cmd.Run(); err != nil {
+			return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "Screenshot failed: " + err.Error()}}, IsError: true}, nil
+		}
+		if err := os.WriteFile(outPath, buf.Bytes(), 0644); err != nil {
+			return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "Failed to write screenshot: " + err.Error()}}, IsError: true}, nil
+		}
+		return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: fmt.Sprintf("Screenshot saved to %s (%d bytes)", outPath, buf.Len())}}}, nil
+	})
+
+	// ── cuttlefish_logcat ───────────────────────────────────────────────
+	mcpServer.RegisterTool(mcp.Tool{
+		Name:             builtin.ToolCuttlefishLogcat,
+		Description:      "Read Android logcat output from the Cuttlefish device. Supports filtering by tag, priority, and line count.",
+		ShortDescription: "Read Android logcat",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"filter": map[string]interface{}{
+					"type":        "string",
+					"description": "Logcat filter expression (e.g. 'ActivityManager:I *:S' or tag name)",
+				},
+				"lines": map[string]interface{}{
+					"type":        "integer",
+					"description": "Number of recent lines to return (default 100)",
+				},
+				"grep": map[string]interface{}{
+					"type":        "string",
+					"description": "Grep pattern to filter output",
+				},
+			},
+		},
+	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		lines := 100
+		if n, ok := args["lines"].(float64); ok && n > 0 {
+			lines = int(n)
+		}
+		logArgs := []string{"logcat", "-d", "-t", strconv.Itoa(lines)}
+		if filter, ok := args["filter"].(string); ok && filter != "" {
+			logArgs = append(logArgs, filter)
+		}
+		out, _ := cvdExec(ctx, cvdHome, adb, logArgs...)
+		if grepPat, ok := args["grep"].(string); ok && grepPat != "" {
+			var filtered []string
+			for _, line := range strings.Split(out, "\n") {
+				if strings.Contains(line, grepPat) {
+					filtered = append(filtered, line)
+				}
+			}
+			out = strings.Join(filtered, "\n")
+		}
+		return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: out}}}, nil
+	})
+
+	// ── cuttlefish_frida_setup ──────────────────────────────────────────
+	mcpServer.RegisterTool(mcp.Tool{
+		Name:             builtin.ToolCuttlefishFrida,
+		Description:      "Set up Frida server on the Cuttlefish device for dynamic instrumentation. Downloads the matching frida-server binary, pushes it to the device, and starts it. After setup, use frida/frida-tools from the host to attach to processes.",
+		ShortDescription: "Setup Frida on Android device",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"version": map[string]interface{}{
+					"type":        "string",
+					"description": "Frida version (default: 16.6.6)",
+				},
+			},
+		},
+	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		out, err := cvdExec(ctx, cvdHome, filepath.Join(cvdHome, "cvd-api.sh"), "frida-setup")
+		if err != nil {
+			return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "Frida setup failed: " + err.Error() + "\n" + out}}, IsError: true}, nil
+		}
+		return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: out}}}, nil
+	})
+
+	// ── cuttlefish_proxy ────────────────────────────────────────────────
+	mcpServer.RegisterTool(mcp.Tool{
+		Name:             builtin.ToolCuttlefishProxy,
+		Description:      "Set or clear HTTP proxy on the Cuttlefish device. Useful for traffic interception with Burp Suite, mitmproxy, etc.",
+		ShortDescription: "Set/clear proxy on Android device",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"action": map[string]interface{}{
+					"type":        "string",
+					"enum":        []string{"set", "clear"},
+					"description": "set or clear the proxy",
+				},
+				"host": map[string]interface{}{
+					"type":        "string",
+					"description": "Proxy host (required for 'set')",
+				},
+				"port": map[string]interface{}{
+					"type":        "string",
+					"description": "Proxy port (required for 'set')",
+				},
+			},
+			"required": []string{"action"},
+		},
+	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		action, _ := args["action"].(string)
+		if action == "clear" {
+			out, _ := cvdExec(ctx, cvdHome, adb, "shell", "settings put global http_proxy :0")
+			return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "Proxy cleared.\n" + out}}}, nil
+		}
+		host, _ := args["host"].(string)
+		port, _ := args["port"].(string)
+		if host == "" || port == "" {
+			return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "host and port required for set action"}}, IsError: true}, nil
+		}
+		out, _ := cvdExec(ctx, cvdHome, adb, "shell", "settings put global http_proxy "+host+":"+port)
+		return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: fmt.Sprintf("Proxy set to %s:%s\n%s", host, port, out)}}}, nil
+	})
+
+	// ── cuttlefish_install_cert ─────────────────────────────────────────
+	mcpServer.RegisterTool(mcp.Tool{
+		Name:             builtin.ToolCuttlefishCert,
+		Description:      "Install a CA certificate into the Android system trust store on the Cuttlefish device. Required for HTTPS traffic interception. The device must have root access (Cuttlefish userdebug builds support this).",
+		ShortDescription: "Install CA cert on Android device",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"cert_path": map[string]interface{}{
+					"type":        "string",
+					"description": "Path to the PEM-encoded CA certificate file on the host",
+				},
+			},
+			"required": []string{"cert_path"},
+		},
+	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		certPath, _ := args["cert_path"].(string)
+		out, err := cvdExec(ctx, cvdHome, filepath.Join(cvdHome, "cvd-api.sh"), "install-cert", certPath)
+		if err != nil {
+			return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "Cert install failed: " + err.Error() + "\n" + out}}, IsError: true}, nil
+		}
+		return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: out}}}, nil
+	})
+
+	// ── cuttlefish_snapshot ─────────────────────────────────────────────
+	mcpServer.RegisterTool(mcp.Tool{
+		Name:             builtin.ToolCuttlefishSnapshot,
+		Description:      "Save, restore, or list device state snapshots. Use 'save' before destructive testing, 'restore' to revert to a known-good state.",
+		ShortDescription: "Manage Cuttlefish device snapshots",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"action": map[string]interface{}{
+					"type":        "string",
+					"enum":        []string{"save", "restore", "list"},
+					"description": "Snapshot action",
+				},
+				"name": map[string]interface{}{
+					"type":        "string",
+					"description": "Snapshot name (default: 'default')",
+				},
+			},
+			"required": []string{"action"},
+		},
+	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		action, _ := args["action"].(string)
+		cmdArgs := []string{action}
+		if name, ok := args["name"].(string); ok && name != "" {
+			cmdArgs = append(cmdArgs, name)
+		}
+		out, err := cvdExec(ctx, cvdHome, filepath.Join(cvdHome, "cvd-snapshot.sh"), cmdArgs...)
+		if err != nil {
+			return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "Snapshot failed: " + err.Error() + "\n" + out}}, IsError: true}, nil
+		}
+		return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: out}}}, nil
+	})
+
+	// ── cuttlefish_packages ─────────────────────────────────────────────
+	mcpServer.RegisterTool(mcp.Tool{
+		Name:             builtin.ToolCuttlefishPackages,
+		Description:      "List, inspect, or manage packages on the Cuttlefish device. Actions: list (all/third-party), info (package details), permissions, activities, clear-data, force-stop, enable, disable.",
+		ShortDescription: "Manage packages on Android device",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"action": map[string]interface{}{
+					"type":        "string",
+					"enum":        []string{"list", "list-third-party", "info", "permissions", "activities", "clear-data", "force-stop", "enable", "disable", "uninstall"},
+					"description": "Package management action",
+				},
+				"package": map[string]interface{}{
+					"type":        "string",
+					"description": "Package name (required for info/permissions/activities/clear-data/force-stop/enable/disable/uninstall)",
+				},
+			},
+			"required": []string{"action"},
+		},
+	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		action, _ := args["action"].(string)
+		pkg, _ := args["package"].(string)
+		var out string
+		var err error
+		switch action {
+		case "list":
+			out, err = cvdExec(ctx, cvdHome, adb, "shell", "pm list packages")
+		case "list-third-party":
+			out, err = cvdExec(ctx, cvdHome, adb, "shell", "pm list packages -3")
+		case "info":
+			out, err = cvdExec(ctx, cvdHome, adb, "shell", "dumpsys package "+pkg)
+		case "permissions":
+			out, err = cvdExec(ctx, cvdHome, adb, "shell", "dumpsys package "+pkg+" | grep -A 100 'granted=true'")
+		case "activities":
+			out, err = cvdExec(ctx, cvdHome, adb, "shell", "dumpsys package "+pkg+" | grep -A 5 'Activity'")
+		case "clear-data":
+			out, err = cvdExec(ctx, cvdHome, adb, "shell", "pm clear "+pkg)
+		case "force-stop":
+			out, err = cvdExec(ctx, cvdHome, adb, "shell", "am force-stop "+pkg)
+		case "enable":
+			out, err = cvdExec(ctx, cvdHome, adb, "shell", "pm enable "+pkg)
+		case "disable":
+			out, err = cvdExec(ctx, cvdHome, adb, "shell", "pm disable-user --user 0 "+pkg)
+		case "uninstall":
+			out, err = cvdExec(ctx, cvdHome, adb, "shell", "pm uninstall "+pkg)
+		default:
+			return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "Unknown action: " + action}}, IsError: true}, nil
+		}
+		if err != nil {
+			return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: out}}}, nil
+		}
+		return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: out}}}, nil
+	})
+
+	// ── cuttlefish_droidrun ─────────────────────────────────────────────
+	mcpServer.RegisterTool(mcp.Tool{
+		Name:             builtin.ToolCuttlefishDroidRun,
+		Description:      "Run DroidRun AI agent on the Cuttlefish device. Give a natural language goal and the agent will autonomously interact with the Android UI to accomplish it (e.g. 'Open Settings and find device info', 'Install and test the login flow of the app'). Requires DroidRun and its dependencies to be installed (pip install droidrun).",
+		ShortDescription: "Run DroidRun AI agent on Cuttlefish",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"goal": map[string]interface{}{
+					"type":        "string",
+					"description": "Natural language goal for the DroidRun agent",
+				},
+				"install_apk": map[string]interface{}{
+					"type":        "string",
+					"description": "APK path to install before running the goal (optional)",
+				},
+				"config": map[string]interface{}{
+					"type":        "string",
+					"description": "Path to custom DroidRun config YAML (optional)",
+				},
+			},
+			"required": []string{"goal"},
+		},
+	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		goal, _ := args["goal"].(string)
+		cmdArgs := []string{bridgeScript}
+		if apk, ok := args["install_apk"].(string); ok && apk != "" {
+			cmdArgs = append(cmdArgs, "--install", apk)
+		}
+		if cfgPath, ok := args["config"].(string); ok && cfgPath != "" {
+			cmdArgs = append(cmdArgs, "--config", cfgPath)
+		} else if droidrunCfgPath != "" {
+			cmdArgs = append(cmdArgs, "--config", droidrunCfgPath)
+		}
+		cmdArgs = append(cmdArgs, goal)
+		out, err := cvdExec(ctx, cvdHome, "python3", cmdArgs...)
+		if err != nil {
+			return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "DroidRun failed: " + err.Error() + "\n" + out}}, IsError: true}, nil
+		}
+		return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: out}}}, nil
+	})
+
+	logger.Info("registered Cuttlefish MCP tools", zap.Int("count", 16))
+
+	// ── DroidRun Proxy Tools ────────────────────────────────────────────
+	// High-level LLM-friendly device interaction via the DroidRun proxy service.
+	proxyPort := cvdCfg.ProxyPort
+	if proxyPort == 0 {
+		proxyPort = 18090
+	}
+	proxyBase := fmt.Sprintf("http://127.0.0.1:%d", proxyPort)
+	registerDroidRunProxyTools(mcpServer, proxyBase, logger)
+}
+
+// droidRunProxyCall makes a request to the DroidRun proxy HTTP service.
+func droidRunProxyCall(ctx context.Context, proxyBase, method, path string, body interface{}) (map[string]interface{}, error) {
+	var reqBody io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			return nil, err
+		}
+		reqBody = bytes.NewReader(b)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, proxyBase+path, reqBody)
+	if err != nil {
+		return nil, err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("proxy unavailable (is droidrun_proxy.py running on %s?): %w", proxyBase, err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if len(raw) > 200000 {
+		raw = raw[:200000]
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, fmt.Errorf("invalid proxy response: %s", string(raw[:min(len(raw), 500)]))
+	}
+	return result, nil
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// formatProxyResult formats a DroidRun proxy response as LLM-friendly text.
+func formatProxyResult(result map[string]interface{}) string {
+	// If there's an llm_text field, use it directly
+	if t, ok := result["llm_text"].(string); ok {
+		return t
+	}
+	// If there's state_after with llm_text, include it
+	parts := []string{}
+	if action, ok := result["action"].(string); ok {
+		success, _ := result["success"].(bool)
+		status := "OK"
+		if !success {
+			status = "FAILED"
+		}
+		summary, _ := result["summary"].(string)
+		parts = append(parts, fmt.Sprintf("[%s] %s: %s", status, action, summary))
+		if errMsg, ok := result["error"].(string); ok && errMsg != "" {
+			parts = append(parts, "Error: "+errMsg)
+		}
+	}
+	if stateAfter, ok := result["state_after"].(map[string]interface{}); ok {
+		if llm, ok := stateAfter["llm_text"].(string); ok {
+			parts = append(parts, "", llm)
+		}
+	}
+	if len(parts) > 0 {
+		return strings.Join(parts, "\n")
+	}
+	// Fallback: pretty JSON
+	b, _ := json.MarshalIndent(result, "", "  ")
+	return string(b)
+}
+
+func registerDroidRunProxyTools(mcpServer *mcp.Server, proxyBase string, logger *zap.Logger) {
+	logger.Info("registering DroidRun proxy MCP tools (LLM-friendly device interaction)", zap.String("proxy", proxyBase))
+
+	// ── droidrun_connect ────────────────────────────────────────────────
+	mcpServer.RegisterTool(mcp.Tool{
+		Name: builtin.ToolDroidRunConnect,
+		Description: `Connect the DroidRun proxy to the Cuttlefish Android device. Call this before using any droidrun_* tools. The proxy provides high-level, LLM-friendly device control — much easier than raw ADB commands:
+- UI elements are indexed (click by number instead of pixel coordinates)
+- State is formatted as readable text you can reason about
+- Screenshots are base64 PNG for vision analysis (Qwen3.5 VL)
+- Actions return success/failure with descriptions and updated state`,
+		ShortDescription: "Connect DroidRun proxy to Android device",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"serial": map[string]interface{}{
+					"type":        "string",
+					"description": "ADB device serial (auto-detect if empty)",
+				},
+			},
+		},
+	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		result, err := droidRunProxyCall(ctx, proxyBase, "GET", "/status", nil)
+		if err != nil {
+			return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "DroidRun proxy not running. Start it with:\n  python3 ~/CyberStrikeAI/scripts/cuttlefish/droidrun_proxy.py\n\nError: " + err.Error()}}, IsError: true}, nil
+		}
+		connected, _ := result["connected"].(bool)
+		if connected {
+			return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "DroidRun proxy connected and ready. Use droidrun_state to see current screen."}}}, nil
+		}
+		return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "DroidRun proxy running but not connected to device. Ensure Cuttlefish VM is running (cuttlefish_launch)."}}}, nil
+	})
+
+	// ── droidrun_state ──────────────────────────────────────────────────
+	mcpServer.RegisterTool(mcp.Tool{
+		Name: builtin.ToolDroidRunState,
+		Description: `Get the current Android device state in LLM-friendly format. Returns:
+- Current app and activity name
+- All visible UI elements with index numbers (for click/type by index)
+- Screen dimensions, keyboard visibility, focused element
+- Optional base64 PNG screenshot (for vision analysis with Qwen3.5 VL)
+
+The UI elements are indexed — use the index with droidrun_click or droidrun_type.
+Example output: "[3] Button 'Login' (200,400,500,460)" means element 3 is a Login button.
+
+This is the PRIMARY tool for understanding what's on screen. Call it before deciding what action to take.`,
+		ShortDescription: "Get LLM-friendly device state with indexed UI elements",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"include_screenshot": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Include base64 PNG screenshot for vision analysis (default true)",
+				},
+			},
+		},
+	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		query := "?screenshot=true"
+		if ss, ok := args["include_screenshot"].(bool); ok && !ss {
+			query = "?screenshot=false"
+		}
+		result, err := droidRunProxyCall(ctx, proxyBase, "GET", "/state"+query, nil)
+		if err != nil {
+			return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "Error: " + err.Error()}}, IsError: true}, nil
+		}
+		text := formatProxyResult(result)
+		// If screenshot is present, include it as a separate content block for VL models
+		contents := []mcp.Content{{Type: "text", Text: text}}
+		if b64, ok := result["screenshot_b64"].(string); ok && b64 != "" && len(b64) < 500000 {
+			contents = append(contents, mcp.Content{Type: "text", Text: "\n[Screenshot: base64 PNG attached, " + strconv.Itoa(len(b64)) + " chars. Decode and analyze visually.]"})
+		}
+		return &mcp.ToolResult{Content: contents}, nil
+	})
+
+	// ── droidrun_screenshot ─────────────────────────────────────────────
+	mcpServer.RegisterTool(mcp.Tool{
+		Name:             builtin.ToolDroidRunScreenshot,
+		Description:      "Take a screenshot of the Android device. Returns base64 PNG for visual analysis with Qwen3.5 VL, plus the saved file path. Use droidrun_state instead if you also need UI element indices.",
+		ShortDescription: "Take device screenshot (base64 PNG)",
+		InputSchema:      map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
+	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		result, err := droidRunProxyCall(ctx, proxyBase, "GET", "/screenshot", nil)
+		if err != nil {
+			return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "Error: " + err.Error()}}, IsError: true}, nil
+		}
+		path, _ := result["path"].(string)
+		b64, _ := result["base64"].(string)
+		text := fmt.Sprintf("Screenshot saved: %s (%d bytes base64)", path, len(b64))
+		return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: text}}}, nil
+	})
+
+	// ── droidrun_click ──────────────────────────────────────────────────
+	mcpServer.RegisterTool(mcp.Tool{
+		Name: builtin.ToolDroidRunClick,
+		Description: `Click a UI element by its index number. Use droidrun_state first to see available elements and their indices.
+
+Example: if droidrun_state shows "[3] Button 'Login'" then call droidrun_click with index=3 to click it.
+
+Returns action result + updated device state so you can see what happened.`,
+		ShortDescription: "Click UI element by index",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"index": map[string]interface{}{
+					"type":        "integer",
+					"description": "Element index number from droidrun_state output",
+				},
+			},
+			"required": []string{"index"},
+		},
+	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		idx, _ := args["index"].(float64)
+		result, err := droidRunProxyCall(ctx, proxyBase, "POST", "/click", map[string]interface{}{"index": int(idx)})
+		if err != nil {
+			return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "Error: " + err.Error()}}, IsError: true}, nil
+		}
+		return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: formatProxyResult(result)}}}, nil
+	})
+
+	// ── droidrun_type ───────────────────────────────────────────────────
+	mcpServer.RegisterTool(mcp.Tool{
+		Name: builtin.ToolDroidRunType,
+		Description: `Type text into a UI element. If index is provided, clicks the element first then types. If index is -1 or omitted, types into the currently focused element.
+
+Example: droidrun_type with text="admin" index=5 clicks element 5 then types "admin".
+Use clear=true to clear existing text before typing.`,
+		ShortDescription: "Type text into UI element",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"text": map[string]interface{}{
+					"type":        "string",
+					"description": "Text to type",
+				},
+				"index": map[string]interface{}{
+					"type":        "integer",
+					"description": "Element index to click first (-1 = type into focused element)",
+				},
+				"clear": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Clear existing text before typing (default false)",
+				},
+			},
+			"required": []string{"text"},
+		},
+	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		body := map[string]interface{}{"text": args["text"]}
+		if idx, ok := args["index"].(float64); ok {
+			body["index"] = int(idx)
+		} else {
+			body["index"] = -1
+		}
+		if clr, ok := args["clear"].(bool); ok {
+			body["clear"] = clr
+		}
+		result, err := droidRunProxyCall(ctx, proxyBase, "POST", "/type", body)
+		if err != nil {
+			return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "Error: " + err.Error()}}, IsError: true}, nil
+		}
+		return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: formatProxyResult(result)}}}, nil
+	})
+
+	// ── droidrun_swipe ──────────────────────────────────────────────────
+	mcpServer.RegisterTool(mcp.Tool{
+		Name:             builtin.ToolDroidRunSwipe,
+		Description:      "Swipe gesture between two screen coordinates. Use for scrolling, dragging, or custom gestures. For simple scrolling prefer droidrun_scroll.",
+		ShortDescription: "Swipe between coordinates",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"x1":          map[string]interface{}{"type": "integer", "description": "Start X coordinate"},
+				"y1":          map[string]interface{}{"type": "integer", "description": "Start Y coordinate"},
+				"x2":          map[string]interface{}{"type": "integer", "description": "End X coordinate"},
+				"y2":          map[string]interface{}{"type": "integer", "description": "End Y coordinate"},
+				"duration_ms": map[string]interface{}{"type": "integer", "description": "Swipe duration in ms (default 500)"},
+			},
+			"required": []string{"x1", "y1", "x2", "y2"},
+		},
+	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		body := map[string]interface{}{
+			"x1": int(args["x1"].(float64)), "y1": int(args["y1"].(float64)),
+			"x2": int(args["x2"].(float64)), "y2": int(args["y2"].(float64)),
+		}
+		if d, ok := args["duration_ms"].(float64); ok {
+			body["duration_ms"] = int(d)
+		}
+		result, err := droidRunProxyCall(ctx, proxyBase, "POST", "/swipe", body)
+		if err != nil {
+			return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "Error: " + err.Error()}}, IsError: true}, nil
+		}
+		return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: formatProxyResult(result)}}}, nil
+	})
+
+	// ── droidrun_scroll ─────────────────────────────────────────────────
+	mcpServer.RegisterTool(mcp.Tool{
+		Name:             builtin.ToolDroidRunScroll,
+		Description:      "Scroll the screen up or down. Easier than droidrun_swipe for simple scrolling — automatically calculates coordinates based on screen size.",
+		ShortDescription: "Scroll screen up or down",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"direction": map[string]interface{}{
+					"type":        "string",
+					"enum":        []string{"up", "down"},
+					"description": "Scroll direction",
+				},
+			},
+			"required": []string{"direction"},
+		},
+	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		dir, _ := args["direction"].(string)
+		action := "scroll_down"
+		if dir == "up" {
+			action = "scroll_up"
+		}
+		result, err := droidRunProxyCall(ctx, proxyBase, "POST", "/action", map[string]interface{}{"action": action, "params": map[string]interface{}{}})
+		if err != nil {
+			return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "Error: " + err.Error()}}, IsError: true}, nil
+		}
+		return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: formatProxyResult(result)}}}, nil
+	})
+
+	// ── droidrun_button ─────────────────────────────────────────────────
+	mcpServer.RegisterTool(mcp.Tool{
+		Name:             builtin.ToolDroidRunButton,
+		Description:      "Press a system button: back, home, or enter. Use 'back' to navigate back, 'home' to go to home screen, 'enter' to submit text input.",
+		ShortDescription: "Press system button (back/home/enter)",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"button": map[string]interface{}{
+					"type":        "string",
+					"enum":        []string{"back", "home", "enter"},
+					"description": "Button to press",
+				},
+			},
+			"required": []string{"button"},
+		},
+	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		btn, _ := args["button"].(string)
+		action := "press_" + btn
+		result, err := droidRunProxyCall(ctx, proxyBase, "POST", "/action", map[string]interface{}{"action": action, "params": map[string]interface{}{}})
+		if err != nil {
+			return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "Error: " + err.Error()}}, IsError: true}, nil
+		}
+		return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: formatProxyResult(result)}}}, nil
+	})
+
+	// ── droidrun_open_app ───────────────────────────────────────────────
+	mcpServer.RegisterTool(mcp.Tool{
+		Name:             builtin.ToolDroidRunOpenApp,
+		Description:      "Open an app by package name. Use droidrun_list_apps to find available packages. Returns updated device state showing the app's first screen.",
+		ShortDescription: "Open app by package name",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"package_name": map[string]interface{}{
+					"type":        "string",
+					"description": "App package name (e.g. com.android.settings, com.target.app)",
+				},
+			},
+			"required": []string{"package_name"},
+		},
+	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		pkg, _ := args["package_name"].(string)
+		result, err := droidRunProxyCall(ctx, proxyBase, "POST", "/action", map[string]interface{}{"action": "open_app", "params": map[string]interface{}{"package_name": pkg}})
+		if err != nil {
+			return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "Error: " + err.Error()}}, IsError: true}, nil
+		}
+		return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: formatProxyResult(result)}}}, nil
+	})
+
+	// ── droidrun_list_apps ──────────────────────────────────────────────
+	mcpServer.RegisterTool(mcp.Tool{
+		Name:             builtin.ToolDroidRunListApps,
+		Description:      "List installed apps on the device. Returns package names and app labels. Use include_system=true to include system apps.",
+		ShortDescription: "List installed apps",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"include_system": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Include system apps (default false, only user-installed)",
+				},
+			},
+		},
+	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		params := map[string]interface{}{"include_system": false}
+		if sys, ok := args["include_system"].(bool); ok {
+			params["include_system"] = sys
+		}
+		result, err := droidRunProxyCall(ctx, proxyBase, "POST", "/action", map[string]interface{}{"action": "list_apps", "params": params})
+		if err != nil {
+			return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "Error: " + err.Error()}}, IsError: true}, nil
+		}
+		return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: formatProxyResult(result)}}}, nil
+	})
+
+	// ── droidrun_install ────────────────────────────────────────────────
+	mcpServer.RegisterTool(mcp.Tool{
+		Name:             builtin.ToolDroidRunInstall,
+		Description:      "Install an APK via DroidRun (higher-level than cuttlefish_install_apk — handles Portal APK setup automatically).",
+		ShortDescription: "Install APK via DroidRun",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"apk_path": map[string]interface{}{
+					"type":        "string",
+					"description": "Path to APK file on host",
+				},
+			},
+			"required": []string{"apk_path"},
+		},
+	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		apk, _ := args["apk_path"].(string)
+		result, err := droidRunProxyCall(ctx, proxyBase, "POST", "/action", map[string]interface{}{"action": "install_apk", "params": map[string]interface{}{"apk_path": apk}})
+		if err != nil {
+			return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "Error: " + err.Error()}}, IsError: true}, nil
+		}
+		return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: formatProxyResult(result)}}}, nil
+	})
+
+	// ── droidrun_wait ───────────────────────────────────────────────────
+	mcpServer.RegisterTool(mcp.Tool{
+		Name:             builtin.ToolDroidRunWait,
+		Description:      "Wait for a specified duration, then return the updated device state. Useful after actions that trigger animations or loading screens.",
+		ShortDescription: "Wait and refresh state",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"seconds": map[string]interface{}{
+					"type":        "number",
+					"description": "Duration to wait in seconds (default 1.0)",
+				},
+			},
+		},
+	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		secs := 1.0
+		if s, ok := args["seconds"].(float64); ok && s > 0 {
+			secs = s
+		}
+		result, err := droidRunProxyCall(ctx, proxyBase, "POST", "/action", map[string]interface{}{"action": "wait", "params": map[string]interface{}{"seconds": secs}})
+		if err != nil {
+			return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: "Error: " + err.Error()}}, IsError: true}, nil
+		}
+		return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: formatProxyResult(result)}}}, nil
+	})
+
+	logger.Info("registered DroidRun proxy MCP tools", zap.Int("count", 12))
 }

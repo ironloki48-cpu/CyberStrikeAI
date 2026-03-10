@@ -112,6 +112,9 @@ func (r *Retriever) Search(ctx context.Context, req *SearchRequest) ([]*Retrieva
 	if req.Query == "" {
 		return nil, fmt.Errorf("query cannot be empty")
 	}
+	if r.embedder == nil {
+		return nil, fmt.Errorf("knowledge embedding is disabled: configure knowledge.embedding.base_url/model/api_key")
+	}
 
 	topK := req.TopK
 	if topK <= 0 {
@@ -143,14 +146,14 @@ func (r *Retriever) Search(ctx context.Context, req *SearchRequest) ([]*Retrieva
 	// query all vectors (or filter by risk type)
 	// use exact match (=) for better performance and accuracy
 	// since the system provides a built-in tool to get the risk type list, users should use accurate category names
-		// also, the category information is already embedded in the vector, so even if SQL filtering doesn't fully match,
-		// vector similarity can help with matching
-		var rows *sql.Rows
-		if req.RiskType != "" {
-			// use exact match (=) for better performance and accuracy
-			// use COLLATE NOCASE for case-insensitive matching to improve fault tolerance
-			// note: if the user's risk_type doesn't exactly match the category, it may not match
-			// it is recommended to first call the corresponding built-in tool to get accurate category names
+	// also, the category information is already embedded in the vector, so even if SQL filtering doesn't fully match,
+	// vector similarity can help with matching
+	var rows *sql.Rows
+	if req.RiskType != "" {
+		// use exact match (=) for better performance and accuracy
+		// use COLLATE NOCASE for case-insensitive matching to improve fault tolerance
+		// note: if the user's risk_type doesn't exactly match the category, it may not match
+		// it is recommended to first call the corresponding built-in tool to get accurate category names
 		rows, err = r.db.Query(`
 			SELECT e.id, e.item_id, e.chunk_index, e.chunk_text, e.embedding, i.category, i.title
 			FROM knowledge_embeddings e

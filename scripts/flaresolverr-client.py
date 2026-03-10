@@ -37,6 +37,11 @@ def main() -> int:
     parser.add_argument("--headers-json", help='JSON object for headers, e.g. {"X-Test":"1"}')
     parser.add_argument("--cookies-json", help='JSON array for cookies, e.g. [{"name":"a","value":"b"}]')
     parser.add_argument("--download", action="store_true", help="Enable FlareSolverr download mode")
+    parser.add_argument(
+        "--cookies-only",
+        action="store_true",
+        help="Output only cookies from the response (as a header-ready string and JSON array)",
+    )
     args = parser.parse_args()
 
     if args.cmd in ("request.get", "request.post") and not args.url:
@@ -87,9 +92,25 @@ def main() -> int:
             raw = resp.read().decode("utf-8", errors="replace")
             try:
                 parsed = json.loads(raw)
-                print(json.dumps(parsed, ensure_ascii=False, indent=2))
             except json.JSONDecodeError:
                 print(raw)
+                return 0
+
+            if args.cookies_only:
+                cookies = (parsed.get("solution") or {}).get("cookies") or []
+                user_agent = (parsed.get("solution") or {}).get("userAgent") or ""
+                # Cookie header string for curl/httpx/ffuf etc.
+                cookie_header = "; ".join(
+                    f"{c['name']}={c['value']}" for c in cookies if "name" in c and "value" in c
+                )
+                out = {
+                    "cookie_header": cookie_header,
+                    "user_agent": user_agent,
+                    "cookies": cookies,
+                }
+                print(json.dumps(out, ensure_ascii=False, indent=2))
+            else:
+                print(json.dumps(parsed, ensure_ascii=False, indent=2))
             return 0
     except urllib.error.HTTPError as exc:
         err_body = exc.read().decode("utf-8", errors="replace")

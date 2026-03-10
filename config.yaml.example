@@ -42,6 +42,12 @@ openai:
   base_url: https://dashscope.aliyuncs.com/compatible-mode/v1 # API base URL (required)
   api_key: sk-your-api-key                                      # API key (required)
   model: qwen3-max                                             # Model name (required)
+  tool_model: ""                                                 # Separate model for tool-calling iterations (optional; uses main model if empty)
+  tool_base_url: ""                                              # Base URL for tool model server (optional; uses main base_url if empty)
+  tool_api_key: ""                                               # API key for tool model server (optional; uses main api_key if empty)
+  summary_model: ""                                              # Separate model for context summarization (optional; uses main model if empty)
+  summary_base_url: ""                                           # Base URL for summary model server (optional; uses main base_url if empty)
+  summary_api_key: ""                                            # API key for summary model server (optional; uses main api_key if empty)
   max_total_tokens: 120000              # Maximum token limit for LLM-related context (shared by memory compression and attack-chain building)
 
 # ============================================
@@ -115,6 +121,7 @@ mcp:
   enabled: false # Whether to enable the MCP server (HTTP mode)
   host: 0.0.0.0  # MCP server listen address
   port: 8081     # MCP server port
+  allow_remote: false # Set true only when you intentionally expose MCP beyond localhost
 
 # External MCP configuration
 external_mcp:
@@ -132,28 +139,18 @@ knowledge:
     model: text-embedding-v4        # Embedding model name
     base_url: https://dashscope.aliyuncs.com/compatible-mode/v1 # Leave blank to use the base_url from the OpenAI configuration
     api_key: sk-your-api-key                                    # Leave blank to use the api_key from the OpenAI configuration
+    max_tokens: 0                   # Embedding model max token limit (0 = default 512); chunks are sized to fit within this limit
   retrieval:
     top_k: 5                        # Number of Top-K results returned by retrieval
     similarity_threshold: 0.7       # Similarity threshold (0–1); results below this value are filtered out
     hybrid_weight: 0.7              # Hybrid retrieval weight (0–1); weight of vector retrieval — 1.0 = pure vector retrieval, 0.0 = pure keyword retrieval
 
 # ============================================
-# Bot Configuration (WeCom, DingTalk, Lark/Feishu)
+# Bot Configuration (Lark/Feishu, Telegram)
 # ============================================
-# Used to chat with CyberStrikeAI via WeCom/DingTalk/Lark on mobile; no server deployment required.
+# Used to chat with CyberStrikeAI via supported bots on mobile; no server deployment required.
 # Can be configured under System Settings -> Bot Settings.
 robots:
-  wecom: # WeCom (Enterprise WeChat)
-    enabled: false
-    token: ""
-    encoding_aes_key: ""
-    corp_id: ""
-    secret: ""
-    agent_id: 0
-  dingtalk: # DingTalk
-    enabled: false
-    client_id:
-    client_secret:
   lark: # Lark (Feishu)
     enabled: false
     app_id: ""

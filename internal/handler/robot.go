@@ -2,14 +2,8 @@ package handler
 
 import (
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
-	"encoding/base64"
-	"encoding/binary"
-	"encoding/xml"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -24,23 +18,23 @@ import (
 )
 
 const (
-	robotCmdHelp        = "help"
-	robotCmdList        = "list"
-	robotCmdListAlt     = "conversations"
-	robotCmdSwitch      = "switch"
-	robotCmdContinue    = "continue"
-	robotCmdNew         = "new"
-	robotCmdClear       = "clear"
-	robotCmdCurrent     = "current"
-	robotCmdStop        = "stop"
-	robotCmdRoles       = "roles"
-	robotCmdRolesList   = "role-list"
-	robotCmdSwitchRole  = "role"
-	robotCmdDelete      = "delete"
-	robotCmdVersion     = "version"
+	robotCmdHelp       = "help"
+	robotCmdList       = "list"
+	robotCmdListAlt    = "conversations"
+	robotCmdSwitch     = "switch"
+	robotCmdContinue   = "continue"
+	robotCmdNew        = "new"
+	robotCmdClear      = "clear"
+	robotCmdCurrent    = "current"
+	robotCmdStop       = "stop"
+	robotCmdRoles      = "roles"
+	robotCmdRolesList  = "role-list"
+	robotCmdSwitchRole = "role"
+	robotCmdDelete     = "delete"
+	robotCmdVersion    = "version"
 )
 
-// RobotHandler handles bot callbacks for WeCom, DingTalk, Lark, etc.
+// RobotHandler handles bot callbacks for supported chat platforms.
 type RobotHandler struct {
 	config         *config.Config
 	db             *database.DB
@@ -502,141 +496,11 @@ func (h *RobotHandler) cmdVersion() string {
 	return "CyberStrikeAI " + v
 }
 
-// —————— WeCom (Enterprise WeChat) ——————
-
-// wecomXML is the WeCom callback XML structure (simplified for plaintext mode; encrypted mode requires decryption before parsing).
-type wecomXML struct {
-	ToUserName   string `xml:"ToUserName"`
-	FromUserName string `xml:"FromUserName"`
-	CreateTime   int64  `xml:"CreateTime"`
-	MsgType      string `xml:"MsgType"`
-	Content      string `xml:"Content"`
-	MsgID        string `xml:"MsgId"`
-	AgentID      int64  `xml:"AgentID"`
-	Encrypt      string `xml:"Encrypt"` // in encrypted mode the message is here
-}
-
-// wecomReplyXML is the passive reply XML structure.
-type wecomReplyXML struct {
-	XMLName      xml.Name `xml:"xml"`
-	ToUserName   string   `xml:"ToUserName"`
-	FromUserName string  `xml:"FromUserName"`
-	CreateTime   int64   `xml:"CreateTime"`
-	MsgType      string  `xml:"MsgType"`
-	Content      string  `xml:"Content"`
-}
-
-// HandleWecomGET handles WeCom URL verification (GET).
-func (h *RobotHandler) HandleWecomGET(c *gin.Context) {
-	if !h.config.Robots.Wecom.Enabled {
-		c.String(http.StatusNotFound, "")
-		return
-	}
-	echostr := c.Query("echostr")
-	if echostr == "" {
-		c.String(http.StatusBadRequest, "missing echostr")
-		return
-	}
-	// In plaintext mode, WeCom may pass echostr directly; return it immediately to pass verification.
-	c.String(http.StatusOK, echostr)
-}
-
-// wecomDecrypt decrypts a WeCom message (AES-256-CBC, PKCS7; plaintext format: 16-byte random + 4-byte length + message + corpID).
-func wecomDecrypt(encodingAESKey, encryptedB64 string) ([]byte, error) {
-	key, err := base64.StdEncoding.DecodeString(encodingAESKey + "=")
-	if err != nil {
-		return nil, err
-	}
-	if len(key) != 32 {
-		return nil, fmt.Errorf("encoding_aes_key must decode to 32 bytes")
-	}
-	ciphertext, err := base64.StdEncoding.DecodeString(encryptedB64)
-	if err != nil {
-		return nil, err
-	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-	iv := key[:16]
-	mode := cipher.NewCBCDecrypter(block, iv)
-	if len(ciphertext)%aes.BlockSize != 0 {
-		return nil, fmt.Errorf("ciphertext length is not a multiple of the block size")
-	}
-	plain := make([]byte, len(ciphertext))
-	mode.CryptBlocks(plain, ciphertext)
-	// Remove PKCS7 padding
-	n := int(plain[len(plain)-1])
-	if n < 1 || n > 32 {
-		return nil, fmt.Errorf("invalid PKCS7 padding")
-	}
-	plain = plain[:len(plain)-n]
-	// WeCom format: 16-byte random + 4-byte length (big-endian) + message + corpID
-	if len(plain) < 20 {
-		return nil, fmt.Errorf("plaintext too short")
-	}
-	msgLen := binary.BigEndian.Uint32(plain[16:20])
-	if int(20+msgLen) > len(plain) {
-		return nil, fmt.Errorf("message length out of bounds")
-	}
-	return plain[20 : 20+msgLen], nil
-}
-
-// HandleWecomPOST handles WeCom message callbacks (POST), supporting both plaintext and encrypted modes.
-func (h *RobotHandler) HandleWecomPOST(c *gin.Context) {
-	if !h.config.Robots.Wecom.Enabled {
-		c.String(http.StatusOK, "")
-		return
-	}
-	bodyRaw, _ := io.ReadAll(c.Request.Body)
-	var body wecomXML
-	if err := xml.Unmarshal(bodyRaw, &body); err != nil {
-		h.logger.Debug("WeCom POST: failed to parse XML", zap.Error(err))
-		c.String(http.StatusOK, "")
-		return
-	}
-	// Encrypted mode: decrypt first, then parse the inner XML
-	if body.Encrypt != "" && h.config.Robots.Wecom.EncodingAESKey != "" {
-		decrypted, err := wecomDecrypt(h.config.Robots.Wecom.EncodingAESKey, body.Encrypt)
-		if err != nil {
-			h.logger.Warn("WeCom message decryption failed", zap.Error(err))
-			c.String(http.StatusOK, "")
-			return
-		}
-		if err := xml.Unmarshal(decrypted, &body); err != nil {
-			h.logger.Warn("WeCom: failed to parse decrypted XML", zap.Error(err))
-			c.String(http.StatusOK, "")
-			return
-		}
-	}
-	if body.MsgType != "text" {
-		c.XML(http.StatusOK, wecomReplyXML{
-			ToUserName:   body.FromUserName,
-			FromUserName: body.ToUserName,
-			CreateTime:  time.Now().Unix(),
-			MsgType:     "text",
-			Content:     "Only text messages are supported. Please send a text message.",
-		})
-		return
-	}
-	userID := body.FromUserName
-	text := strings.TrimSpace(body.Content)
-	reply := h.HandleMessage("wecom", userID, text)
-	// Encrypted mode requires encrypting the reply (simplified to plaintext here; implement encryption if the enterprise requires it).
-	c.XML(http.StatusOK, wecomReplyXML{
-		ToUserName:   body.FromUserName,
-		FromUserName: body.ToUserName,
-		CreateTime:  time.Now().Unix(),
-		MsgType:     "text",
-		Content:     reply,
-	})
-}
-
-// —————— Test endpoint (requires login; used to verify bot logic without a DingTalk/Lark client) ——————
+// —————— Test endpoint (requires login; used to verify bot logic without a Lark client) ——————
 
 // RobotTestRequest simulates a bot message request.
 type RobotTestRequest struct {
-	Platform string `json:"platform"` // e.g. "dingtalk", "lark", "wecom"
+	Platform string `json:"platform"` // e.g. "lark", "telegram"
 	UserID   string `json:"user_id"`
 	Text     string `json:"text"`
 }
@@ -658,18 +522,6 @@ func (h *RobotHandler) HandleRobotTest(c *gin.Context) {
 	}
 	reply := h.HandleMessage(platform, userID, req.Text)
 	c.JSON(http.StatusOK, gin.H{"reply": reply})
-}
-
-// —————— DingTalk ——————
-
-// HandleDingtalkPOST handles DingTalk event callbacks (Stream mode, etc.); currently a placeholder that returns 200.
-func (h *RobotHandler) HandleDingtalkPOST(c *gin.Context) {
-	if !h.config.Robots.Dingtalk.Enabled {
-		c.JSON(http.StatusOK, gin.H{})
-		return
-	}
-	// DingTalk Stream/event callback format must be parsed per the official docs and replied to asynchronously; returns 200 here for now.
-	c.JSON(http.StatusOK, gin.H{"message": "ok"})
 }
 
 // —————— Lark (Feishu) ——————

@@ -1,0 +1,250 @@
+# ============================================
+# CyberStrikeAI Configuration File
+# ============================================
+# This configuration file supports visual configuration through the Web interface.
+# Click the "Settings" button in the top-right corner to modify the configuration.
+# ============================================
+# Copy this file to config.yaml and fill in your values:
+#   cp config.example.yaml config.yaml
+# ============================================
+
+# ============================================
+# System Settings
+# ============================================
+
+# Version number displayed in the frontend (optional; if omitted, the default version is shown)
+version: "v1.4.0"
+# Server configuration
+server:
+  host: 0.0.0.0 # Listen address; 0.0.0.0 means listen on all network interfaces
+  port: 18080 # HTTP service port; accessible in a browser at http://localhost:18080
+# Authentication configuration
+auth:
+  password: changeme # Web login password — please change this to a strong password
+  session_duration_hours: 12 # Login session duration (hours); re-login required after expiry
+# Logging configuration
+log:
+  level: info # Log level: debug, info, warn, error
+  output: stdout # Log output destination: stdout, stderr, or a file path
+# ============================================
+# Conversation-related Configuration
+# ============================================
+
+# AI model configuration (supports OpenAI-compatible APIs)
+# Required fields: api_key, base_url, and model must be filled in for the system to work.
+# Supported API providers:
+#   - OpenAI: https://api.openai.com/v1
+#   - DeepSeek: https://api.deepseek.com/v1
+#   - Other OpenAI-protocol-compatible APIs
+# Common models: gpt-4, gpt-3.5-turbo, deepseek-chat, claude-3-opus, etc.
+openai:
+  base_url: https://api.openai.com/v1 # API endpoint URL
+  api_key: sk-your-api-key-here # Your API key
+  model: gpt-4 # Primary model name
+  tool_model: "" # Dedicated tool-calling model (optional; uses primary model if empty)
+  tool_base_url: "" # Separate endpoint for tool-calling model (optional)
+  tool_api_key: "" # Separate API key for tool-calling model (optional)
+  max_total_tokens: 120000 # Maximum token limit for LLM-related context (shared by memory compression and attack-chain building)
+  summary_model: "" # Model for summary generation (optional; uses primary model if empty)
+  summary_base_url: "" # Separate endpoint for summary model (optional)
+  summary_api_key: "" # Separate API key for summary model (optional)
+# ============================================
+# Information Gathering (FOFA) Configuration (optional)
+# ============================================
+# Used by the "Information Gathering" page to call the FOFA API (backend proxy to avoid exposing the key in the frontend).
+# Can also be configured via environment variables: FOFA_EMAIL / FOFA_API_KEY (higher priority).
+fofa:
+  base_url: https://fofa.info/api/v1/search/all # Optional; leave blank to use the default
+  email: "" # FOFA account email (optional; recommended to fill in via System Settings)
+  api_key: "" # FOFA API key (optional; recommended to fill in via System Settings)
+# ZoomEye cyberspace search engine (optional)
+# Get your API key at https://www.zoomeye.ai/profile
+zoomeye:
+  api_key: "" # ZoomEye API key
+# Shodan search engine (optional)
+# Get your API key at https://account.shodan.io
+shodan:
+  api_key: "" # Shodan API key
+# Censys search engine (optional)
+# Get your credentials at https://search.censys.io/account/api
+censys:
+  api_id: "" # Censys API ID
+  api_secret: "" # Censys API Secret
+# Agent configuration
+# When the maximum iteration count is reached, the AI will automatically summarize the test results.
+agent:
+  max_iterations: 120 # Maximum iteration count; maximum number of tool-call rounds for the AI agent
+  large_result_threshold: 102400 # Large-result threshold (bytes); default 50 KB — results exceeding this size are automatically saved to storage
+  result_storage_dir: /tmp # Result storage directory; large results will be saved here
+  parallel_tool_execution: true # Execute multiple tool calls concurrently (true by default; set false to revert to sequential)
+  max_parallel_tools: 10 # Max concurrent tool goroutines per iteration (0 = unlimited)
+  tool_retry_count: 5 # Number of retries on transient tool errors (0 = no retries)
+  # ── Time Awareness ────────────────────────────────────────────────────────
+  # Automatically prepends the current date/time to every system prompt so
+  # the agent always knows "what time it is".  Also exposes the
+  # get_current_time tool for on-demand time queries.
+  time_awareness:
+    enabled: true # Inject time context into system prompts (recommended: true)
+    timezone: UTC # IANA timezone name, e.g. "America/New_York", "Europe/London", "Asia/Tokyo"
+  # ── Persistent Memory ─────────────────────────────────────────────────────
+  # Long-lived key-value store that survives conversation compression and
+  # persists across server restarts.  Backed by the same SQLite database as
+  # conversations.  Exposes four agent tools: store_memory, retrieve_memory,
+  # list_memories, delete_memory.
+  memory:
+    enabled: true # Enable the persistent memory store (recommended: true)
+    max_entries: 2000 # Hard cap on stored memory entries (0 = unlimited)
+  # ── File Manager ──────────────────────────────────────────────────────────
+  # Tracks files across conversations: uploads, exfiltrated data, reports,
+  # reversing targets, API docs, etc. Each file gets a metadata entry with
+  # summary, handle plan, progress, findings, and logs. The agent can
+  # register, update, and query files via MCP tools (register_file,
+  # update_file, list_files, get_file, append_file_log, append_file_findings).
+  # Chat attachments are auto-registered in the file manager.
+  file_manager:
+    enabled: true # Enable the file manager module (recommended: true)
+    storage_dir: managed_files # Directory for managed file storage (relative to CWD)
+  # ── Cuttlefish Android VM ─────────────────────────────────────────────────
+  # Virtual Android device (AOSP) running on QEMU/KVM for mobile app testing,
+  # APK reversing, dynamic analysis, and traffic interception.
+  # Exposes 16 MCP tools for full device control (shell, install, screenshot,
+  # Frida, proxy, cert install, snapshot, DroidRun AI automation).
+  # Requires: KVM support, Cuttlefish host packages (run scripts/cuttlefish/setup.sh)
+  cuttlefish:
+    enabled: false           # Enable Cuttlefish MCP tools (set false if no Android VM needed)
+    cvd_home: ""             # Cuttlefish workspace directory (default: ~/cuttlefish-workspace)
+    memory_mb: 8192          # VM RAM allocation in MB (minimum 4096 recommended)
+    cpus: 4                  # Virtual CPU count (1-6, match host cores)
+    disk_mb: 16000           # Data partition size in MB (for APK storage and testing)
+    gpu_mode: guest_swiftshader # GPU mode: guest_swiftshader (software, always works), drm_virgl (hardware accel)
+    auto_launch: false       # Auto-launch Android VM when CyberStrikeAI server starts
+    russian_identity: false  # Apply Russian phone identity on boot (locale, carrier, timezone, device model)
+    webrtc_port: 8443        # WebRTC display port — access VM screen at https://localhost:<port>
+    droidrun_path: ""        # Path to DroidRun installation (default: ~/droidrun)
+    droidrun_config: ""      # Path to DroidRun config YAML (default: <cvd_home>/droidrun/config.yaml)
+    bridge_script: ""        # Path to droidrun-bridge.py (auto-detected from CyberStrikeAI scripts/)
+    proxy_port: 18090        # DroidRun proxy HTTP port — LLM-friendly device interaction service
+    proxy_auto_start: true   # Auto-start proxy when Cuttlefish VM launches
+    screenshot_dir: /tmp/droidrun_screenshots # Directory for proxy screenshots (VL model analysis)
+    vision_enabled: true     # Include base64 screenshots in state responses (for VL models)
+  # ── SSLStrip MITM ────────────────────────────────────────────────────────
+  # HTTPS stripping tool for credential interception and traffic analysis.
+  # Works standalone or in combination with Cuttlefish (auto_proxy routes
+  # Android VM traffic through SSLStrip). Captures passwords, session tokens,
+  # API keys, cookies in cleartext after downgrading HTTPS → HTTP.
+  # Requires: iptables, IP forwarding, network position (ARP spoof / rogue AP)
+  sslstrip:
+    enabled: false           # Enable SSLStrip tool in the tools registry
+    listen_port: 10000       # Default listen port for HTTP traffic redirect
+    log_dir: /tmp            # Directory for SSLStrip capture logs
+    auto_proxy: false        # Auto-set Cuttlefish VM proxy to SSLStrip when tool starts
+  parallel_tool_wait_seconds: 60
+# Database configuration
+database:
+  path: data/conversations.db # SQLite database file path; used to store conversation history and messages
+  knowledge_db_path: data/knowledge.db # Knowledge base database file path (optional; uses the session database if empty)
+# ============================================
+# Task Management Configuration
+# ============================================
+# (Configuration items are included in the conversation-related configuration above)
+
+# ============================================
+# Vulnerability Management Configuration
+# ============================================
+
+# Security tools configuration
+# The system loads all .yaml tool configuration files from this directory.
+# Recommended: create a separate configuration file for each tool under the tools/ directory.
+security:
+  tools_dir: tools # Tool configuration file directory (relative to the configuration file location)
+  # Tool description mode: controls which description is exposed to AI/API when loading tools
+  #   short - prefer short_description (brief description, saves tokens); falls back to description if empty
+  #   full  - use description (detailed description)
+  tool_description_mode: full
+# ============================================
+# MCP Configuration
+# ============================================
+
+# MCP protocol configuration
+# MCP (Model Context Protocol) is used for tool registration and invocation.
+mcp:
+  enabled: true # Whether to enable the MCP server (HTTP mode)
+  host: 0.0.0.0 # MCP server listen address
+  port: 18081 # MCP server port
+  allow_remote: false # Set true only when you intentionally expose MCP beyond localhost
+# External MCP configuration
+external_mcp:
+  servers:
+    cyberstrike-ai-http:
+      transport: http
+      url: 'http://127.0.0.1:18081/mcp'
+      external_mcp_enable: true
+      tool_enabled: {} # Empty = all tools enabled; customize per-tool with {tool_name: true/false}
+      enabled: true
+    # ── Ghidra Headless MCP — Deep Binary Analysis ──────────────────────────
+    # Standalone MCP server providing ~212 Ghidra reverse engineering tools.
+    # Supports: ELF, PE, Mach-O, APK/DEX, firmware, shellcode — any binary Ghidra can open.
+    # Start manually: scripts/ghidra/start-ghidra-mcp.sh --install (first time)
+    #                  scripts/ghidra/start-ghidra-mcp.sh --tcp     (subsequent runs)
+    # Or let CyberStrikeAI auto-start it in stdio mode (set external_mcp_enable: true below).
+    # Requires: Ghidra installed, GHIDRA_INSTALL_DIR set, Python 3.11+, pyghidra
+    ghidra-headless-mcp:
+      transport: stdio
+      command: bash
+      args: ["scripts/ghidra/start-ghidra-mcp.sh"]
+      env:
+        GHIDRA_INSTALL_DIR: ""  # Set to your Ghidra installation path, e.g. /opt/ghidra
+        GHIDRA_MCP_HOME: ""     # Path to ghidra-headless-mcp repo (default: ~/ghidra-headless-mcp)
+      description: "Ghidra Headless MCP — interactive binary reverse engineering (212 tools: decompile, disassemble, xrefs, types, patching, scripting)"
+      timeout: 600  # Binary analysis can take time — 10 min timeout
+      external_mcp_enable: false  # Enable after installing: scripts/ghidra/start-ghidra-mcp.sh --install
+      tool_enabled: {}  # Empty = all tools enabled when server is active
+# ============================================
+# Knowledge Base Configuration
+# ============================================
+knowledge:
+  enabled: true # Whether to enable the knowledge retrieval feature
+  base_path: knowledge_base # Knowledge base directory path (relative to the configuration file location)
+  embedding:
+    provider: openai # Embedding model provider (currently only openai is supported)
+    model: text-embedding-3-small # Embedding model name
+    base_url: https://api.openai.com/v1 # Embedding model endpoint
+    api_key: sk-your-api-key-here # Embedding API key
+    max_tokens: 512 # Embedding model max token limit; chunks are sized to fit within this limit
+  retrieval:
+    top_k: 10 # Number of Top-K results returned by retrieval
+    similarity_threshold: 0.7 # Similarity threshold (0–1); results below this value are filtered out
+    hybrid_weight: 0.7 # Hybrid retrieval weight (0–1); weight of vector retrieval — 1.0 = pure vector retrieval, 0.0 = pure keyword retrieval
+# ============================================
+# Bot Configuration (Lark/Feishu, Telegram)
+# ============================================
+# Used to chat with CyberStrikeAI via supported bots on mobile; no server deployment required.
+# Can be configured under System Settings -> Bot Settings.
+robots:
+  dingtalk: # DingTalk
+    enabled: false
+    client_id: ""
+    client_secret: ""
+  lark: # Lark (Feishu)
+    enabled: false
+    app_id: ""
+    app_secret: ""
+    verify_token: ""
+  telegram: # Telegram
+    enabled: false
+    bot_token: "" # Bot token from @BotFather (/newbot)
+    allowed_user_ids: [] # Whitelist of Telegram user IDs; leave empty to allow all users
+# ============================================
+# Skills Configuration
+# ============================================
+
+# The system loads all skills from this directory. Each skill should be a directory containing a SKILL.md file.
+# Example: skills/sql-injection-testing/SKILL.md
+skills_dir: skills # Skills configuration file directory (relative to the configuration file location)
+# ============================================
+# Role Configuration
+# ============================================
+
+# The system loads all .yaml role configuration files from this directory.
+# Each role should have its own configuration file, e.g.: roles/CTF.yaml, roles/default.yaml, etc.
+roles_dir: roles # Role configuration file directory (relative to the configuration file location)

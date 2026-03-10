@@ -1,22 +1,42 @@
 name: "flaresolverr"
 command: "flaresolverr-client"
 enabled: true
-short_description: "Cloudflare challenge-aware HTTP fetching via FlareSolverr API service"
+short_description: "Bypass Cloudflare/WAF challenges and extract cookies for reuse with other tools"
 description: |
-  FlareSolverr tool profile for authorized web testing where anti-bot challenge pages
-  block normal HTTP clients.
-
-  This tool sends requests to a local FlareSolverr service and returns solved response
-  content/cookies from a real browser context.
+  FlareSolverr tool for bypassing Cloudflare, anti-bot, and WAF challenge pages using a real
+  browser context. Returns page content, cookies, and user-agent from the solved session.
 
   **Key Features:**
+  - Bypasses Cloudflare, Akamai, and similar challenge/CAPTCHA pages
+  - Extracts clearance cookies (cf_clearance, __cf_bm, etc.) for reuse with other tools
   - Supports `request.get` and `request.post`
-  - Session create/destroy support for sticky browser state
+  - Session create/destroy for sticky browser state across multiple requests
   - Optional custom headers, cookies, proxy, and user-agent
-  - Useful for validating target behavior behind Cloudflare-like challenge flows
+
+  **Cookie Extraction for WAF Bypass (important):**
+  When a target is behind Cloudflare or a WAF that blocks direct requests from tools like
+  curl, nuclei, ffuf, httpx, or nikto, use this workflow:
+
+  1. Call flaresolverr with --cookies-only to fetch clearance cookies:
+     `flaresolverr --url https://target.example --cookies-only`
+  2. The output contains `cookie_header` (ready-to-use "name=value; name=value" string)
+     and `user_agent` (the browser user-agent that was accepted).
+  3. Pass both to other tools. Examples:
+     - curl: `curl -H "Cookie: <cookie_header>" -A "<user_agent>" https://target.example/path`
+     - ffuf: `ffuf -u https://target.example/FUZZ -H "Cookie: <cookie_header>" -H "User-Agent: <user_agent>"`
+     - nuclei: `nuclei -u https://target.example -H "Cookie: <cookie_header>" -H "User-Agent: <user_agent>"`
+     - httpx: `httpx -u https://target.example -H "Cookie: <cookie_header>" -H "User-Agent: <user_agent>"`
+
+  **When to use this tool:**
+  - Target returns 403 Forbidden or a challenge page to normal HTTP clients
+  - Scans with nuclei/ffuf/httpx return empty or blocked results
+  - You need to access content behind Cloudflare, Akamai, or similar WAF
+  - You want to maintain a browser session across multiple requests
 
   **Usage Notes:**
   - Requires FlareSolverr service running on `http://127.0.0.1:8191/v1`
+  - Cookies typically expire after 15-30 minutes; re-fetch if tools start getting blocked again
+  - Use sessions (sessions.create) for multi-step workflows that need sticky state
   - Use only against assets you are authorized to test
 parameters:
   - name: "cmd"
@@ -32,6 +52,20 @@ parameters:
     description: "Target URL (required for request.get/request.post)"
     required: false
     flag: "--url"
+    format: "flag"
+  - name: "cookies_only"
+    type: "bool"
+    description: |
+      When true, returns only the extracted cookies and user-agent instead of the full response.
+      Output includes:
+      - cookie_header: ready-to-use "name=value; name=value" string for passing to curl/nuclei/ffuf/httpx
+      - user_agent: the browser user-agent that passed the challenge (use with other tools for consistency)
+      - cookies: full cookie array with name, value, domain, path, etc.
+
+      Use this when you need cookies to feed into other tools that are blocked by WAF/Cloudflare.
+    required: false
+    default: false
+    flag: "--cookies-only"
     format: "flag"
   - name: "session_id"
     type: "string"

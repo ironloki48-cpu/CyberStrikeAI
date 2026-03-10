@@ -3,6 +3,7 @@ package agent
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -10,6 +11,7 @@ import (
 // session start time, and elapsed duration. It injects a compact time-context
 // block into system prompts so the LLM always knows "what time it is".
 type TimeAwareness struct {
+	mu           sync.RWMutex
 	timezone     *time.Location
 	sessionStart time.Time
 	enabled      bool
@@ -34,19 +36,28 @@ func NewTimeAwareness(timezone string, enabled bool) *TimeAwareness {
 
 // Now returns the current time in the configured timezone.
 func (ta *TimeAwareness) Now() time.Time {
-	return time.Now().In(ta.timezone)
+	ta.mu.RLock()
+	loc := ta.timezone
+	ta.mu.RUnlock()
+	return time.Now().In(loc)
 }
 
 // SessionElapsed returns how long has elapsed since the TimeAwareness was created
 // (i.e. since the server started or was last reconfigured).
 func (ta *TimeAwareness) SessionElapsed() time.Duration {
-	return time.Since(ta.sessionStart)
+	ta.mu.RLock()
+	start := ta.sessionStart
+	ta.mu.RUnlock()
+	return time.Since(start)
 }
 
 // BuildContextBlock returns a brief XML-tagged block with temporal context
 // suitable for prepending to a system prompt.  Returns empty string when disabled.
 func (ta *TimeAwareness) BuildContextBlock() string {
-	if !ta.enabled {
+	ta.mu.RLock()
+	enabled := ta.enabled
+	ta.mu.RUnlock()
+	if !enabled {
 		return ""
 	}
 
@@ -67,13 +78,32 @@ func (ta *TimeAwareness) BuildContextBlock() string {
 // use in tool responses.
 func (ta *TimeAwareness) FormatCurrentTime() string {
 	now := ta.Now()
+	ta.mu.RLock()
+	tz := ta.timezone.String()
+	ta.mu.RUnlock()
 	return fmt.Sprintf(
 		"Current time: %s\nTimezone: %s\nUnix timestamp: %d\nSession uptime: %s",
 		now.Format("2006-01-02 15:04:05 MST"),
-		ta.timezone.String(),
+		tz,
 		now.Unix(),
 		formatDuration(ta.SessionElapsed()),
 	)
+}
+
+// UpdateConfig updates the configured timezone and enabled state in place so
+// existing tool registrations can keep using the same object instance.
+func (ta *TimeAwareness) UpdateConfig(timezone string, enabled bool) {
+	loc := time.UTC
+	if timezone != "" {
+		if l, err := time.LoadLocation(timezone); err == nil {
+			loc = l
+		}
+	}
+
+	ta.mu.Lock()
+	ta.timezone = loc
+	ta.enabled = enabled
+	ta.mu.Unlock()
 }
 
 // formatDuration converts a duration into a human-readable string like "2h 15m 30s".

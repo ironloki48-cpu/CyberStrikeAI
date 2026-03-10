@@ -147,7 +147,9 @@ func (s *Server) HandleHTTP(w http.ResponseWriter, r *http.Request) {
 
 	response := s.handleMessage(&msg)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		s.logger.Warn("Failed to write MCP response", zap.Error(err))
+	}
 }
 
 // serveSSESessionMessage handles a POST directed to an SSE session: reads the JSON-RPC request, processes it, and pushes the response via that session's SSE stream
@@ -319,6 +321,27 @@ func (s *Server) handleMessage(msg *Message) *Message {
 	}
 }
 
+// marshalResult marshals v to JSON for a response. On the rare chance of failure,
+// it logs the error and returns a JSON-RPC internal error response.
+func (s *Server) marshalResult(msg *Message, v interface{}) *Message {
+	result, err := json.Marshal(v)
+	if err != nil {
+		s.logger.Error("json.Marshal failed for MCP response", zap.Error(err))
+		return &Message{
+			ID:      msg.ID,
+			Type:    MessageTypeResponse,
+			Version: "2.0",
+			Error:   &Error{Code: -32603, Message: "Internal error: failed to marshal response"},
+		}
+	}
+	return &Message{
+		ID:      msg.ID,
+		Type:    MessageTypeResponse,
+		Version: "2.0",
+		Result:  result,
+	}
+}
+
 // handleInitialize handles the initialize request
 func (s *Server) handleInitialize(msg *Message) *Message {
 	var req InitializeRequest
@@ -352,13 +375,7 @@ func (s *Server) handleInitialize(msg *Message) *Message {
 		},
 	}
 
-	result, _ := json.Marshal(response)
-	return &Message{
-		ID:      msg.ID,
-		Type:    MessageTypeResponse,
-		Version: "2.0",
-		Result:  result,
-	}
+	return s.marshalResult(msg, response)
 }
 
 // handleListTools handles the list tools request
@@ -372,13 +389,7 @@ func (s *Server) handleListTools(msg *Message) *Message {
 	s.logger.Debug("tools/list request", zap.Int("tool_count", len(tools)))
 
 	response := ListToolsResponse{Tools: tools}
-	result, _ := json.Marshal(response)
-	return &Message{
-		ID:      msg.ID,
-		Type:    MessageTypeResponse,
-		Version: "2.0",
-		Result:  result,
-	}
+	return s.marshalResult(msg, response)
 }
 
 // handleCallTool handles a tool call request
@@ -510,18 +521,12 @@ func (s *Server) handleCallTool(msg *Message) *Message {
 			zap.Error(err),
 		)
 
-		errorResult, _ := json.Marshal(CallToolResponse{
+		return s.marshalResult(msg, CallToolResponse{
 			Content: []Content{
 				{Type: "text", Text: fmt.Sprintf("tool execution failed: %v", err)},
 			},
 			IsError: true,
 		})
-		return &Message{
-			ID:      msg.ID,
-			Type:    MessageTypeResponse,
-			Version: "2.0",
-			Result:  errorResult,
-		}
 	}
 
 	if finalResult != nil && finalResult.IsError {
@@ -529,16 +534,10 @@ func (s *Server) handleCallTool(msg *Message) *Message {
 			zap.String("toolName", req.Name),
 		)
 
-		errorResult, _ := json.Marshal(CallToolResponse{
+		return s.marshalResult(msg, CallToolResponse{
 			Content: finalResult.Content,
 			IsError: true,
 		})
-		return &Message{
-			ID:      msg.ID,
-			Type:    MessageTypeResponse,
-			Version: "2.0",
-			Result:  errorResult,
-		}
 	}
 
 	if finalResult == nil {
@@ -549,22 +548,15 @@ func (s *Server) handleCallTool(msg *Message) *Message {
 		}
 	}
 
-	resultJSON, _ := json.Marshal(CallToolResponse{
-		Content: finalResult.Content,
-		IsError: false,
-	})
-
 	s.logger.Info("tool execution complete",
 		zap.String("toolName", req.Name),
 		zap.Bool("isError", finalResult.IsError),
 	)
 
-	return &Message{
-		ID:      msg.ID,
-		Type:    MessageTypeResponse,
-		Version: "2.0",
-		Result:  resultJSON,
-	}
+	return s.marshalResult(msg, CallToolResponse{
+		Content: finalResult.Content,
+		IsError: false,
+	})
 }
 
 // updateStats updates statistics
@@ -913,13 +905,7 @@ func (s *Server) handleListPrompts(msg *Message) *Message {
 	response := ListPromptsResponse{
 		Prompts: prompts,
 	}
-	result, _ := json.Marshal(response)
-	return &Message{
-		ID:      msg.ID,
-		Type:    MessageTypeResponse,
-		Version: "2.0",
-		Result:  result,
-	}
+	return s.marshalResult(msg, response)
 }
 
 // handleGetPrompt handles the get prompt request
@@ -953,13 +939,7 @@ func (s *Server) handleGetPrompt(msg *Message) *Message {
 	response := GetPromptResponse{
 		Messages: messages,
 	}
-	result, _ := json.Marshal(response)
-	return &Message{
-		ID:      msg.ID,
-		Type:    MessageTypeResponse,
-		Version: "2.0",
-		Result:  result,
-	}
+	return s.marshalResult(msg, response)
 }
 
 // generatePromptMessages generates prompt messages
@@ -1022,13 +1002,7 @@ func (s *Server) handleListResources(msg *Message) *Message {
 	response := ListResourcesResponse{
 		Resources: resources,
 	}
-	result, _ := json.Marshal(response)
-	return &Message{
-		ID:      msg.ID,
-		Type:    MessageTypeResponse,
-		Version: "2.0",
-		Result:  result,
-	}
+	return s.marshalResult(msg, response)
 }
 
 // handleReadResource handles the read resource request
@@ -1062,13 +1036,7 @@ func (s *Server) handleReadResource(msg *Message) *Message {
 	response := ReadResourceResponse{
 		Contents: []ResourceContent{content},
 	}
-	result, _ := json.Marshal(response)
-	return &Message{
-		ID:      msg.ID,
-		Type:    MessageTypeResponse,
-		Version: "2.0",
-		Result:  result,
-	}
+	return s.marshalResult(msg, response)
 }
 
 // generateResourceContent generates resource content
@@ -1145,13 +1113,7 @@ func (s *Server) handleSamplingRequest(msg *Message) *Message {
 		},
 		StopReason: "length",
 	}
-	result, _ := json.Marshal(response)
-	return &Message{
-		ID:      msg.ID,
-		Type:    MessageTypeResponse,
-		Version: "2.0",
-		Result:  result,
-	}
+	return s.marshalResult(msg, response)
 }
 
 // RegisterPrompt registers a prompt template
@@ -1233,5 +1195,7 @@ func (s *Server) sendError(w http.ResponseWriter, id interface{}, code int, mess
 		Error:   &Error{Code: code, Message: message, Data: data},
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		s.logger.Warn("Failed to write MCP error response", zap.Error(err))
+	}
 }

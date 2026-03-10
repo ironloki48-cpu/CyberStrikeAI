@@ -35,12 +35,12 @@ async function loadToken() {
 // Load OpenAPI specification
 async function loadAPISpec() {
     try {
-        let url = '/api/openapi/spec';
+        const headers = new Headers();
         if (currentToken) {
-            url += '?token=' + encodeURIComponent(currentToken);
+            headers.set('Authorization', 'Bearer ' + currentToken);
         }
-        
-        const response = await fetch(url);
+
+        const response = await fetch('/api/openapi/spec', { headers });
         if (!response.ok) {
             if (response.status === 401) {
                 showError('Login required to view API documentation. Please log in on the frontend page first, then refresh this page.');

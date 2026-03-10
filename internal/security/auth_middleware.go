@@ -39,10 +39,6 @@ func extractTokenFromRequest(c *gin.Context) string {
 		return strings.TrimSpace(authHeader)
 	}
 
-	if token := c.Query("token"); token != "" {
-		return strings.TrimSpace(token)
-	}
-
 	if cookie, err := c.Cookie("auth_token"); err == nil {
 		return strings.TrimSpace(cookie)
 	}

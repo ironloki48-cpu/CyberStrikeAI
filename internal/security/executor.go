@@ -8,6 +8,9 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -20,11 +23,12 @@ import (
 
 // Executor security tool executor
 type Executor struct {
-	config        *config.SecurityConfig
-	toolIndex     map[string]*config.ToolConfig // tool index for O(1) lookup
-	mcpServer     *mcp.Server
-	logger        *zap.Logger
-	resultStorage ResultStorage // result storage (for query tools)
+	config         *config.SecurityConfig
+	toolIndex      map[string]*config.ToolConfig // tool index for O(1) lookup
+	mcpServer      *mcp.Server
+	logger         *zap.Logger
+	resultStorage  ResultStorage // result storage (for query tools)
+	defaultWorkDir string        // stable default working directory for tool execution
 }
 
 // ResultStorage result storage interface (directly using storage package types)
@@ -42,11 +46,12 @@ type ResultStorage interface {
 // NewExecutor creates a new executor
 func NewExecutor(cfg *config.SecurityConfig, mcpServer *mcp.Server, logger *zap.Logger) *Executor {
 	executor := &Executor{
-		config:        cfg,
-		toolIndex:     make(map[string]*config.ToolConfig),
-		mcpServer:     mcpServer,
-		logger:        logger,
-		resultStorage: nil, // set later via SetResultStorage
+		config:         cfg,
+		toolIndex:      make(map[string]*config.ToolConfig),
+		mcpServer:      mcpServer,
+		logger:         logger,
+		resultStorage:  nil, // set later via SetResultStorage
+		defaultWorkDir: detectDefaultToolWorkDir(),
 	}
 	// build tool index
 	executor.buildToolIndex()
@@ -79,12 +84,6 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 		zap.Any("args", args),
 	)
 
-	// special handling: exec tool directly executes system commands
-	if toolName == "exec" {
-		e.logger.Info("executing exec tool")
-		return e.executeSystemCommand(ctx, args)
-	}
-
 	// use index to look up tool configuration (O(1) lookup)
 	toolConfig, exists := e.toolIndex[toolName]
 	if !exists {
@@ -101,6 +100,33 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 		zap.String("command", toolConfig.Command),
 		zap.Strings("args", toolConfig.Args),
 	)
+
+	args = e.normalizeToolArgs(toolName, toolConfig, args)
+
+	missingRequired := e.findMissingRequiredParams(toolConfig, args)
+	if len(missingRequired) > 0 {
+		e.logger.Warn("tool call missing required parameters",
+			zap.String("toolName", toolName),
+			zap.Strings("missing", missingRequired),
+			zap.Any("args", args),
+		)
+		return &mcp.ToolResult{
+			Content: []mcp.Content{
+				{
+					Type: "text",
+					Text: fmt.Sprintf("Error: tool %s is missing required parameters: %s. Received parameters: %v",
+						toolName, strings.Join(missingRequired, ", "), args),
+				},
+			},
+			IsError: true,
+		}, nil
+	}
+
+	// special handling: exec tool directly executes system commands
+	if toolName == "exec" {
+		e.logger.Info("executing exec tool")
+		return e.executeSystemCommand(ctx, args)
+	}
 
 	// special handling: internal tools (command starts with "internal:")
 	if strings.HasPrefix(toolConfig.Command, "internal:") {
@@ -139,10 +165,14 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 
 	// execute command
 	cmd := exec.CommandContext(ctx, toolConfig.Command, cmdArgs...)
+	if workDir := e.resolveToolWorkDir(args); workDir != "" {
+		cmd.Dir = workDir
+	}
 
 	e.logger.Info("executing security tool",
 		zap.String("tool", toolName),
 		zap.Strings("args", cmdArgs),
+		zap.String("workdir", cmd.Dir),
 	)
 
 	output, err := cmd.CombinedOutput()
@@ -201,6 +231,446 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 		},
 		IsError: false,
 	}, nil
+}
+
+func (e *Executor) normalizeToolArgs(toolName string, toolConfig *config.ToolConfig, args map[string]interface{}) map[string]interface{} {
+	if args == nil {
+		args = map[string]interface{}{}
+	}
+
+	normalized := make(map[string]interface{}, len(args))
+	for k, v := range args {
+		normalized[k] = v
+	}
+
+	paramIndex := make(map[string]config.ParameterConfig, len(toolConfig.Parameters))
+	knownKeys := make([]string, 0, len(toolConfig.Parameters))
+	for _, param := range toolConfig.Parameters {
+		paramIndex[param.Name] = param
+		knownKeys = append(knownKeys, param.Name)
+	}
+
+	changed := false
+	mergeParsed := func(parsed map[string]interface{}) {
+		for key, value := range parsed {
+			existing, exists := normalized[key]
+			if !exists || isEmptyArgValue(existing) || looksMalformedArgValue(existing) {
+				normalized[key] = value
+				changed = true
+			}
+		}
+	}
+
+	if raw, ok := normalized["raw"].(string); ok && strings.TrimSpace(raw) != "" {
+		if parsed := parseLooseToolArgs(raw, knownKeys, paramIndex); len(parsed) > 0 {
+			mergeParsed(parsed)
+			delete(normalized, "raw")
+			changed = true
+		}
+	}
+
+	for _, key := range knownKeys {
+		rawValue, ok := normalized[key].(string)
+		if !ok || !looksMalformedArgValue(rawValue) {
+			continue
+		}
+
+		repairedCurrent, parsed, repaired := repairMalformedStringArg(key, rawValue, knownKeys, paramIndex)
+		if !repaired {
+			continue
+		}
+
+		if repairedCurrent != nil {
+			normalized[key] = repairedCurrent
+		} else {
+			delete(normalized, key)
+		}
+		mergeParsed(parsed)
+		changed = true
+	}
+
+	if applyToolArgumentHeuristics(normalized, paramIndex) {
+		changed = true
+	}
+
+	for _, param := range toolConfig.Parameters {
+		value, ok := normalized[param.Name]
+		if !ok {
+			continue
+		}
+		coerced, didCoerce := coerceToolArgValue(value, param)
+		if didCoerce {
+			normalized[param.Name] = coerced
+			changed = true
+		}
+	}
+
+	if changed {
+		e.logger.Info("normalized malformed tool arguments",
+			zap.String("toolName", toolName),
+			zap.Any("originalArgs", args),
+			zap.Any("normalizedArgs", normalized),
+		)
+	}
+
+	return normalized
+}
+
+func (e *Executor) findMissingRequiredParams(toolConfig *config.ToolConfig, args map[string]interface{}) []string {
+	if toolConfig == nil {
+		return nil
+	}
+
+	missing := make([]string, 0)
+	for _, param := range toolConfig.Parameters {
+		if !param.Required {
+			continue
+		}
+		value, exists := args[param.Name]
+		if !exists || isMissingRequiredValue(value) {
+			missing = append(missing, param.Name)
+		}
+	}
+	return missing
+}
+
+func isMissingRequiredValue(value interface{}) bool {
+	if value == nil {
+		return true
+	}
+
+	switch v := value.(type) {
+	case string:
+		return strings.TrimSpace(v) == ""
+	case []interface{}:
+		return len(v) == 0
+	case []string:
+		return len(v) == 0
+	}
+
+	return false
+}
+
+func isEmptyArgValue(value interface{}) bool {
+	if value == nil {
+		return true
+	}
+	if s, ok := value.(string); ok {
+		return strings.TrimSpace(s) == ""
+	}
+	return false
+}
+
+func looksMalformedArgValue(value interface{}) bool {
+	s, ok := value.(string)
+	if !ok {
+		return false
+	}
+	trimmed := strings.TrimSpace(s)
+	return strings.Contains(trimmed, "<parameter=") ||
+		strings.Contains(trimmed, "</parameter") ||
+		strings.Contains(trimmed, `{"`) ||
+		strings.Contains(trimmed, `"`)
+}
+
+func repairMalformedStringArg(currentKey, raw string, knownKeys []string, paramIndex map[string]config.ParameterConfig) (interface{}, map[string]interface{}, bool) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil, nil, false
+	}
+
+	markupIdx := firstStructuredMarkupIndex(trimmed)
+	if markupIdx == -1 {
+		return nil, nil, false
+	}
+
+	currentParam, hasParam := paramIndex[currentKey]
+	var cleanedCurrent interface{}
+	head := strings.TrimSpace(trimmed[:markupIdx])
+	if head != "" {
+		if hasParam {
+			if value, ok := cleanLooseArgumentValue(head, &currentParam); ok {
+				cleanedCurrent = value
+			}
+		} else {
+			cleanedCurrent = head
+		}
+	}
+
+	parsed := parseLooseToolArgs(trimmed[markupIdx:], knownKeys, paramIndex)
+	return cleanedCurrent, parsed, len(parsed) > 0 || cleanedCurrent != nil
+}
+
+func firstStructuredMarkupIndex(raw string) int {
+	markers := []string{"<parameter=", "</parameter", "{", `"`}
+	first := -1
+	for _, marker := range markers {
+		idx := strings.Index(raw, marker)
+		if idx == -1 {
+			continue
+		}
+		if first == -1 || idx < first {
+			first = idx
+		}
+	}
+	return first
+}
+
+func parseLooseToolArgs(raw string, knownKeys []string, paramIndex map[string]config.ParameterConfig) map[string]interface{} {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" || len(knownKeys) == 0 {
+		return nil
+	}
+
+	var strict map[string]interface{}
+	if err := json.Unmarshal([]byte(trimmed), &strict); err == nil && len(strict) > 0 {
+		return strict
+	}
+
+	keys := append([]string(nil), knownKeys...)
+	sort.Slice(keys, func(i, j int) bool {
+		return len(keys[i]) > len(keys[j])
+	})
+
+	escapedKeys := make([]string, 0, len(keys))
+	for _, key := range keys {
+		escapedKeys = append(escapedKeys, regexp.QuoteMeta(key))
+	}
+	pattern := regexp.MustCompile(`(?is)"?(` + strings.Join(escapedKeys, "|") + `)"?\s*[:=>]\s*`)
+	matches := pattern.FindAllStringSubmatchIndex(trimmed, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+
+	parsed := make(map[string]interface{})
+	for i, match := range matches {
+		if len(match) < 4 {
+			continue
+		}
+
+		key := trimmed[match[2]:match[3]]
+		valueStart := match[1]
+		valueEnd := len(trimmed)
+		if i+1 < len(matches) {
+			valueEnd = matches[i+1][0]
+		}
+
+		param, ok := paramIndex[key]
+		var paramPtr *config.ParameterConfig
+		if ok {
+			paramPtr = &param
+		}
+
+		if value, ok := cleanLooseArgumentValue(trimmed[valueStart:valueEnd], paramPtr); ok {
+			parsed[key] = value
+		}
+	}
+
+	if len(parsed) == 0 {
+		return nil
+	}
+	return parsed
+}
+
+func cleanLooseArgumentValue(raw string, param *config.ParameterConfig) (interface{}, bool) {
+	original := strings.TrimSpace(raw)
+	if original == "" {
+		if param != nil && param.Type == "bool" {
+			return true, true
+		}
+		return "", false
+	}
+
+	explicitEmptyString := strings.HasPrefix(original, `""`) || strings.HasPrefix(original, `''`)
+
+	cleaned := strings.TrimLeft(original, " \t\r\n>,")
+	for {
+		next := strings.TrimSpace(strings.TrimPrefix(cleaned, "</parameter"))
+		next = strings.TrimLeft(next, "= \t\r\n")
+		if next == cleaned {
+			break
+		}
+		cleaned = next
+	}
+	cleaned = strings.TrimSpace(cleaned)
+
+	for len(cleaned) > 0 {
+		last := cleaned[len(cleaned)-1]
+		if last == ',' || last == '}' || last == ']' {
+			cleaned = strings.TrimSpace(cleaned[:len(cleaned)-1])
+			continue
+		}
+		break
+	}
+
+	if explicitEmptyString {
+		return "", true
+	}
+
+	if unquoted, err := strconv.Unquote(cleaned); err == nil {
+		cleaned = unquoted
+	}
+	cleaned = strings.TrimSpace(cleaned)
+
+	if cleaned == "" {
+		if param != nil && param.Type == "bool" {
+			return true, true
+		}
+		return "", false
+	}
+
+	if param != nil {
+		switch param.Type {
+		case "bool":
+			switch strings.ToLower(cleaned) {
+			case "true", "1", "yes", "on":
+				return true, true
+			case "false", "0", "no", "off":
+				return false, true
+			default:
+				return true, true
+			}
+		case "int":
+			if i, err := strconv.Atoi(cleaned); err == nil {
+				return i, true
+			}
+		case "float":
+			if f, err := strconv.ParseFloat(cleaned, 64); err == nil {
+				return f, true
+			}
+		case "object":
+			var obj map[string]interface{}
+			if err := json.Unmarshal([]byte(cleaned), &obj); err == nil {
+				return obj, true
+			}
+		case "array":
+			var arr []interface{}
+			if err := json.Unmarshal([]byte(cleaned), &arr); err == nil {
+				return arr, true
+			}
+		}
+	}
+
+	switch strings.ToLower(cleaned) {
+	case "true":
+		return true, true
+	case "false":
+		return false, true
+	}
+
+	return cleaned, true
+}
+
+func coerceToolArgValue(value interface{}, param config.ParameterConfig) (interface{}, bool) {
+	switch param.Type {
+	case "bool":
+		switch v := value.(type) {
+		case bool:
+			return value, false
+		case string:
+			switch strings.ToLower(strings.TrimSpace(v)) {
+			case "true", "1", "yes", "on":
+				return true, true
+			case "false", "0", "no", "off":
+				return false, true
+			}
+		case int:
+			return v != 0, true
+		case float64:
+			return v != 0, true
+		}
+	case "int":
+		switch v := value.(type) {
+		case int:
+			return value, false
+		case float64:
+			return int(v), true
+		case string:
+			if i, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+				return i, true
+			}
+		}
+	case "float":
+		switch v := value.(type) {
+		case float64:
+			return value, false
+		case int:
+			return float64(v), true
+		case string:
+			if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
+				return f, true
+			}
+		}
+	}
+	return value, false
+}
+
+func applyToolArgumentHeuristics(args map[string]interface{}, paramIndex map[string]config.ParameterConfig) bool {
+	changed := false
+
+	if _, hasURLParam := paramIndex["url"]; hasURLParam && isMissingRequiredValue(args["url"]) {
+		for _, candidateKey := range []string{"data", "target", "download"} {
+			candidate, ok := args[candidateKey].(string)
+			if ok && looksLikeURL(candidate) {
+				args["url"] = strings.TrimSpace(candidate)
+				changed = true
+				break
+			}
+		}
+	}
+
+	if _, hasTargetParam := paramIndex["target"]; hasTargetParam && isMissingRequiredValue(args["target"]) {
+		if urlValue, ok := args["url"].(string); ok && strings.TrimSpace(urlValue) != "" {
+			args["target"] = strings.TrimSpace(urlValue)
+			changed = true
+		}
+	}
+
+	if _, hasDomainParam := paramIndex["domain"]; hasDomainParam && isMissingRequiredValue(args["domain"]) {
+		for _, candidateKey := range []string{"url", "target"} {
+			candidate, ok := args[candidateKey].(string)
+			if !ok {
+				continue
+			}
+			if domain := extractDomainCandidate(candidate); domain != "" {
+				args["domain"] = domain
+				changed = true
+				break
+			}
+		}
+	}
+
+	if _, hasMethodParam := paramIndex["method"]; hasMethodParam && isMissingRequiredValue(args["method"]) {
+		if action, ok := args["action"].(string); ok {
+			method := strings.ToUpper(strings.TrimSpace(action))
+			switch method {
+			case "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS":
+				args["method"] = method
+				changed = true
+			}
+		}
+	}
+
+	return changed
+}
+
+func looksLikeURL(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	return strings.HasPrefix(trimmed, "http://") || strings.HasPrefix(trimmed, "https://")
+}
+
+func extractDomainCandidate(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	trimmed = strings.TrimPrefix(trimmed, "http://")
+	trimmed = strings.TrimPrefix(trimmed, "https://")
+	if idx := strings.IndexAny(trimmed, "/?#"); idx >= 0 {
+		trimmed = trimmed[:idx]
+	}
+	trimmed = strings.TrimSpace(trimmed)
+	return strings.Trim(trimmed, "[]")
 }
 
 // RegisterTools registers tools to the MCP server
@@ -285,6 +755,9 @@ func (e *Executor) buildCommandArgs(toolName string, toolConfig *config.ToolConf
 		if scanType, ok := args["scan_type"].(string); ok && scanType != "" {
 			hasScanType = true
 			scanTypeValue = scanType
+			if toolName == "nmap" {
+				scanTypeValue = normalizeNmapScanType(scanType)
+			}
 		}
 
 		// add fixed arguments (may need to filter out default scan type args if scan_type is specified)
@@ -739,10 +1212,31 @@ func (e *Executor) formatParamValue(param config.ParameterConfig, value interfac
 		// special handling: for the ports parameter (usually nmap and similar tools), remove spaces
 		// nmap doesn't accept spaces in port list, e.g. "80,443, 22" should become "80,443,22"
 		if param.Name == "ports" {
+			if strings.EqualFold(strings.TrimSpace(formattedValue), "common") {
+				// map friendly "common" alias used by prompts to a valid nmap port list
+				formattedValue = "21,22,23,25,53,80,110,143,443,445,993,995,1433,1521,3306,3389,5432,6379,8080,8443"
+			}
 			// remove all spaces but preserve commas and other characters
 			formattedValue = strings.ReplaceAll(formattedValue, " ", "")
 		}
 		return formattedValue
+	}
+}
+
+func normalizeNmapScanType(scanType string) string {
+	normalized := strings.TrimSpace(strings.ToLower(scanType))
+	switch normalized {
+	case "", "default":
+		return ""
+	case "fast":
+		return "-T4"
+	case "quick":
+		return "-T4 -F"
+	case "intensive":
+		return "-T4 -A"
+	default:
+		// keep raw custom flags (e.g. "-sV -Pn")
+		return scanType
 	}
 }
 
@@ -1029,10 +1523,7 @@ func (e *Executor) executeSystemCommand(ctx context.Context, args map[string]int
 	}
 
 	// get working directory (optional)
-	workDir := ""
-	if wd, ok := args["workdir"].(string); ok && wd != "" {
-		workDir = wd
-	}
+	workDir := e.resolveToolWorkDir(args)
 
 	// detect if this is a background command (contains & symbol, but not inside quotes)
 	isBackground := e.isBackgroundCommand(command)
@@ -1213,6 +1704,51 @@ func (e *Executor) executeSystemCommand(ctx context.Context, args map[string]int
 	}, nil
 }
 
+// resolveToolWorkDir resolves the tool working directory.
+// Priority: explicit args["workdir"] -> executor default workdir.
+func (e *Executor) resolveToolWorkDir(args map[string]interface{}) string {
+	base := e.defaultWorkDir
+	if wd, ok := args["workdir"].(string); ok && strings.TrimSpace(wd) != "" {
+		if filepath.IsAbs(wd) {
+			return filepath.Clean(wd)
+		}
+		if base == "" {
+			if cwd, err := os.Getwd(); err == nil {
+				base = cwd
+			}
+		}
+		if base != "" {
+			return filepath.Clean(filepath.Join(base, wd))
+		}
+		return filepath.Clean(wd)
+	}
+	return base
+}
+
+// detectDefaultToolWorkDir determines a stable workspace directory for tool execution.
+func detectDefaultToolWorkDir() string {
+	if env := strings.TrimSpace(os.Getenv("CYBERSTRIKE_WORKDIR")); env != "" {
+		if info, err := os.Stat(env); err == nil && info.IsDir() {
+			return env
+		}
+	}
+
+	if cwd, err := os.Getwd(); err == nil {
+		if info, statErr := os.Stat(cwd); statErr == nil && info.IsDir() {
+			return cwd
+		}
+	}
+
+	if exePath, err := os.Executable(); err == nil {
+		exeDir := filepath.Dir(exePath)
+		if info, statErr := os.Stat(exeDir); statErr == nil && info.IsDir() {
+			return exeDir
+		}
+	}
+
+	return ""
+}
+
 // executeInternalTool executes an internal tool (does not execute external commands)
 func (e *Executor) executeInternalTool(ctx context.Context, toolName string, command string, args map[string]interface{}) (*mcp.ToolResult, error) {
 	// extract internal tool type (remove "internal:" prefix)
@@ -1292,76 +1828,90 @@ func (e *Executor) executeQueryExecutionResult(ctx context.Context, args map[str
 		useRegex = r
 	}
 
-	// check if result storage is available
-	if e.resultStorage == nil {
-		return &mcp.ToolResult{
-			Content: []mcp.Content{
-				{
-					Type: "text",
-					Text: "Error: result storage is not initialized",
-				},
-			},
-			IsError: true,
-		}, nil
-	}
-
-	// execute query
+	// execute query (prefer file storage; fallback to MCP execution record)
 	var resultPage *storage.ResultPage
-	var err error
+	var metadata *storage.ResultMetadata
+	var storageErr error
 
-	if search != "" {
-		// search mode
-		matchedLines, err := e.resultStorage.SearchResult(executionID, search, useRegex)
-		if err != nil {
-			return &mcp.ToolResult{
-				Content: []mcp.Content{
-					{
-						Type: "text",
-						Text: fmt.Sprintf("search failed: %v", err),
-					},
-				},
-				IsError: true,
-			}, nil
+	if e.resultStorage != nil {
+		if search != "" {
+			var matchedLines []string
+			matchedLines, storageErr = e.resultStorage.SearchResult(executionID, search, useRegex)
+			if storageErr == nil {
+				resultPage = paginateLines(matchedLines, page, limit)
+			}
+		} else if filter != "" {
+			var filteredLines []string
+			filteredLines, storageErr = e.resultStorage.FilterResult(executionID, filter, useRegex)
+			if storageErr == nil {
+				resultPage = paginateLines(filteredLines, page, limit)
+			}
+		} else {
+			resultPage, storageErr = e.resultStorage.GetResultPage(executionID, page, limit)
 		}
-		// paginate search results
-		resultPage = paginateLines(matchedLines, page, limit)
-	} else if filter != "" {
-		// filter mode
-		filteredLines, err := e.resultStorage.FilterResult(executionID, filter, useRegex)
-		if err != nil {
-			return &mcp.ToolResult{
-				Content: []mcp.Content{
-					{
-						Type: "text",
-						Text: fmt.Sprintf("filter failed: %v", err),
-					},
-				},
-				IsError: true,
-			}, nil
+		if storageErr == nil {
+			metadata, _ = e.resultStorage.GetResultMetadata(executionID)
 		}
-		// paginate filter results
-		resultPage = paginateLines(filteredLines, page, limit)
 	} else {
-		// normal paginated query
-		resultPage, err = e.resultStorage.GetResultPage(executionID, page, limit)
-		if err != nil {
-			return &mcp.ToolResult{
-				Content: []mcp.Content{
-					{
-						Type: "text",
-						Text: fmt.Sprintf("query failed: %v", err),
-					},
-				},
-				IsError: true,
-			}, nil
-		}
+		storageErr = fmt.Errorf("result storage not initialized")
 	}
 
-	// get metadata
-	metadata, err := e.resultStorage.GetResultMetadata(executionID)
-	if err != nil {
-		// metadata fetch failure does not affect query results
-		e.logger.Warn("failed to get result metadata", zap.Error(err))
+	if storageErr != nil {
+		e.logger.Warn("query_execution_result storage lookup failed, trying MCP execution fallback",
+			zap.String("executionID", executionID),
+			zap.Error(storageErr),
+		)
+		if e.mcpServer == nil {
+			return &mcp.ToolResult{
+				Content: []mcp.Content{{Type: "text", Text: fmt.Sprintf("query failed: %v", storageErr)}},
+				IsError: true,
+			}, nil
+		}
+
+		execRec, exists := e.mcpServer.GetExecution(executionID)
+		if !exists || execRec == nil {
+			return &mcp.ToolResult{
+				Content: []mcp.Content{{Type: "text", Text: fmt.Sprintf("query failed: %v", storageErr)}},
+				IsError: true,
+			}, nil
+		}
+
+		var sb strings.Builder
+		if execRec.Result != nil {
+			for _, content := range execRec.Result.Content {
+				sb.WriteString(content.Text)
+				sb.WriteString("\n")
+			}
+		}
+		if sb.Len() == 0 && execRec.Error != "" {
+			sb.WriteString(execRec.Error)
+		}
+		raw := sb.String()
+		if raw == "" {
+			raw = "(no output)"
+		}
+		lines := strings.Split(raw, "\n")
+		if search != "" {
+			matchedLines, ferr := filterLines(lines, search, useRegex)
+			if ferr != nil {
+				return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: fmt.Sprintf("search failed: %v", ferr)}}, IsError: true}, nil
+			}
+			resultPage = paginateLines(matchedLines, page, limit)
+		} else if filter != "" {
+			filteredLines, ferr := filterLines(lines, filter, useRegex)
+			if ferr != nil {
+				return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: fmt.Sprintf("filter failed: %v", ferr)}}, IsError: true}, nil
+			}
+			resultPage = paginateLines(filteredLines, page, limit)
+		} else {
+			resultPage = paginateLines(lines, page, limit)
+		}
+		metadata = &storage.ResultMetadata{
+			ExecutionID: executionID,
+			ToolName:    execRec.ToolName,
+			TotalSize:   len(raw),
+			TotalLines:  len(lines),
+		}
 	}
 
 	// format return result
@@ -1373,7 +1923,7 @@ func (e *Executor) executeQueryExecutionResult(ctx context.Context, args map[str
 			metadata.ToolName, metadata.TotalSize, float64(metadata.TotalSize)/1024, metadata.TotalLines))
 	}
 
-	sb.WriteString(fmt.Sprintf("page %d/%d, %d lines per page, total %d lines\n\n",
+	sb.WriteString(fmt.Sprintf("Page %d/%d, %d lines per page, total %d lines\n\n",
 		resultPage.Page, resultPage.TotalPages, resultPage.Limit, resultPage.TotalLines))
 
 	if len(resultPage.Lines) == 0 {
@@ -1445,6 +1995,30 @@ func paginateLines(lines []string, page int, limit int) *storage.ResultPage {
 		TotalLines: totalLines,
 		TotalPages: totalPages,
 	}
+}
+
+func filterLines(lines []string, pattern string, useRegex bool) ([]string, error) {
+	if !useRegex {
+		matched := make([]string, 0)
+		for _, line := range lines {
+			if strings.Contains(line, pattern) {
+				matched = append(matched, line)
+			}
+		}
+		return matched, nil
+	}
+
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil, fmt.Errorf("invalid regular expression: %w", err)
+	}
+	matched := make([]string, 0)
+	for _, line := range lines {
+		if re.MatchString(line) {
+			matched = append(matched, line)
+		}
+	}
+	return matched, nil
 }
 
 // buildInputSchema builds the input schema

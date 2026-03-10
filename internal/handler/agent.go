@@ -18,6 +18,7 @@ import (
 	"cyberstrike-ai/internal/agent"
 	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/database"
+	"cyberstrike-ai/internal/filemanager"
 	"cyberstrike-ai/internal/mcp/builtin"
 	"cyberstrike-ai/internal/skills"
 
@@ -77,7 +78,8 @@ type AgentHandler struct {
 	knowledgeManager interface {    // knowledge base manager interface
 		LogRetrieval(conversationID, messageID, query, riskType string, retrievedItems []string) error
 	}
-	skillsManager *skills.Manager // Skills manager
+	skillsManager *skills.Manager      // Skills manager
+	fileManager   *filemanager.Manager // File manager (nil if not initialized)
 }
 
 // NewAgentHandler creates a new Agent handler
@@ -110,6 +112,11 @@ func (h *AgentHandler) SetKnowledgeManager(manager interface {
 // SetSkillsManager sets the Skills manager
 func (h *AgentHandler) SetSkillsManager(manager *skills.Manager) {
 	h.skillsManager = manager
+}
+
+// SetFileManager sets the file manager for automatic file registration on chat uploads
+func (h *AgentHandler) SetFileManager(mgr *filemanager.Manager) {
+	h.fileManager = mgr
 }
 
 // ChatAttachment chat attachment (user-uploaded file)
@@ -253,6 +260,59 @@ func appendAttachmentsToMessage(msg string, attachments []ChatAttachment, savedP
 		}
 	}
 	return b.String()
+}
+
+// registerUploadedFiles registers chat-uploaded files in the file manager for tracking.
+// This runs after saveAttachmentsToDateAndConversationDir and is best-effort (does not fail the request).
+func (h *AgentHandler) registerUploadedFiles(attachments []ChatAttachment, savedPaths []string, conversationID string) {
+	if h.fileManager == nil || len(attachments) == 0 {
+		return
+	}
+	for i, a := range attachments {
+		if i >= len(savedPaths) || savedPaths[i] == "" {
+			continue
+		}
+		// Determine file size from disk
+		var fileSize int64
+		if info, err := os.Stat(savedPaths[i]); err == nil {
+			fileSize = info.Size()
+		}
+
+		// Infer file type from mime type
+		ft := inferFileType(a.MimeType, a.FileName)
+
+		_, err := h.fileManager.Register(a.FileName, savedPaths[i], fileSize, a.MimeType, ft, conversationID)
+		if err != nil {
+			h.logger.Warn("Failed to register uploaded file in file manager",
+				zap.String("fileName", a.FileName), zap.Error(err))
+		} else {
+			h.logger.Debug("Registered uploaded file in file manager",
+				zap.String("fileName", a.FileName), zap.String("path", savedPaths[i]))
+		}
+	}
+}
+
+// inferFileType guesses a file manager type from mime type and extension.
+func inferFileType(mimeType, fileName string) filemanager.FileType {
+	ext := strings.ToLower(filepath.Ext(fileName))
+	mime := strings.ToLower(mimeType)
+
+	switch {
+	case strings.Contains(mime, "pdf") || ext == ".pdf":
+		return filemanager.FileTypeReport
+	case strings.Contains(mime, "json") || ext == ".json":
+		return filemanager.FileTypeReport
+	case ext == ".exe" || ext == ".dll" || ext == ".so" || ext == ".elf" || ext == ".bin" || ext == ".apk":
+		return filemanager.FileTypeReversing
+	case ext == ".py" || ext == ".go" || ext == ".js" || ext == ".c" || ext == ".h" || ext == ".rs" || ext == ".java":
+		return filemanager.FileTypeProjectFile
+	case ext == ".md" || ext == ".txt" || ext == ".rst" || ext == ".html" || ext == ".yaml" || ext == ".yml":
+		return filemanager.FileTypeAPIDocs
+	case ext == ".csv" || ext == ".xlsx" || ext == ".xls" || ext == ".db" || ext == ".sqlite":
+		return filemanager.FileTypeExfiltrated
+	default:
+		return filemanager.FileTypeOther
+	}
 }
 
 // buildContinuationBrief summarizes recent session state so follow-up turns can continue
@@ -471,6 +531,8 @@ func (h *AgentHandler) AgentLoop(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save uploaded files: " + err.Error()})
 			return
 		}
+		// Register uploaded files in file manager for tracking
+		h.registerUploadedFiles(req.Attachments, savedPaths, conversationID)
 	}
 	finalMessage = appendAttachmentsToMessage(finalMessage, req.Attachments, savedPaths)
 	finalMessage = h.applyContinuationContext(conversationID, req.Message, finalMessage, len(agentHistoryMessages))
@@ -529,7 +591,7 @@ func (h *AgentHandler) AgentLoop(c *gin.Context) {
 	})
 }
 
-// ProcessMessageForRobot is called by robots (WeCom/DingTalk/Lark): same execution path as /api/agent-loop/stream
+// ProcessMessageForRobot is called by chat bots: same execution path as /api/agent-loop/stream
 // (includes progressCallback and process details), but without sending SSE, and returns the full reply at the end
 func (h *AgentHandler) ProcessMessageForRobot(ctx context.Context, conversationID, message, role string) (response string, convID string, err error) {
 	if conversationID == "" {
@@ -1061,6 +1123,8 @@ func (h *AgentHandler) AgentLoopStream(c *gin.Context) {
 			sendEvent("error", "Failed to save uploaded files: "+err.Error(), nil)
 			return
 		}
+		// Register uploaded files in file manager for tracking
+		h.registerUploadedFiles(req.Attachments, savedPaths, conversationID)
 	}
 	// Only append attachment saved paths to finalMessage, avoid inlining file content into model context
 	finalMessage = appendAttachmentsToMessage(finalMessage, req.Attachments, savedPaths)

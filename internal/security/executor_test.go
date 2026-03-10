@@ -266,6 +266,56 @@ func TestPaginateLines(t *testing.T) {
 	}
 }
 
+func TestExecutor_FileTool_UsesResolvedWorkdir(t *testing.T) {
+	logger := zap.NewNop()
+	mcpServer := mcp.NewServer(logger)
+	cfg := &config.SecurityConfig{
+		Tools: []config.ToolConfig{
+			{
+				Name:    "create-file",
+				Command: "python3",
+				Args: []string{
+					"-c",
+					`import sys; from pathlib import Path; p = Path(sys.argv[1]); p.parent.mkdir(parents=True, exist_ok=True); p.write_text(sys.argv[2], encoding="utf-8"); print(p)`,
+				},
+				Enabled: true,
+				Parameters: []config.ParameterConfig{
+					{Name: "filename", Type: "string", Required: true, Position: intPtr(0), Format: "positional"},
+					{Name: "content", Type: "string", Required: true, Position: intPtr(1), Format: "positional"},
+				},
+			},
+		},
+	}
+
+	executor := NewExecutor(cfg, mcpServer, logger)
+	baseDir := t.TempDir()
+	executor.defaultWorkDir = baseDir
+	executor.buildToolIndex()
+
+	ctx := context.Background()
+	res, err := executor.ExecuteTool(ctx, "create-file", map[string]interface{}{
+		"filename": "a/b.txt",
+		"content":  "ok",
+	})
+	if err != nil {
+		t.Fatalf("ExecuteTool failed: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("tool returned error: %s", res.Content[0].Text)
+	}
+
+	outPath := filepath.Join(baseDir, "a", "b.txt")
+	data, readErr := os.ReadFile(outPath)
+	if readErr != nil {
+		t.Fatalf("expected file at %s, got error: %v", outPath, readErr)
+	}
+	if string(data) != "ok" {
+		t.Fatalf("unexpected content: %q", string(data))
+	}
+}
+
+func intPtr(v int) *int { return &v }
+
 func TestSanitizeFierceArgs_RemovesOrphanListFlags(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -513,5 +563,119 @@ func TestSanitizeFeroxbusterArgs_NoChangeOnSingleThreadFlag(t *testing.T) {
 	}
 	if strings.Join(input, " ") != strings.Join(got, " ") {
 		t.Fatalf("expected args unchanged, input=%#v got=%#v", input, got)
+	}
+}
+
+func TestExecutor_NormalizeToolArgs_RepairsMalformedHTTPFrameworkArgs(t *testing.T) {
+	executor, _ := setupTestExecutor(t)
+	toolConfig := &config.ToolConfig{
+		Name: "http-framework-test",
+		Parameters: []config.ParameterConfig{
+			{Name: "url", Type: "string", Required: true},
+			{Name: "method", Type: "string"},
+			{Name: "action", Type: "string"},
+			{Name: "data", Type: "string"},
+			{Name: "delay", Type: "string"},
+			{Name: "allow_insecure", Type: "bool"},
+			{Name: "auto_encode_url", Type: "bool"},
+		},
+	}
+
+	args := map[string]interface{}{
+		"action": "get\n</parameter=\n<parameter=allow_insecure=true\n<parameter=auto_encode_url=true\n</parameter=\n<parameter=data>\n<parameter=data>\nhttps://stormapi.su",
+		"delay":  "2",
+	}
+
+	normalized := executor.normalizeToolArgs("http-framework-test", toolConfig, args)
+
+	if got := normalized["action"]; got != "get" {
+		t.Fatalf("expected action to be repaired to get, got %#v", got)
+	}
+	if got := normalized["allow_insecure"]; got != true {
+		t.Fatalf("expected allow_insecure=true, got %#v", got)
+	}
+	if got := normalized["auto_encode_url"]; got != true {
+		t.Fatalf("expected auto_encode_url=true, got %#v", got)
+	}
+	if got := normalized["data"]; got != "https://stormapi.su" {
+		t.Fatalf("expected data to contain the recovered URL, got %#v", got)
+	}
+	if got := normalized["url"]; got != "https://stormapi.su" {
+		t.Fatalf("expected url heuristic to recover the target URL, got %#v", got)
+	}
+
+	if missing := executor.findMissingRequiredParams(toolConfig, normalized); len(missing) != 0 {
+		t.Fatalf("expected repaired args to satisfy required params, missing=%v", missing)
+	}
+}
+
+func TestExecutor_NormalizeToolArgs_RepairsRawJSONObjectArgs(t *testing.T) {
+	executor, _ := setupTestExecutor(t)
+	toolConfig := &config.ToolConfig{
+		Name: "http-framework-test",
+		Parameters: []config.ParameterConfig{
+			{Name: "url", Type: "string", Required: true},
+			{Name: "action", Type: "string"},
+			{Name: "cookies", Type: "string"},
+			{Name: "delay", Type: "string"},
+			{Name: "debug", Type: "bool"},
+			{Name: "allow_insecure", Type: "bool"},
+			{Name: "auto_encode_url", Type: "bool"},
+		},
+	}
+
+	args := map[string]interface{}{
+		"raw": `{"action": "get", "allow_insecure": true, "auto_encode_url": , "cookies": "", "debug": true, "delay": "2", "url": "https://manage.stormapi.su"}`,
+	}
+
+	normalized := executor.normalizeToolArgs("http-framework-test", toolConfig, args)
+
+	if _, ok := normalized["raw"]; ok {
+		t.Fatalf("expected raw field to be removed after normalization")
+	}
+	if got := normalized["url"]; got != "https://manage.stormapi.su" {
+		t.Fatalf("expected url to be recovered from raw payload, got %#v", got)
+	}
+	if got := normalized["allow_insecure"]; got != true {
+		t.Fatalf("expected allow_insecure=true, got %#v", got)
+	}
+	if got := normalized["auto_encode_url"]; got != true {
+		t.Fatalf("expected auto_encode_url=true for blank boolean value, got %#v", got)
+	}
+	if got := normalized["cookies"]; got != "" {
+		t.Fatalf("expected cookies to remain an explicit empty string, got %#v", got)
+	}
+
+	if missing := executor.findMissingRequiredParams(toolConfig, normalized); len(missing) != 0 {
+		t.Fatalf("expected repaired raw args to satisfy required params, missing=%v", missing)
+	}
+}
+
+func TestExecutor_ExecuteTool_ReportsRequiredExecCommand(t *testing.T) {
+	executor, mcpServer := setupTestExecutor(t)
+	commandPos := 0
+	executor.config.Tools = []config.ToolConfig{
+		{
+			Name:    "exec",
+			Command: "sh",
+			Args:    []string{"-c"},
+			Enabled: true,
+			Parameters: []config.ParameterConfig{
+				{Name: "command", Type: "string", Required: true, Position: &commandPos, Format: "positional"},
+			},
+		},
+	}
+	executor.buildToolIndex()
+	executor.RegisterTools(mcpServer)
+
+	result, err := executor.ExecuteTool(context.Background(), "exec", map[string]interface{}{})
+	if err != nil {
+		t.Fatalf("ExecuteTool returned unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("expected missing exec command to return an error result")
+	}
+	if !strings.Contains(result.Content[0].Text, "missing required parameters: command") {
+		t.Fatalf("expected explicit missing command error, got %q", result.Content[0].Text)
 	}
 }

@@ -75,9 +75,10 @@ type MemoryEntry struct {
 // compression and persist across sessions. Entries are stored in SQLite and
 // injected as a context block in every agent system prompt.
 type PersistentMemory struct {
-	db     *sql.DB
-	mu     sync.RWMutex
-	logger *zap.Logger
+	db         *sql.DB
+	mu         sync.RWMutex
+	logger     *zap.Logger
+	maxEntries int
 }
 
 // NewPersistentMemory creates a PersistentMemory backed by the given SQLite DB.
@@ -91,6 +92,17 @@ func NewPersistentMemory(db *sql.DB, logger *zap.Logger) (*PersistentMemory, err
 		return nil, fmt.Errorf("persistent memory migration failed: %w", err)
 	}
 	return pm, nil
+}
+
+// SetMaxEntries updates the configured hard cap for stored memory rows.
+// A value <= 0 disables the cap.
+func (pm *PersistentMemory) SetMaxEntries(maxEntries int) {
+	pm.mu.Lock()
+	pm.maxEntries = maxEntries
+	if err := pm.enforceMaxEntriesLocked(); err != nil {
+		pm.logger.Warn("failed to enforce memory max_entries", zap.Int("max_entries", maxEntries), zap.Error(err))
+	}
+	pm.mu.Unlock()
 }
 
 // migrate creates the agent_memories table if it does not exist and adds any
@@ -242,6 +254,10 @@ func (pm *PersistentMemory) StoreFull(key, value string, category MemoryCategory
 	}
 
 	// Insert new entry.
+	if err := pm.enforceMaxEntriesLocked(); err != nil {
+		return nil, err
+	}
+
 	id := uuid.New().String()
 	_, err = pm.db.Exec(
 		"INSERT INTO agent_memories (id, key, value, category, conversation_id, entity, confidence, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -263,6 +279,40 @@ func (pm *PersistentMemory) StoreFull(key, value string, category MemoryCategory
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}, nil
+}
+
+func (pm *PersistentMemory) enforceMaxEntriesLocked() error {
+	if pm.maxEntries <= 0 {
+		return nil
+	}
+
+	var count int
+	if err := pm.db.QueryRow("SELECT COUNT(*) FROM agent_memories").Scan(&count); err != nil {
+		return fmt.Errorf("count memories: %w", err)
+	}
+	if count < pm.maxEntries {
+		return nil
+	}
+
+	toDelete := count - pm.maxEntries + 1
+	if toDelete <= 0 {
+		return nil
+	}
+
+	_, err := pm.db.Exec(
+		`DELETE FROM agent_memories
+		 WHERE id IN (
+		   SELECT id FROM agent_memories
+		   ORDER BY updated_at ASC, created_at ASC
+		   LIMIT ?
+		 )`,
+		toDelete,
+	)
+	if err != nil {
+		return fmt.Errorf("enforce memory max_entries: %w", err)
+	}
+
+	return nil
 }
 
 // SetStatus updates the status of an existing memory entry by ID.
@@ -483,6 +533,33 @@ func (pm *PersistentMemory) ListAll(category MemoryCategory, limit int) ([]*Memo
 	return pm.scanRows(rows)
 }
 
+// ListByConversation returns memories scoped to a specific conversation.
+// It includes both conversation-specific memories AND entity-scoped global
+// memories (entity != ” AND conversation_id = ”) since those represent
+// shared knowledge about targets that may be relevant.
+func (pm *PersistentMemory) ListByConversation(conversationID string, limit int) ([]*MemoryEntry, error) {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+
+	if limit <= 0 {
+		limit = 50
+	}
+
+	rows, err := pm.db.Query(
+		`SELECT id, key, value, category, status, entity, confidence, conversation_id, created_at, updated_at
+		 FROM agent_memories
+		 WHERE conversation_id = ? OR (entity != '' AND entity IS NOT NULL)
+		 ORDER BY updated_at DESC LIMIT ?`,
+		conversationID, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list by conversation: %w", err)
+	}
+	defer rows.Close()
+
+	return pm.scanRows(rows)
+}
+
 // ListByEntity returns all active memories associated with a given entity
 // (e.g., a target hostname, IP address, or service name).
 func (pm *PersistentMemory) ListByEntity(entity string, limit int) ([]*MemoryEntry, error) {
@@ -664,12 +741,26 @@ func (pm *PersistentMemory) Delete(id string) error {
 	return nil
 }
 
-// BuildContextBlock returns a structured text summary of all stored memories
+// BuildContextBlock returns a structured text summary of stored memories
 // suitable for injection into a system prompt. It organizes memories by category
 // and entity, highlights status, and separates dismissed findings from active ones.
+// When conversationID is non-empty, only memories belonging to that conversation
+// (or entity-scoped global memories) are included — this prevents cross-conversation
+// bleed where old targets from unrelated threads confuse the current session.
 // Returns an empty string when there are no memories.
-func (pm *PersistentMemory) BuildContextBlock() string {
-	entries, err := pm.ListAll("", 120)
+func (pm *PersistentMemory) BuildContextBlock(conversationID ...string) string {
+	var convID string
+	if len(conversationID) > 0 {
+		convID = conversationID[0]
+	}
+
+	var entries []*MemoryEntry
+	var err error
+	if convID != "" {
+		entries, err = pm.ListByConversation(convID, 120)
+	} else {
+		entries, err = pm.ListAll("", 120)
+	}
 	if err != nil || len(entries) == 0 {
 		return ""
 	}

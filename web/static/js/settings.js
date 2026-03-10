@@ -6,6 +6,169 @@ let dockerLogStreaming = false;
 // Global tool status map, used to save user changes across all pages
 // key: unique tool identifier (toolKey), value: { enabled: boolean, is_external: boolean, external_mcp: string }
 let toolStateMap = new Map();
+const modelDiscoveryCache = new Map();
+let modelDiscoveryListenersBound = false;
+const modelDiscoveryTimers = {};
+
+function isPlaceholderModel(value) {
+    const v = (value || '').trim().toLowerCase();
+    return v === '' || v === 'my_model' || v === 'auto';
+}
+
+function updateModelDatalist(datalistId, models) {
+    const datalist = document.getElementById(datalistId);
+    if (!datalist) return;
+    datalist.innerHTML = '';
+    (models || []).forEach(model => {
+        const option = document.createElement('option');
+        option.value = model;
+        datalist.appendChild(option);
+    });
+}
+
+async function discoverModels(baseUrl, apiKey) {
+    const base = (baseUrl || '').trim();
+    if (!base) return [];
+    const cacheKey = `${base}::${(apiKey || '').trim()}`;
+    if (modelDiscoveryCache.has(cacheKey)) {
+        return modelDiscoveryCache.get(cacheKey);
+    }
+    const response = await apiFetch('/api/config/models', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ base_url: base, api_key: (apiKey || '').trim() })
+    });
+    const result = await response.json();
+    if (!response.ok) {
+        throw new Error(result.error || 'Failed to discover models');
+    }
+    const models = Array.isArray(result.models) ? result.models : [];
+    modelDiscoveryCache.set(cacheKey, models);
+    return models;
+}
+
+function scheduleModelDiscovery(key, fn, delay = 500) {
+    if (modelDiscoveryTimers[key]) {
+        clearTimeout(modelDiscoveryTimers[key]);
+    }
+    modelDiscoveryTimers[key] = setTimeout(fn, delay);
+}
+
+async function refreshMainModelOptions() {
+    const baseUrl = document.getElementById('openai-base-url')?.value || '';
+    const apiKey = document.getElementById('openai-api-key')?.value || '';
+    const modelInput = document.getElementById('openai-model');
+    if (!modelInput || !baseUrl.trim()) return;
+    try {
+        const models = await discoverModels(baseUrl, apiKey);
+        updateModelDatalist('openai-model-options', models);
+        if (isPlaceholderModel(modelInput.value) && models.length > 0) {
+            modelInput.value = models[0];
+        }
+    } catch (err) {
+        console.warn('Main model discovery failed:', err);
+        updateModelDatalist('openai-model-options', []);
+    }
+}
+
+async function refreshToolModelOptions() {
+    const mainBase = document.getElementById('openai-base-url')?.value || '';
+    const mainKey = document.getElementById('openai-api-key')?.value || '';
+    const baseUrl = document.getElementById('openai-tool-base-url')?.value || mainBase;
+    const apiKey = document.getElementById('openai-tool-api-key')?.value || mainKey;
+    const modelInput = document.getElementById('openai-tool-model');
+    if (!modelInput || !baseUrl.trim()) return;
+    try {
+        const models = await discoverModels(baseUrl, apiKey);
+        updateModelDatalist('openai-tool-model-options', models);
+        if (isPlaceholderModel(modelInput.value) && models.length > 0) {
+            modelInput.value = models[0];
+        }
+    } catch (err) {
+        console.warn('Tool model discovery failed:', err);
+        updateModelDatalist('openai-tool-model-options', []);
+    }
+}
+
+async function refreshSummaryModelOptions() {
+    const mainBase = document.getElementById('openai-base-url')?.value || '';
+    const mainKey = document.getElementById('openai-api-key')?.value || '';
+    const baseUrl = document.getElementById('openai-summary-base-url')?.value || mainBase;
+    const apiKey = document.getElementById('openai-summary-api-key')?.value || mainKey;
+    const modelInput = document.getElementById('openai-summary-model');
+    if (!modelInput || !baseUrl.trim()) return;
+    try {
+        const models = await discoverModels(baseUrl, apiKey);
+        updateModelDatalist('openai-summary-model-options', models);
+        if (isPlaceholderModel(modelInput.value) && models.length > 0) {
+            modelInput.value = models[0];
+        }
+    } catch (err) {
+        console.warn('Summary model discovery failed:', err);
+        updateModelDatalist('openai-summary-model-options', []);
+    }
+}
+
+async function refreshEmbeddingModelOptions() {
+    const baseUrl = document.getElementById('knowledge-embedding-base-url')?.value || '';
+    const apiKey = document.getElementById('knowledge-embedding-api-key')?.value || '';
+    const modelInput = document.getElementById('knowledge-embedding-model');
+    if (!modelInput) return;
+    if (!baseUrl.trim()) {
+        updateModelDatalist('knowledge-embedding-model-options', []);
+        return;
+    }
+    try {
+        const models = await discoverModels(baseUrl, apiKey);
+        updateModelDatalist('knowledge-embedding-model-options', models);
+        if (isPlaceholderModel(modelInput.value) && models.length > 0) {
+            modelInput.value = models[0];
+        }
+    } catch (err) {
+        console.warn('Embedding model discovery failed:', err);
+        updateModelDatalist('knowledge-embedding-model-options', []);
+    }
+}
+
+function bindModelDiscoveryListeners() {
+    if (modelDiscoveryListenersBound) return;
+    modelDiscoveryListenersBound = true;
+
+    const mainBase = document.getElementById('openai-base-url');
+    const mainKey = document.getElementById('openai-api-key');
+    const toolBase = document.getElementById('openai-tool-base-url');
+    const toolKey = document.getElementById('openai-tool-api-key');
+    const summaryBase = document.getElementById('openai-summary-base-url');
+    const summaryKey = document.getElementById('openai-summary-api-key');
+    const embBase = document.getElementById('knowledge-embedding-base-url');
+    const embKey = document.getElementById('knowledge-embedding-api-key');
+
+    if (mainBase) mainBase.addEventListener('input', () => scheduleModelDiscovery('main', async () => {
+        await refreshMainModelOptions();
+        await refreshToolModelOptions();
+        await refreshSummaryModelOptions();
+        await refreshEmbeddingModelOptions();
+    }));
+    if (mainKey) mainKey.addEventListener('input', () => scheduleModelDiscovery('mainKey', async () => {
+        await refreshMainModelOptions();
+        await refreshToolModelOptions();
+        await refreshSummaryModelOptions();
+        await refreshEmbeddingModelOptions();
+    }));
+    if (toolBase) toolBase.addEventListener('input', () => scheduleModelDiscovery('tool', refreshToolModelOptions));
+    if (toolKey) toolKey.addEventListener('input', () => scheduleModelDiscovery('toolKey', refreshToolModelOptions));
+    if (summaryBase) summaryBase.addEventListener('input', () => scheduleModelDiscovery('summary', refreshSummaryModelOptions));
+    if (summaryKey) summaryKey.addEventListener('input', () => scheduleModelDiscovery('summaryKey', refreshSummaryModelOptions));
+    if (embBase) embBase.addEventListener('input', () => scheduleModelDiscovery('embedding', refreshEmbeddingModelOptions));
+    if (embKey) embKey.addEventListener('input', () => scheduleModelDiscovery('embeddingKey', refreshEmbeddingModelOptions));
+}
+
+async function refreshAllModelOptions() {
+    await refreshMainModelOptions();
+    await refreshToolModelOptions();
+    await refreshSummaryModelOptions();
+    await refreshEmbeddingModelOptions();
+}
 
 // Generate a unique identifier for a tool to distinguish tools with the same name but different sources
 function getToolKey(tool) {
@@ -234,6 +397,18 @@ async function loadConfig(loadTools = true) {
         document.getElementById('openai-api-key').value = currentConfig.openai.api_key || '';
         document.getElementById('openai-base-url').value = currentConfig.openai.base_url || '';
         document.getElementById('openai-model').value = currentConfig.openai.model || '';
+        const toolModelEl = document.getElementById('openai-tool-model');
+        if (toolModelEl) toolModelEl.value = currentConfig.openai.tool_model || '';
+        const toolBaseUrlEl = document.getElementById('openai-tool-base-url');
+        if (toolBaseUrlEl) toolBaseUrlEl.value = currentConfig.openai.tool_base_url || '';
+        const toolApiKeyEl = document.getElementById('openai-tool-api-key');
+        if (toolApiKeyEl) toolApiKeyEl.value = currentConfig.openai.tool_api_key || '';
+        const summaryModelEl = document.getElementById('openai-summary-model');
+        if (summaryModelEl) summaryModelEl.value = currentConfig.openai.summary_model || '';
+        const summaryBaseUrlEl = document.getElementById('openai-summary-base-url');
+        if (summaryBaseUrlEl) summaryBaseUrlEl.value = currentConfig.openai.summary_base_url || '';
+        const summaryApiKeyEl = document.getElementById('openai-summary-api-key');
+        if (summaryApiKeyEl) summaryApiKeyEl.value = currentConfig.openai.summary_api_key || '';
 
         // Fill FOFA config
         const fofa = currentConfig.fofa || {};
@@ -243,9 +418,90 @@ async function loadConfig(loadTools = true) {
         if (fofaEmailEl) fofaEmailEl.value = fofa.email || '';
         if (fofaKeyEl) fofaKeyEl.value = fofa.api_key || '';
         if (fofaBaseUrlEl) fofaBaseUrlEl.value = fofa.base_url || '';
-        
+
+        // Fill ZoomEye config
+        const zoomeye = currentConfig.zoomeye || {};
+        const zoomeyeKeyEl = document.getElementById('zoomeye-api-key');
+        if (zoomeyeKeyEl) zoomeyeKeyEl.value = zoomeye.api_key || '';
+
+        // Fill Shodan config
+        const shodan = currentConfig.shodan || {};
+        const shodanKeyEl = document.getElementById('shodan-api-key');
+        if (shodanKeyEl) shodanKeyEl.value = shodan.api_key || '';
+
+        // Fill Censys config
+        const censys = currentConfig.censys || {};
+        const censysIdEl = document.getElementById('censys-api-id');
+        const censysSecretEl = document.getElementById('censys-api-secret');
+        if (censysIdEl) censysIdEl.value = censys.api_id || '';
+        if (censysSecretEl) censysSecretEl.value = censys.api_secret || '';
+
+        // Fill OpenAI max total tokens
+        const maxTotalTokensEl = document.getElementById('openai-max-total-tokens');
+        if (maxTotalTokensEl) maxTotalTokensEl.value = currentConfig.openai.max_total_tokens || 120000;
+
         // Fill Agent config
         document.getElementById('agent-max-iterations').value = currentConfig.agent.max_iterations || 30;
+
+        const agentFields = {
+            'agent-large-result-threshold': currentConfig.agent.large_result_threshold || 51200,
+            'agent-result-storage-dir': currentConfig.agent.result_storage_dir || 'tmp',
+            'agent-max-parallel-tools': currentConfig.agent.max_parallel_tools || 0,
+            'agent-tool-retry-count': currentConfig.agent.tool_retry_count || 0,
+            'agent-parallel-tool-wait-seconds': currentConfig.agent.parallel_tool_wait_seconds || 45,
+            'agent-time-awareness-timezone': currentConfig.agent.time_awareness?.timezone || 'UTC',
+            'agent-memory-max-entries': currentConfig.agent.memory?.max_entries || 200,
+        };
+        for (const [id, val] of Object.entries(agentFields)) {
+            const el = document.getElementById(id);
+            if (el) el.value = val;
+        }
+
+        const agentCheckboxes = {
+            'agent-parallel-tool-execution': currentConfig.agent.parallel_tool_execution !== false,
+            'agent-time-awareness-enabled': currentConfig.agent.time_awareness?.enabled !== false,
+            'agent-memory-enabled': currentConfig.agent.memory?.enabled !== false,
+            'agent-file-manager-enabled': currentConfig.agent.file_manager?.enabled !== false,
+            'agent-cuttlefish-enabled': currentConfig.agent.cuttlefish?.enabled !== false,
+            'agent-cuttlefish-auto-launch': currentConfig.agent.cuttlefish?.auto_launch === true,
+            'agent-cuttlefish-russian-identity': currentConfig.agent.cuttlefish?.russian_identity !== false,
+            'agent-cuttlefish-proxy-auto-start': currentConfig.agent.cuttlefish?.proxy_auto_start !== false,
+            'agent-cuttlefish-vision-enabled': currentConfig.agent.cuttlefish?.vision_enabled !== false,
+            'agent-sslstrip-enabled': currentConfig.agent.sslstrip?.enabled !== false,
+            'agent-sslstrip-auto-proxy': currentConfig.agent.sslstrip?.auto_proxy === true,
+            'ghidra-mcp-enabled': currentConfig.external_mcp?.servers?.['ghidra-headless-mcp']?.external_mcp_enable === true,
+        };
+        // Cuttlefish text fields
+        const cvdFields = {
+            'agent-file-manager-storage-dir': currentConfig.agent.file_manager?.storage_dir || 'managed_files',
+            'agent-cuttlefish-cvd-home': currentConfig.agent.cuttlefish?.cvd_home || '',
+            'agent-cuttlefish-memory-mb': currentConfig.agent.cuttlefish?.memory_mb || 8192,
+            'agent-cuttlefish-cpus': currentConfig.agent.cuttlefish?.cpus || 4,
+            'agent-cuttlefish-disk-mb': currentConfig.agent.cuttlefish?.disk_mb || 16000,
+            'agent-cuttlefish-gpu-mode': currentConfig.agent.cuttlefish?.gpu_mode || 'guest_swiftshader',
+            'agent-cuttlefish-webrtc-port': currentConfig.agent.cuttlefish?.webrtc_port || 8443,
+            'agent-cuttlefish-droidrun-path': currentConfig.agent.cuttlefish?.droidrun_path || '',
+            'agent-cuttlefish-droidrun-config': currentConfig.agent.cuttlefish?.droidrun_config || '',
+            'agent-cuttlefish-bridge-script': currentConfig.agent.cuttlefish?.bridge_script || '',
+            'agent-cuttlefish-proxy-port': currentConfig.agent.cuttlefish?.proxy_port || 18090,
+            'agent-cuttlefish-screenshot-dir': currentConfig.agent.cuttlefish?.screenshot_dir || '/tmp/droidrun_screenshots',
+            'agent-sslstrip-listen-port': currentConfig.agent.sslstrip?.listen_port || 10000,
+            'agent-sslstrip-log-dir': currentConfig.agent.sslstrip?.log_dir || '/tmp',
+            'ghidra-install-dir': currentConfig.external_mcp?.servers?.['ghidra-headless-mcp']?.env?.GHIDRA_INSTALL_DIR || '',
+            'ghidra-mcp-home': currentConfig.external_mcp?.servers?.['ghidra-headless-mcp']?.env?.GHIDRA_MCP_HOME || '',
+        };
+        for (const [id, val] of Object.entries(cvdFields)) {
+            const el = document.getElementById(id);
+            if (el) el.value = val;
+        }
+        for (const [id, val] of Object.entries(agentCheckboxes)) {
+            const el = document.getElementById(id);
+            if (el) el.checked = val;
+        }
+
+        // Fill security config
+        const toolDescModeEl = document.getElementById('security-tool-description-mode');
+        if (toolDescModeEl) toolDescModeEl.value = currentConfig.security?.tool_description_mode || 'short';
         
         // Fill knowledge base config
         const knowledgeEnabledCheckbox = document.getElementById('knowledge-enabled');
@@ -305,28 +561,8 @@ async function loadConfig(loadTools = true) {
 
         // Fill bot config
         const robots = currentConfig.robots || {};
-        const wecom = robots.wecom || {};
-        const dingtalk = robots.dingtalk || {};
         const lark = robots.lark || {};
         const telegram = robots.telegram || {};
-        const wecomEnabled = document.getElementById('robot-wecom-enabled');
-        if (wecomEnabled) wecomEnabled.checked = wecom.enabled === true;
-        const wecomToken = document.getElementById('robot-wecom-token');
-        if (wecomToken) wecomToken.value = wecom.token || '';
-        const wecomAes = document.getElementById('robot-wecom-encoding-aes-key');
-        if (wecomAes) wecomAes.value = wecom.encoding_aes_key || '';
-        const wecomCorp = document.getElementById('robot-wecom-corp-id');
-        if (wecomCorp) wecomCorp.value = wecom.corp_id || '';
-        const wecomSecret = document.getElementById('robot-wecom-secret');
-        if (wecomSecret) wecomSecret.value = wecom.secret || '';
-        const wecomAgentId = document.getElementById('robot-wecom-agent-id');
-        if (wecomAgentId) wecomAgentId.value = wecom.agent_id || '0';
-        const dingtalkEnabled = document.getElementById('robot-dingtalk-enabled');
-        if (dingtalkEnabled) dingtalkEnabled.checked = dingtalk.enabled === true;
-        const dingtalkClientId = document.getElementById('robot-dingtalk-client-id');
-        if (dingtalkClientId) dingtalkClientId.value = dingtalk.client_id || '';
-        const dingtalkClientSecret = document.getElementById('robot-dingtalk-client-secret');
-        if (dingtalkClientSecret) dingtalkClientSecret.value = dingtalk.client_secret || '';
         const larkEnabled = document.getElementById('robot-lark-enabled');
         if (larkEnabled) larkEnabled.checked = lark.enabled === true;
         const larkAppId = document.getElementById('robot-lark-app-id');
@@ -341,6 +577,9 @@ async function loadConfig(loadTools = true) {
         if (telegramBotToken) telegramBotToken.value = telegram.bot_token || '';
         const telegramAllowedIds = document.getElementById('robot-telegram-allowed-user-ids');
         if (telegramAllowedIds) telegramAllowedIds.value = (telegram.allowed_user_ids || []).join(',');
+
+        bindModelDiscoveryListeners();
+        await refreshAllModelOptions();
 
         // Only load tool list when needed (MCP management page needs it, system settings does not)
         if (loadTools) {
@@ -867,36 +1106,84 @@ async function applySettings() {
             }
         };
         
-        const wecomAgentIdVal = document.getElementById('robot-wecom-agent-id')?.value.trim();
         const config = {
             openai: {
                 api_key: apiKey,
                 base_url: baseUrl,
-                model: model
+                model: model,
+                tool_model: document.getElementById('openai-tool-model')?.value.trim() || '',
+                tool_base_url: document.getElementById('openai-tool-base-url')?.value.trim() || '',
+                tool_api_key: document.getElementById('openai-tool-api-key')?.value.trim() || '',
+                summary_model: document.getElementById('openai-summary-model')?.value.trim() || '',
+                summary_base_url: document.getElementById('openai-summary-base-url')?.value.trim() || '',
+                summary_api_key: document.getElementById('openai-summary-api-key')?.value.trim() || '',
+                max_total_tokens: parseInt(document.getElementById('openai-max-total-tokens')?.value) || 120000
             },
             fofa: {
                 email: document.getElementById('fofa-email')?.value.trim() || '',
                 api_key: document.getElementById('fofa-api-key')?.value.trim() || '',
                 base_url: document.getElementById('fofa-base-url')?.value.trim() || ''
             },
+            zoomeye: {
+                api_key: document.getElementById('zoomeye-api-key')?.value.trim() || ''
+            },
+            shodan: {
+                api_key: document.getElementById('shodan-api-key')?.value.trim() || ''
+            },
+            censys: {
+                api_id: document.getElementById('censys-api-id')?.value.trim() || '',
+                api_secret: document.getElementById('censys-api-secret')?.value.trim() || ''
+            },
             agent: {
-                max_iterations: parseInt(document.getElementById('agent-max-iterations').value) || 30
+                max_iterations: parseInt(document.getElementById('agent-max-iterations').value) || 30,
+                large_result_threshold: parseInt(document.getElementById('agent-large-result-threshold')?.value) || 51200,
+                result_storage_dir: document.getElementById('agent-result-storage-dir')?.value.trim() || 'tmp',
+                parallel_tool_execution: document.getElementById('agent-parallel-tool-execution')?.checked !== false,
+                max_parallel_tools: parseInt(document.getElementById('agent-max-parallel-tools')?.value) || 0,
+                tool_retry_count: parseInt(document.getElementById('agent-tool-retry-count')?.value) || 0,
+                parallel_tool_wait_seconds: parseInt(document.getElementById('agent-parallel-tool-wait-seconds')?.value) || 45,
+                time_awareness: {
+                    enabled: document.getElementById('agent-time-awareness-enabled')?.checked !== false,
+                    timezone: document.getElementById('agent-time-awareness-timezone')?.value.trim() || 'UTC'
+                },
+                memory: {
+                    enabled: document.getElementById('agent-memory-enabled')?.checked !== false,
+                    max_entries: parseInt(document.getElementById('agent-memory-max-entries')?.value) || 200
+                },
+                file_manager: {
+                    enabled: document.getElementById('agent-file-manager-enabled')?.checked !== false,
+                    storage_dir: document.getElementById('agent-file-manager-storage-dir')?.value.trim() || 'managed_files'
+                },
+                cuttlefish: {
+                    enabled: document.getElementById('agent-cuttlefish-enabled')?.checked !== false,
+                    cvd_home: document.getElementById('agent-cuttlefish-cvd-home')?.value.trim() || '',
+                    memory_mb: parseInt(document.getElementById('agent-cuttlefish-memory-mb')?.value) || 8192,
+                    cpus: parseInt(document.getElementById('agent-cuttlefish-cpus')?.value) || 4,
+                    disk_mb: parseInt(document.getElementById('agent-cuttlefish-disk-mb')?.value) || 16000,
+                    gpu_mode: document.getElementById('agent-cuttlefish-gpu-mode')?.value.trim() || 'guest_swiftshader',
+                    auto_launch: document.getElementById('agent-cuttlefish-auto-launch')?.checked === true,
+                    russian_identity: document.getElementById('agent-cuttlefish-russian-identity')?.checked !== false,
+                    webrtc_port: parseInt(document.getElementById('agent-cuttlefish-webrtc-port')?.value) || 8443,
+                    droidrun_path: document.getElementById('agent-cuttlefish-droidrun-path')?.value.trim() || '',
+                    droidrun_config: document.getElementById('agent-cuttlefish-droidrun-config')?.value.trim() || '',
+                    bridge_script: document.getElementById('agent-cuttlefish-bridge-script')?.value.trim() || '',
+                    proxy_port: parseInt(document.getElementById('agent-cuttlefish-proxy-port')?.value) || 18090,
+                    proxy_auto_start: document.getElementById('agent-cuttlefish-proxy-auto-start')?.checked !== false,
+                    screenshot_dir: document.getElementById('agent-cuttlefish-screenshot-dir')?.value.trim() || '/tmp/droidrun_screenshots',
+                    vision_enabled: document.getElementById('agent-cuttlefish-vision-enabled')?.checked !== false
+                },
+                sslstrip: {
+                    enabled: document.getElementById('agent-sslstrip-enabled')?.checked !== false,
+                    listen_port: parseInt(document.getElementById('agent-sslstrip-listen-port')?.value) || 10000,
+                    log_dir: document.getElementById('agent-sslstrip-log-dir')?.value.trim() || '/tmp',
+                    auto_proxy: document.getElementById('agent-sslstrip-auto-proxy')?.checked === true
+                }
+            },
+            security: {
+                tool_description_mode: document.getElementById('security-tool-description-mode')?.value || 'short'
             },
             knowledge: knowledgeConfig,
             robots: {
-                wecom: {
-                    enabled: document.getElementById('robot-wecom-enabled')?.checked === true,
-                    token: document.getElementById('robot-wecom-token')?.value.trim() || '',
-                    encoding_aes_key: document.getElementById('robot-wecom-encoding-aes-key')?.value.trim() || '',
-                    corp_id: document.getElementById('robot-wecom-corp-id')?.value.trim() || '',
-                    secret: document.getElementById('robot-wecom-secret')?.value.trim() || '',
-                    agent_id: parseInt(wecomAgentIdVal, 10) || 0
-                },
-                dingtalk: {
-                    enabled: document.getElementById('robot-dingtalk-enabled')?.checked === true,
-                    client_id: document.getElementById('robot-dingtalk-client-id')?.value.trim() || '',
-                    client_secret: document.getElementById('robot-dingtalk-client-secret')?.value.trim() || ''
-                },
                 lark: {
                     enabled: document.getElementById('robot-lark-enabled')?.checked === true,
                     app_id: document.getElementById('robot-lark-app-id')?.value.trim() || '',
@@ -916,6 +1203,18 @@ async function applySettings() {
             tools: []
         };
         
+        // Update Ghidra Headless MCP external server config
+        if (!config.external_mcp) config.external_mcp = {};
+        if (!config.external_mcp.servers) config.external_mcp.servers = {};
+        const ghidraServer = config.external_mcp.servers['ghidra-headless-mcp'] || {};
+        ghidraServer.external_mcp_enable = document.getElementById('ghidra-mcp-enabled')?.checked === true;
+        if (!ghidraServer.env) ghidraServer.env = {};
+        const ghidraDir = document.getElementById('ghidra-install-dir')?.value.trim() || '';
+        const ghidraMcpHome = document.getElementById('ghidra-mcp-home')?.value.trim() || '';
+        if (ghidraDir) ghidraServer.env.GHIDRA_INSTALL_DIR = ghidraDir;
+        if (ghidraMcpHome) ghidraServer.env.GHIDRA_MCP_HOME = ghidraMcpHome;
+        config.external_mcp.servers['ghidra-headless-mcp'] = ghidraServer;
+
         // Collect tool enabled status
         // Save current page status to global map first
         saveCurrentPageToolStates();
@@ -1809,3 +2108,82 @@ openSettings = async function() {
     await originalOpenSettings();
     await loadExternalMCPs();
 };
+
+// ── Recon engine API key validation ─────────────────────────────────────
+// Auto-validates keys on blur and after save. Shows status indicators.
+async function validateReconKey(engine) {
+    const statusEl = document.getElementById(engine + '-key-status');
+    if (!statusEl) return;
+
+    let body = {};
+    let endpoint = '/api/recon/' + engine + '/validate';
+
+    if (engine === 'fofa') {
+        const email = document.getElementById('fofa-email')?.value.trim();
+        const key = document.getElementById('fofa-api-key')?.value.trim();
+        if (!email || !key) { statusEl.textContent = ''; return; }
+        body = { email, api_key: key };
+    } else if (engine === 'zoomeye') {
+        const key = document.getElementById('zoomeye-api-key')?.value.trim();
+        if (!key) { statusEl.textContent = ''; return; }
+        body = { api_key: key };
+    } else if (engine === 'shodan') {
+        const key = document.getElementById('shodan-api-key')?.value.trim();
+        if (!key) { statusEl.textContent = ''; return; }
+        body = { api_key: key };
+    } else if (engine === 'censys') {
+        const id = document.getElementById('censys-api-id')?.value.trim();
+        const secret = document.getElementById('censys-api-secret')?.value.trim();
+        if (!id || !secret) { statusEl.textContent = ''; return; }
+        body = { api_id: id, api_secret: secret };
+    }
+
+    statusEl.textContent = '...';
+    statusEl.className = 'recon-key-status validating';
+
+    try {
+        const resp = await apiFetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        const data = await resp.json();
+        if (data.valid) {
+            statusEl.textContent = ' ✓';
+            statusEl.className = 'recon-key-status valid';
+            statusEl.title = data.info || 'Valid';
+        } else {
+            statusEl.textContent = ' ✗';
+            statusEl.className = 'recon-key-status invalid';
+            statusEl.title = data.error || 'Invalid';
+        }
+    } catch (e) {
+        statusEl.textContent = ' ?';
+        statusEl.className = 'recon-key-status error';
+        statusEl.title = 'Validation failed: ' + e.message;
+    }
+}
+
+// Bind blur validation on key inputs
+document.addEventListener('DOMContentLoaded', function() {
+    const bindings = [
+        { ids: ['zoomeye-api-key'], engine: 'zoomeye' },
+        { ids: ['shodan-api-key'], engine: 'shodan' },
+        { ids: ['censys-api-id', 'censys-api-secret'], engine: 'censys' },
+    ];
+    for (const b of bindings) {
+        for (const id of b.ids) {
+            const el = document.getElementById(id);
+            if (el) {
+                el.addEventListener('blur', () => validateReconKey(b.engine));
+            }
+        }
+    }
+});
+
+// Validate all configured keys after settings save
+function validateAllReconKeys() {
+    for (const engine of ['zoomeye', 'shodan', 'censys']) {
+        validateReconKey(engine);
+    }
+}

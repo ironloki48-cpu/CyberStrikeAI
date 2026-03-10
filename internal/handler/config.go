@@ -15,6 +15,7 @@ import (
 	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/knowledge"
 	"cyberstrike-ai/internal/mcp"
+	"cyberstrike-ai/internal/openai"
 	"cyberstrike-ai/internal/security"
 
 	"github.com/gin-gonic/gin"
@@ -31,6 +32,9 @@ type VulnerabilityToolRegistrar func() error
 // SkillsToolRegistrar Skills tool registrar interface
 type SkillsToolRegistrar func() error
 
+// BuiltinToolRegistrar generic registrar for builtin tools (memory, time, etc.)
+type BuiltinToolRegistrar func() error
+
 // RetrieverUpdater retriever updater interface
 type RetrieverUpdater interface {
 	UpdateConfig(config *knowledge.RetrievalConfig)
@@ -39,12 +43,12 @@ type RetrieverUpdater interface {
 // KnowledgeInitializer knowledge base initializer interface
 type KnowledgeInitializer func() (*KnowledgeHandler, error)
 
-// AppUpdater App updater interface (for updating knowledge base components in App)
+// AppUpdater app updater interface for runtime-owned components.
 type AppUpdater interface {
-	UpdateKnowledgeComponents(handler *KnowledgeHandler, manager interface{}, retriever interface{}, indexer interface{})
+	ApplyAgentRuntimeConfig(cfg *config.AgentConfig) error
 }
 
-// RobotRestarter robot connection restarter (for restarting DingTalk/Lark long connections after config is applied)
+// RobotRestarter robot connection restarter (for restarting Lark long connections after config is applied)
 type RobotRestarter interface {
 	RestartRobotConnections()
 }
@@ -61,10 +65,13 @@ type ConfigHandler struct {
 	knowledgeToolRegistrar     KnowledgeToolRegistrar     // knowledge base tool registrar (optional)
 	vulnerabilityToolRegistrar VulnerabilityToolRegistrar // vulnerability tool registrar (optional)
 	skillsToolRegistrar        SkillsToolRegistrar        // Skills tool registrar (optional)
+	memoryToolRegistrar        BuiltinToolRegistrar       // memory tool registrar (optional)
+	timeToolRegistrar          BuiltinToolRegistrar       // time tool registrar (optional)
+	fileManagerToolRegistrar   BuiltinToolRegistrar       // file manager tool registrar (optional)
 	retrieverUpdater           RetrieverUpdater           // retriever updater (optional)
 	knowledgeInitializer       KnowledgeInitializer       // knowledge base initializer (optional)
 	appUpdater                 AppUpdater                 // App updater (optional)
-	robotRestarter             RobotRestarter             // robot connection restarter (optional), restarts DingTalk/Lark when ApplyConfig is called
+	robotRestarter             RobotRestarter             // robot connection restarter (optional), restarts Lark when ApplyConfig is called
 	logger                     *zap.Logger
 	mu                         sync.RWMutex
 	lastEmbeddingConfig        *config.EmbeddingConfig // last embedding model config (for detecting changes)
@@ -79,6 +86,7 @@ type AttackChainUpdater interface {
 type AgentUpdater interface {
 	UpdateConfig(cfg *config.OpenAIConfig)
 	UpdateMaxIterations(maxIterations int)
+	UpdateAgentSettings(cfg *config.AgentConfig)
 }
 
 // NewConfigHandler creates a new configuration handler
@@ -127,6 +135,27 @@ func (h *ConfigHandler) SetSkillsToolRegistrar(registrar SkillsToolRegistrar) {
 	h.skillsToolRegistrar = registrar
 }
 
+// SetMemoryToolRegistrar sets the persistent memory tool registrar
+func (h *ConfigHandler) SetMemoryToolRegistrar(registrar BuiltinToolRegistrar) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.memoryToolRegistrar = registrar
+}
+
+// SetTimeToolRegistrar sets the time awareness tool registrar
+func (h *ConfigHandler) SetTimeToolRegistrar(registrar BuiltinToolRegistrar) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.timeToolRegistrar = registrar
+}
+
+// SetFileManagerToolRegistrar sets the file manager tool registrar.
+func (h *ConfigHandler) SetFileManagerToolRegistrar(registrar BuiltinToolRegistrar) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.fileManagerToolRegistrar = registrar
+}
+
 // SetRetrieverUpdater sets the retriever updater
 func (h *ConfigHandler) SetRetrieverUpdater(updater RetrieverUpdater) {
 	h.mu.Lock()
@@ -148,22 +177,31 @@ func (h *ConfigHandler) SetAppUpdater(updater AppUpdater) {
 	h.appUpdater = updater
 }
 
-// SetRobotRestarter sets the robot connection restarter (used to restart DingTalk/Lark long connections when ApplyConfig is called)
+// SetRobotRestarter sets the robot connection restarter (used to restart Lark long connections when ApplyConfig is called)
 func (h *ConfigHandler) SetRobotRestarter(restarter RobotRestarter) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.robotRestarter = restarter
 }
 
+// SecuritySettingsResponse exposes the subset of SecurityConfig that is user-configurable.
+type SecuritySettingsResponse struct {
+	ToolDescriptionMode string `json:"tool_description_mode"`
+}
+
 // GetConfigResponse get configuration response
 type GetConfigResponse struct {
-	OpenAI    config.OpenAIConfig    `json:"openai"`
-	FOFA      config.FofaConfig      `json:"fofa"`
-	MCP       config.MCPConfig       `json:"mcp"`
-	Tools     []ToolConfigInfo       `json:"tools"`
-	Agent     config.AgentConfig     `json:"agent"`
-	Knowledge config.KnowledgeConfig `json:"knowledge"`
-	Robots    config.RobotsConfig    `json:"robots,omitempty"`
+	OpenAI    config.OpenAIConfig      `json:"openai"`
+	FOFA      config.FofaConfig        `json:"fofa"`
+	ZoomEye   config.ZoomEyeConfig     `json:"zoomeye"`
+	Shodan    config.ShodanConfig      `json:"shodan"`
+	Censys    config.CensysConfig      `json:"censys"`
+	MCP       config.MCPConfig         `json:"mcp"`
+	Tools     []ToolConfigInfo         `json:"tools"`
+	Agent     config.AgentConfig       `json:"agent"`
+	Knowledge config.KnowledgeConfig   `json:"knowledge"`
+	Robots    config.RobotsConfig      `json:"robots,omitempty"`
+	Security  SecuritySettingsResponse `json:"security"`
 }
 
 // ToolConfigInfo tool configuration info
@@ -174,6 +212,77 @@ type ToolConfigInfo struct {
 	IsExternal  bool   `json:"is_external,omitempty"`  // whether it is an external MCP tool
 	ExternalMCP string `json:"external_mcp,omitempty"` // external MCP name (if it is an external tool)
 	RoleEnabled *bool  `json:"role_enabled,omitempty"` // whether this tool is enabled in the current role (nil means no role specified or all tools used)
+}
+
+const maskedSecretValue = "********"
+
+func redactOpenAIConfig(cfg config.OpenAIConfig) config.OpenAIConfig {
+	if strings.TrimSpace(cfg.APIKey) != "" {
+		cfg.APIKey = maskedSecretValue
+	}
+	if strings.TrimSpace(cfg.ToolAPIKey) != "" {
+		cfg.ToolAPIKey = maskedSecretValue
+	}
+	if strings.TrimSpace(cfg.SummaryAPIKey) != "" {
+		cfg.SummaryAPIKey = maskedSecretValue
+	}
+	return cfg
+}
+
+func redactFOFAConfig(cfg config.FofaConfig) config.FofaConfig {
+	if strings.TrimSpace(cfg.APIKey) != "" {
+		cfg.APIKey = maskedSecretValue
+	}
+	return cfg
+}
+
+func redactZoomEyeConfig(cfg config.ZoomEyeConfig) config.ZoomEyeConfig {
+	if strings.TrimSpace(cfg.APIKey) != "" {
+		cfg.APIKey = maskedSecretValue
+	}
+	return cfg
+}
+
+func redactShodanConfig(cfg config.ShodanConfig) config.ShodanConfig {
+	if strings.TrimSpace(cfg.APIKey) != "" {
+		cfg.APIKey = maskedSecretValue
+	}
+	return cfg
+}
+
+func redactCensysConfig(cfg config.CensysConfig) config.CensysConfig {
+	if strings.TrimSpace(cfg.APIID) != "" {
+		cfg.APIID = maskedSecretValue
+	}
+	if strings.TrimSpace(cfg.APISecret) != "" {
+		cfg.APISecret = maskedSecretValue
+	}
+	return cfg
+}
+
+func redactKnowledgeConfig(cfg config.KnowledgeConfig) config.KnowledgeConfig {
+	if strings.TrimSpace(cfg.Embedding.APIKey) != "" {
+		cfg.Embedding.APIKey = maskedSecretValue
+	}
+	return cfg
+}
+
+func redactRobotsConfig(cfg config.RobotsConfig) config.RobotsConfig {
+	if strings.TrimSpace(cfg.Lark.AppSecret) != "" {
+		cfg.Lark.AppSecret = maskedSecretValue
+	}
+	if strings.TrimSpace(cfg.Telegram.BotToken) != "" {
+		cfg.Telegram.BotToken = maskedSecretValue
+	}
+	return cfg
+}
+
+func keepExistingSecret(incoming, existing string) string {
+	trimmed := strings.TrimSpace(incoming)
+	if trimmed == "" || trimmed == maskedSecretValue {
+		return existing
+	}
+	return incoming
 }
 
 // GetConfig gets the current configuration
@@ -230,13 +339,19 @@ func (h *ConfigHandler) GetConfig(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, GetConfigResponse{
-		OpenAI:    h.config.OpenAI,
-		FOFA:      h.config.FOFA,
+		OpenAI:    redactOpenAIConfig(h.config.OpenAI),
+		FOFA:      redactFOFAConfig(h.config.FOFA),
+		ZoomEye:   redactZoomEyeConfig(h.config.ZoomEye),
+		Shodan:    redactShodanConfig(h.config.Shodan),
+		Censys:    redactCensysConfig(h.config.Censys),
 		MCP:       h.config.MCP,
 		Tools:     tools,
 		Agent:     h.config.Agent,
-		Knowledge: h.config.Knowledge,
-		Robots:    h.config.Robots,
+		Knowledge: redactKnowledgeConfig(h.config.Knowledge),
+		Robots:    redactRobotsConfig(h.config.Robots),
+		Security: SecuritySettingsResponse{
+			ToolDescriptionMode: h.config.Security.ToolDescriptionMode,
+		},
 	})
 }
 
@@ -486,15 +601,54 @@ func (h *ConfigHandler) GetTools(c *gin.Context) {
 	})
 }
 
+// SecuritySettingsRequest holds the user-configurable subset of SecurityConfig.
+type SecuritySettingsRequest struct {
+	ToolDescriptionMode string `json:"tool_description_mode"`
+}
+
 // UpdateConfigRequest update configuration request
 type UpdateConfigRequest struct {
-	OpenAI    *config.OpenAIConfig    `json:"openai,omitempty"`
-	FOFA      *config.FofaConfig      `json:"fofa,omitempty"`
-	MCP       *config.MCPConfig       `json:"mcp,omitempty"`
-	Tools     []ToolEnableStatus      `json:"tools,omitempty"`
-	Agent     *config.AgentConfig     `json:"agent,omitempty"`
-	Knowledge *config.KnowledgeConfig `json:"knowledge,omitempty"`
-	Robots    *config.RobotsConfig    `json:"robots,omitempty"`
+	OpenAI    *config.OpenAIConfig     `json:"openai,omitempty"`
+	FOFA      *config.FofaConfig       `json:"fofa,omitempty"`
+	ZoomEye   *config.ZoomEyeConfig    `json:"zoomeye,omitempty"`
+	Shodan    *config.ShodanConfig     `json:"shodan,omitempty"`
+	Censys    *config.CensysConfig     `json:"censys,omitempty"`
+	MCP       *config.MCPConfig        `json:"mcp,omitempty"`
+	Tools     []ToolEnableStatus       `json:"tools,omitempty"`
+	Agent     *config.AgentConfig      `json:"agent,omitempty"`
+	Knowledge *config.KnowledgeConfig  `json:"knowledge,omitempty"`
+	Robots    *config.RobotsConfig     `json:"robots,omitempty"`
+	Security  *SecuritySettingsRequest `json:"security,omitempty"`
+}
+
+type DiscoverModelsRequest struct {
+	BaseURL string `json:"base_url"`
+	APIKey  string `json:"api_key,omitempty"`
+}
+
+// DiscoverModels fetches available models from an OpenAI-compatible endpoint.
+func (h *ConfigHandler) DiscoverModels(c *gin.Context) {
+	var req DiscoverModelsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request parameters: " + err.Error()})
+		return
+	}
+	baseURL := strings.TrimSpace(req.BaseURL)
+	if baseURL == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "base_url is required"})
+		return
+	}
+
+	models, err := openai.FetchModels(baseURL, strings.TrimSpace(req.APIKey), nil)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"base_url": baseURL,
+		"models":   models,
+	})
 }
 
 // ToolEnableStatus tool enable status
@@ -518,6 +672,9 @@ func (h *ConfigHandler) UpdateConfig(c *gin.Context) {
 
 	// Update OpenAI config
 	if req.OpenAI != nil {
+		req.OpenAI.APIKey = keepExistingSecret(req.OpenAI.APIKey, h.config.OpenAI.APIKey)
+		req.OpenAI.ToolAPIKey = keepExistingSecret(req.OpenAI.ToolAPIKey, h.config.OpenAI.ToolAPIKey)
+		req.OpenAI.SummaryAPIKey = keepExistingSecret(req.OpenAI.SummaryAPIKey, h.config.OpenAI.SummaryAPIKey)
 		h.config.OpenAI = *req.OpenAI
 		h.logger.Info("Updating OpenAI config",
 			zap.String("base_url", h.config.OpenAI.BaseURL),
@@ -527,12 +684,36 @@ func (h *ConfigHandler) UpdateConfig(c *gin.Context) {
 
 	// Update FOFA config
 	if req.FOFA != nil {
+		req.FOFA.APIKey = keepExistingSecret(req.FOFA.APIKey, h.config.FOFA.APIKey)
 		h.config.FOFA = *req.FOFA
 		h.logger.Info("Updating FOFA config", zap.String("email", h.config.FOFA.Email))
 	}
 
+	// Update ZoomEye config
+	if req.ZoomEye != nil {
+		req.ZoomEye.APIKey = keepExistingSecret(req.ZoomEye.APIKey, h.config.ZoomEye.APIKey)
+		h.config.ZoomEye = *req.ZoomEye
+		h.logger.Info("Updating ZoomEye config", zap.Bool("has_key", h.config.ZoomEye.APIKey != ""))
+	}
+
+	// Update Shodan config
+	if req.Shodan != nil {
+		req.Shodan.APIKey = keepExistingSecret(req.Shodan.APIKey, h.config.Shodan.APIKey)
+		h.config.Shodan = *req.Shodan
+		h.logger.Info("Updating Shodan config", zap.Bool("has_key", h.config.Shodan.APIKey != ""))
+	}
+
+	// Update Censys config
+	if req.Censys != nil {
+		req.Censys.APIID = keepExistingSecret(req.Censys.APIID, h.config.Censys.APIID)
+		req.Censys.APISecret = keepExistingSecret(req.Censys.APISecret, h.config.Censys.APISecret)
+		h.config.Censys = *req.Censys
+		h.logger.Info("Updating Censys config", zap.Bool("has_id", h.config.Censys.APIID != ""))
+	}
+
 	// Update MCP config
 	if req.MCP != nil {
+		req.MCP.EnabledSet = true
 		h.config.MCP = *req.MCP
 		h.logger.Info("Updating MCP config",
 			zap.Bool("enabled", h.config.MCP.Enabled),
@@ -543,6 +724,9 @@ func (h *ConfigHandler) UpdateConfig(c *gin.Context) {
 
 	// Update Agent config
 	if req.Agent != nil {
+		req.Agent.TimeAwareness.EnabledSet = true
+		req.Agent.Memory.EnabledSet = true
+		req.Agent.FileManager.EnabledSet = true
 		h.config.Agent = *req.Agent
 		h.logger.Info("Updating Agent config",
 			zap.Int("max_iterations", h.config.Agent.MaxIterations),
@@ -551,6 +735,7 @@ func (h *ConfigHandler) UpdateConfig(c *gin.Context) {
 
 	// Update Knowledge config
 	if req.Knowledge != nil {
+		req.Knowledge.Embedding.APIKey = keepExistingSecret(req.Knowledge.Embedding.APIKey, h.config.Knowledge.Embedding.APIKey)
 		// Save old embedding model config (for detecting changes)
 		if h.config.Knowledge.Enabled {
 			h.lastEmbeddingConfig = &config.EmbeddingConfig{
@@ -571,13 +756,28 @@ func (h *ConfigHandler) UpdateConfig(c *gin.Context) {
 		)
 	}
 
+	// Always normalize model defaults after partial updates so empty fields
+	// automatically inherit default/main model values.
+	h.config.ApplyModelDefaults()
+
 	// Update robot config
 	if req.Robots != nil {
+		req.Robots.Lark.AppSecret = keepExistingSecret(req.Robots.Lark.AppSecret, h.config.Robots.Lark.AppSecret)
+		req.Robots.Telegram.BotToken = keepExistingSecret(req.Robots.Telegram.BotToken, h.config.Robots.Telegram.BotToken)
 		h.config.Robots = *req.Robots
 		h.logger.Info("Updating robot config",
-			zap.Bool("wecom_enabled", h.config.Robots.Wecom.Enabled),
-			zap.Bool("dingtalk_enabled", h.config.Robots.Dingtalk.Enabled),
 			zap.Bool("lark_enabled", h.config.Robots.Lark.Enabled),
+			zap.Bool("telegram_enabled", h.config.Robots.Telegram.Enabled),
+		)
+	}
+
+	// Update security config
+	if req.Security != nil {
+		if req.Security.ToolDescriptionMode == "short" || req.Security.ToolDescriptionMode == "full" {
+			h.config.Security.ToolDescriptionMode = req.Security.ToolDescriptionMode
+		}
+		h.logger.Info("Updating security config",
+			zap.String("tool_description_mode", h.config.Security.ToolDescriptionMode),
 		)
 	}
 
@@ -782,6 +982,12 @@ func (h *ConfigHandler) ApplyConfig(c *gin.Context) {
 	// Re-register security tools
 	h.executor.RegisterTools(h.mcpServer)
 
+	if h.appUpdater != nil {
+		if err := h.appUpdater.ApplyAgentRuntimeConfig(&h.config.Agent); err != nil {
+			h.logger.Error("Failed to apply runtime agent config", zap.Error(err))
+		}
+	}
+
 	// Re-register vulnerability record tool (built-in tool, must be registered)
 	if h.vulnerabilityToolRegistrar != nil {
 		h.logger.Info("Re-registering vulnerability record tool")
@@ -802,6 +1008,36 @@ func (h *ConfigHandler) ApplyConfig(c *gin.Context) {
 		}
 	}
 
+	// Re-register memory tools (built-in, must be registered)
+	if h.memoryToolRegistrar != nil {
+		h.logger.Info("Re-registering memory tools")
+		if err := h.memoryToolRegistrar(); err != nil {
+			h.logger.Error("Failed to re-register memory tools", zap.Error(err))
+		} else {
+			h.logger.Info("Memory tools re-registered")
+		}
+	}
+
+	// Re-register time tools (built-in, must be registered)
+	if h.timeToolRegistrar != nil {
+		h.logger.Info("Re-registering time tools")
+		if err := h.timeToolRegistrar(); err != nil {
+			h.logger.Error("Failed to re-register time tools", zap.Error(err))
+		} else {
+			h.logger.Info("Time tools re-registered")
+		}
+	}
+
+	// Re-register file manager tools (built-in, must be registered)
+	if h.fileManagerToolRegistrar != nil {
+		h.logger.Info("Re-registering file manager tools")
+		if err := h.fileManagerToolRegistrar(); err != nil {
+			h.logger.Error("Failed to re-register file manager tools", zap.Error(err))
+		} else {
+			h.logger.Info("File manager tools re-registered")
+		}
+	}
+
 	// If knowledge base is enabled, re-register knowledge base tools
 	if h.config.Knowledge.Enabled && h.knowledgeToolRegistrar != nil {
 		h.logger.Info("Re-registering knowledge base tools")
@@ -815,7 +1051,6 @@ func (h *ConfigHandler) ApplyConfig(c *gin.Context) {
 	// Update Agent's OpenAI config
 	if h.agent != nil {
 		h.agent.UpdateConfig(&h.config.OpenAI)
-		h.agent.UpdateMaxIterations(h.config.Agent.MaxIterations)
 		h.logger.Info("Agent config updated")
 	}
 
@@ -850,10 +1085,10 @@ func (h *ConfigHandler) ApplyConfig(c *gin.Context) {
 		}
 	}
 
-	// Restart DingTalk/Lark long connections so that robot config changes from frontend take effect immediately (without restarting the service)
+	// Restart Lark long connections so that robot config changes from frontend take effect immediately (without restarting the service)
 	if h.robotRestarter != nil {
 		h.robotRestarter.RestartRobotConnections()
-		h.logger.Info("Triggered robot connection restart (DingTalk/Lark)")
+		h.logger.Info("Triggered robot connection restart (Lark)")
 	}
 
 	h.logger.Info("Configuration applied",
@@ -883,9 +1118,10 @@ func (h *ConfigHandler) saveConfig() error {
 		return fmt.Errorf("failed to parse config file: %w", err)
 	}
 
-	updateAgentConfig(root, h.config.Agent.MaxIterations)
+	updateAgentConfig(root, h.config.Agent)
 	updateMCPConfig(root, h.config.MCP)
 	updateOpenAIConfig(root, h.config.OpenAI)
+	updateSecuritySettingsConfig(root, h.config.Security.ToolDescriptionMode)
 	updateFOFAConfig(root, h.config.FOFA)
 	updateKnowledgeConfig(root, h.config.Knowledge)
 	updateRobotsConfig(root, h.config.Robots)
@@ -1010,10 +1246,42 @@ func writeYAMLDocument(path string, doc *yaml.Node) error {
 	return os.WriteFile(path, buf.Bytes(), 0644)
 }
 
-func updateAgentConfig(doc *yaml.Node, maxIterations int) {
+func updateAgentConfig(doc *yaml.Node, cfg config.AgentConfig) {
 	root := doc.Content[0]
 	agentNode := ensureMap(root, "agent")
-	setIntInMap(agentNode, "max_iterations", maxIterations)
+	setIntInMap(agentNode, "max_iterations", cfg.MaxIterations)
+	if cfg.LargeResultThreshold > 0 {
+		setIntInMap(agentNode, "large_result_threshold", cfg.LargeResultThreshold)
+	}
+	if cfg.ResultStorageDir != "" {
+		setStringInMap(agentNode, "result_storage_dir", cfg.ResultStorageDir)
+	}
+	setBoolInMap(agentNode, "parallel_tool_execution", cfg.ParallelToolExecution)
+	setIntInMap(agentNode, "max_parallel_tools", cfg.MaxParallelTools)
+	setIntInMap(agentNode, "tool_retry_count", cfg.ToolRetryCount)
+	if cfg.ParallelToolWaitSeconds > 0 {
+		setIntInMap(agentNode, "parallel_tool_wait_seconds", cfg.ParallelToolWaitSeconds)
+	}
+
+	// Time awareness
+	taNode := ensureMap(agentNode, "time_awareness")
+	setBoolInMap(taNode, "enabled", cfg.TimeAwareness.Enabled)
+	if cfg.TimeAwareness.Timezone != "" {
+		setStringInMap(taNode, "timezone", cfg.TimeAwareness.Timezone)
+	}
+
+	// Memory
+	memNode := ensureMap(agentNode, "memory")
+	setBoolInMap(memNode, "enabled", cfg.Memory.Enabled)
+	setIntInMap(memNode, "max_entries", cfg.Memory.MaxEntries)
+}
+
+func updateSecuritySettingsConfig(doc *yaml.Node, toolDescriptionMode string) {
+	root := doc.Content[0]
+	secNode := ensureMap(root, "security")
+	if toolDescriptionMode != "" {
+		setStringInMap(secNode, "tool_description_mode", toolDescriptionMode)
+	}
 }
 
 func updateMCPConfig(doc *yaml.Node, cfg config.MCPConfig) {
@@ -1022,6 +1290,7 @@ func updateMCPConfig(doc *yaml.Node, cfg config.MCPConfig) {
 	setBoolInMap(mcpNode, "enabled", cfg.Enabled)
 	setStringInMap(mcpNode, "host", cfg.Host)
 	setIntInMap(mcpNode, "port", cfg.Port)
+	setBoolInMap(mcpNode, "allow_remote", cfg.AllowRemote)
 }
 
 func updateOpenAIConfig(doc *yaml.Node, cfg config.OpenAIConfig) {
@@ -1030,6 +1299,15 @@ func updateOpenAIConfig(doc *yaml.Node, cfg config.OpenAIConfig) {
 	setStringInMap(openaiNode, "api_key", cfg.APIKey)
 	setStringInMap(openaiNode, "base_url", cfg.BaseURL)
 	setStringInMap(openaiNode, "model", cfg.Model)
+	setStringInMap(openaiNode, "tool_model", cfg.ToolModel)
+	setStringInMap(openaiNode, "tool_base_url", cfg.ToolBaseURL)
+	setStringInMap(openaiNode, "tool_api_key", cfg.ToolAPIKey)
+	setStringInMap(openaiNode, "summary_model", cfg.SummaryModel)
+	setStringInMap(openaiNode, "summary_base_url", cfg.SummaryBaseURL)
+	setStringInMap(openaiNode, "summary_api_key", cfg.SummaryAPIKey)
+	if cfg.MaxTotalTokens > 0 {
+		setIntInMap(openaiNode, "max_total_tokens", cfg.MaxTotalTokens)
+	}
 }
 
 func updateFOFAConfig(doc *yaml.Node, cfg config.FofaConfig) {
@@ -1067,25 +1345,30 @@ func updateKnowledgeConfig(doc *yaml.Node, cfg config.KnowledgeConfig) {
 func updateRobotsConfig(doc *yaml.Node, cfg config.RobotsConfig) {
 	root := doc.Content[0]
 	robotsNode := ensureMap(root, "robots")
-
-	wecomNode := ensureMap(robotsNode, "wecom")
-	setBoolInMap(wecomNode, "enabled", cfg.Wecom.Enabled)
-	setStringInMap(wecomNode, "token", cfg.Wecom.Token)
-	setStringInMap(wecomNode, "encoding_aes_key", cfg.Wecom.EncodingAESKey)
-	setStringInMap(wecomNode, "corp_id", cfg.Wecom.CorpID)
-	setStringInMap(wecomNode, "secret", cfg.Wecom.Secret)
-	setIntInMap(wecomNode, "agent_id", int(cfg.Wecom.AgentID))
-
-	dingtalkNode := ensureMap(robotsNode, "dingtalk")
-	setBoolInMap(dingtalkNode, "enabled", cfg.Dingtalk.Enabled)
-	setStringInMap(dingtalkNode, "client_id", cfg.Dingtalk.ClientID)
-	setStringInMap(dingtalkNode, "client_secret", cfg.Dingtalk.ClientSecret)
+	deleteMapKey(robotsNode, "wecom")
 
 	larkNode := ensureMap(robotsNode, "lark")
 	setBoolInMap(larkNode, "enabled", cfg.Lark.Enabled)
 	setStringInMap(larkNode, "app_id", cfg.Lark.AppID)
 	setStringInMap(larkNode, "app_secret", cfg.Lark.AppSecret)
 	setStringInMap(larkNode, "verify_token", cfg.Lark.VerifyToken)
+
+	telegramNode := ensureMap(robotsNode, "telegram")
+	setBoolInMap(telegramNode, "enabled", cfg.Telegram.Enabled)
+	setStringInMap(telegramNode, "bot_token", cfg.Telegram.BotToken)
+	setInt64SliceInMap(telegramNode, "allowed_user_ids", cfg.Telegram.AllowedUserIDs)
+}
+
+func deleteMapKey(parent *yaml.Node, key string) {
+	if parent == nil || parent.Kind != yaml.MappingNode {
+		return
+	}
+	for i := 0; i+1 < len(parent.Content); i += 2 {
+		if parent.Content[i].Kind == yaml.ScalarNode && parent.Content[i].Value == key {
+			parent.Content = append(parent.Content[:i], parent.Content[i+2:]...)
+			return
+		}
+	}
 }
 
 func ensureMap(parent *yaml.Node, path ...string) *yaml.Node {
@@ -1156,6 +1439,22 @@ func setIntInMap(mapNode *yaml.Node, key string, value int) {
 	valueNode.Tag = "!!int"
 	valueNode.Style = 0
 	valueNode.Value = fmt.Sprintf("%d", value)
+}
+
+func setInt64SliceInMap(mapNode *yaml.Node, key string, values []int64) {
+	_, valueNode := ensureKeyValue(mapNode, key)
+	valueNode.Kind = yaml.SequenceNode
+	valueNode.Tag = "!!seq"
+	valueNode.Style = 0
+	valueNode.Content = valueNode.Content[:0]
+	for _, value := range values {
+		valueNode.Content = append(valueNode.Content, &yaml.Node{
+			Kind:  yaml.ScalarNode,
+			Tag:   "!!int",
+			Style: 0,
+			Value: strconv.FormatInt(value, 10),
+		})
+	}
 }
 
 func findBoolInMap(mapNode *yaml.Node, key string) *bool {

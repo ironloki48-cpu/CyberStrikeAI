@@ -4,8 +4,10 @@ package handler
 
 import (
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/creack/pty"
@@ -16,9 +18,20 @@ import (
 // wsUpgrader is used only for the terminal WebSocket in system settings, reusing the existing login protection (JWT middleware in parent route group).
 var wsUpgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
-		// Since authentication is already done in the Gin route layer, relax Origin here to allow access via HTTPS/WSS under the same domain
-		return true
+		origin := strings.TrimSpace(r.Header.Get("Origin"))
+		if origin == "" {
+			return true
+		}
+		return sameOriginRequest(origin, r.Host)
 	},
+}
+
+func sameOriginRequest(origin, host string) bool {
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(u.Host, host)
 }
 
 // RunCommandWS provides a truly interactive shell: a long-lived session based on WebSocket + PTY.
@@ -92,4 +105,3 @@ func (h *TerminalHandler) RunCommandWS(c *gin.Context) {
 
 	<-doneChan
 }
-

@@ -29,14 +29,23 @@ type Indexer struct {
 	errorCount    int       // consecutive error count
 }
 
-// NewIndexer creates a new indexer
-func NewIndexer(db *sql.DB, embedder *Embedder, logger *zap.Logger) *Indexer {
+// NewIndexer creates a new indexer. embeddingMaxTokens is the embedding model's
+// context limit (0 uses the default of 512).
+func NewIndexer(db *sql.DB, embedder *Embedder, logger *zap.Logger, embeddingMaxTokens int) *Indexer {
+	if embeddingMaxTokens <= 0 {
+		embeddingMaxTokens = 512
+	}
+	// Reserve ~12% for the metadata prefix ("[Risk Type: ...] [Title: ...]\n")
+	chunkSize := embeddingMaxTokens - embeddingMaxTokens/8
+	if chunkSize < 64 {
+		chunkSize = 64
+	}
 	return &Indexer{
 		db:        db,
 		embedder:  embedder,
 		logger:    logger,
-		chunkSize: 512, // default 512 tokens
-		overlap:   50,  // default 50 token overlap
+		chunkSize: chunkSize,
+		overlap:   50,
 	}
 }
 
@@ -258,6 +267,10 @@ func (idx *Indexer) estimateTokens(text string) int {
 
 // IndexItem indexes a knowledge item (chunks and vectorizes it)
 func (idx *Indexer) IndexItem(ctx context.Context, itemID string) error {
+	if idx.embedder == nil {
+		return fmt.Errorf("knowledge embedding is disabled: configure knowledge.embedding.base_url/model/api_key")
+	}
+
 	// get knowledge item (including category and title, used for vectorization)
 	var content, category, title string
 	err := idx.db.QueryRow("SELECT content, category, title FROM knowledge_base_items WHERE id = ?", itemID).Scan(&content, &category, &title)

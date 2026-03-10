@@ -535,11 +535,13 @@ function handleStreamEvent(event, progressElement, progressId,
                 toolCallStatusMap.delete(resultToolCallId);
             }
             
+            const durationMs = resultInfo.durationMs || resultInfo.duration_ms || 0;
+            const durationText = durationMs > 0 ? ` (${(durationMs / 1000).toFixed(1)}s)` : '';
             addTimelineItem(timeline, 'tool_result', {
-                title: `${statusIcon} Tool ${escapeHtml(resultToolName)} ${success ? 'succeeded' : 'failed'}`,
+                title: `${statusIcon} Tool ${escapeHtml(resultToolName)} ${success ? 'succeeded' : 'failed'}${durationText}`,
                 message: event.message,
                 data: resultInfo,
-                expanded: false
+                expanded: !success  // Auto-expand failed tools so operator sees the error
             });
             break;
 
@@ -558,6 +560,61 @@ function handleStreamEvent(event, progressElement, progressId,
             });
             break;
             
+        case 'warning':
+            // Show warning to operator — these require attention
+            addTimelineItem(timeline, 'tool_result', {
+                title: `⚠️ Warning: ${event.message}`,
+                message: event.message,
+                data: event.data,
+                expanded: true
+            });
+            // Also update progress title briefly
+            const warnTitle = document.querySelector(`#${progressId} .progress-title`);
+            if (warnTitle) {
+                warnTitle.textContent = '⚠️ ' + event.message;
+                // Revert after 5s
+                setTimeout(() => {
+                    if (warnTitle.textContent.startsWith('⚠️')) {
+                        warnTitle.textContent = '🔍 Processing...';
+                    }
+                }, 5000);
+            }
+            break;
+
+        case 'health_check':
+            // Show pre-flight check results with per-component detail
+            {
+                const checks = event.data && event.data.checks ? event.data.checks : [];
+                const overallStatus = event.data && event.data.status ? event.data.status : 'unknown';
+                const statusIcon = overallStatus === 'ok' ? '✅' : overallStatus === 'warn' ? '⚠️' : '❌';
+                let detailHtml = '';
+                if (checks.length > 0) {
+                    detailHtml = '<div style="margin-top:6px;font-size:0.85em;line-height:1.6">';
+                    for (const c of checks) {
+                        const icon = c.status === 'ok' ? '✅' : c.status === 'warn' ? '⚠️' : '❌';
+                        const detail = c.detail ? ` — ${c.detail}` : '';
+                        detailHtml += `<div>${icon} <strong>${c.component}</strong>${detail}</div>`;
+                    }
+                    detailHtml += '</div>';
+                }
+                addTimelineItem(timeline, overallStatus === 'ok' ? 'progress' : 'warning', {
+                    title: `${statusIcon} Pre-flight: ${event.message}`,
+                    message: detailHtml || event.message,
+                    data: event.data,
+                    expanded: overallStatus !== 'ok'
+                });
+            }
+            break;
+
+        case 'compression':
+            // Memory compression event — operator should know context was compressed
+            addTimelineItem(timeline, 'progress', {
+                title: `🗜️ Context compressed: ${event.message}`,
+                message: event.message,
+                data: event.data
+            });
+            break;
+
         case 'progress':
             // Update progress status
             const progressTitle = document.querySelector(`#${progressId} .progress-title`);
@@ -936,6 +993,11 @@ function addTimelineItem(timeline, type, options) {
                 ${escapeHtml(options.message || 'Task cancelled')}
             </div>
         `;
+    } else if ((type === 'progress' || type === 'warning') && options.message) {
+        // Generic progress/warning with message body (e.g. health_check detail)
+        // If message contains HTML tags, render raw; otherwise escape
+        const isHtml = /<[a-z][\s\S]*>/i.test(options.message);
+        content += `<div class="timeline-item-content">${isHtml ? options.message : escapeHtml(options.message)}</div>`;
     }
     
     item.innerHTML = content;

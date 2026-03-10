@@ -52,6 +52,7 @@ Additional strategy guides:
 | `gdb-peda` | `true` | `gdb` | [gdb-peda.md](./gdb-peda.md) |
 | `gdb` | `true` | `gdb` | [gdb.md](./gdb.md) |
 | `ghidra` | `true` | `analyzeHeadless` | [ghidra.md](./ghidra.md) |
+| `ghidra-headless-mcp` | `external` | `External MCP (212 tools)` | [ghidra-headless.md](./ghidra-headless.md) |
 | `gobuster` | `true` | `gobuster` | [gobuster.md](./gobuster.md) |
 | `graphql-scanner` | `true` | `graphqlmap` | [graphql-scanner.md](./graphql-scanner.md) |
 | `hakrawler` | `true` | `hakrawler` | [hakrawler.md](./hakrawler.md) |

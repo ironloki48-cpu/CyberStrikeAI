@@ -19,41 +19,25 @@ type Config struct {
 	MCP         MCPConfig             `yaml:"mcp"`
 	OpenAI      OpenAIConfig          `yaml:"openai"`
 	FOFA        FofaConfig            `yaml:"fofa,omitempty" json:"fofa,omitempty"`
+	ZoomEye     ZoomEyeConfig         `yaml:"zoomeye,omitempty" json:"zoomeye,omitempty"`
+	Shodan      ShodanConfig          `yaml:"shodan,omitempty" json:"shodan,omitempty"`
+	Censys      CensysConfig          `yaml:"censys,omitempty" json:"censys,omitempty"`
 	Agent       AgentConfig           `yaml:"agent"`
 	Security    SecurityConfig        `yaml:"security"`
 	Database    DatabaseConfig        `yaml:"database"`
 	Auth        AuthConfig            `yaml:"auth"`
 	ExternalMCP ExternalMCPConfig     `yaml:"external_mcp,omitempty"`
 	Knowledge   KnowledgeConfig       `yaml:"knowledge,omitempty"`
-	Robots      RobotsConfig          `yaml:"robots,omitempty" json:"robots,omitempty"`         // Bot configuration for DingTalk, Lark/Feishu, etc.
+	Robots      RobotsConfig          `yaml:"robots,omitempty" json:"robots,omitempty"`         // Bot configuration for Lark/Feishu, etc.
 	RolesDir    string                `yaml:"roles_dir,omitempty" json:"roles_dir,omitempty"`   // Role configuration file directory (new approach)
 	Roles       map[string]RoleConfig `yaml:"roles,omitempty" json:"roles,omitempty"`           // Backward-compatible: supports defining roles in the main config file
 	SkillsDir   string                `yaml:"skills_dir,omitempty" json:"skills_dir,omitempty"` // Skills configuration file directory
 }
 
-// RobotsConfig holds bot configuration for DingTalk, Lark/Feishu, Telegram, etc.
+// RobotsConfig holds bot configuration for Lark/Feishu and Telegram.
 type RobotsConfig struct {
-	Wecom    RobotWecomConfig    `yaml:"wecom,omitempty" json:"wecom,omitempty"`       // WeCom (Enterprise WeChat)
-	Dingtalk RobotDingtalkConfig `yaml:"dingtalk,omitempty" json:"dingtalk,omitempty"` // DingTalk
 	Lark     RobotLarkConfig     `yaml:"lark,omitempty" json:"lark,omitempty"`         // Lark (Feishu)
 	Telegram RobotTelegramConfig `yaml:"telegram,omitempty" json:"telegram,omitempty"` // Telegram
-}
-
-// RobotWecomConfig holds the WeCom (Enterprise WeChat) bot configuration.
-type RobotWecomConfig struct {
-	Enabled       bool   `yaml:"enabled" json:"enabled"`
-	Token         string `yaml:"token" json:"token"`                     // Callback URL verification token
-	EncodingAESKey string `yaml:"encoding_aes_key" json:"encoding_aes_key"` // EncodingAESKey
-	CorpID        string `yaml:"corp_id" json:"corp_id"`               // Enterprise ID
-	Secret        string `yaml:"secret" json:"secret"`                  // Application Secret
-	AgentID       int64  `yaml:"agent_id" json:"agent_id"`              // Application AgentId
-}
-
-// RobotDingtalkConfig holds the DingTalk bot configuration.
-type RobotDingtalkConfig struct {
-	Enabled      bool   `yaml:"enabled" json:"enabled"`
-	ClientID     string `yaml:"client_id" json:"client_id"`         // Application Key (AppKey)
-	ClientSecret string `yaml:"client_secret" json:"client_secret"` // Application Secret
 }
 
 // RobotLarkConfig holds the Lark (Feishu) bot configuration.
@@ -67,7 +51,7 @@ type RobotLarkConfig struct {
 // RobotTelegramConfig holds the Telegram bot configuration.
 type RobotTelegramConfig struct {
 	Enabled        bool    `yaml:"enabled" json:"enabled"`
-	BotToken       string  `yaml:"bot_token" json:"bot_token"`                               // Bot token from @BotFather
+	BotToken       string  `yaml:"bot_token" json:"bot_token"`                                   // Bot token from @BotFather
 	AllowedUserIDs []int64 `yaml:"allowed_user_ids,omitempty" json:"allowed_user_ids,omitempty"` // Whitelist of Telegram user IDs; empty = allow all
 }
 
@@ -82,16 +66,74 @@ type LogConfig struct {
 }
 
 type MCPConfig struct {
-	Enabled bool   `yaml:"enabled"`
-	Host    string `yaml:"host"`
-	Port    int    `yaml:"port"`
+	Enabled     bool   `yaml:"enabled"`
+	EnabledSet  bool   `yaml:"-" json:"-"`
+	Host        string `yaml:"host"`
+	Port        int    `yaml:"port"`
+	AllowRemote bool   `yaml:"allow_remote,omitempty" json:"allow_remote,omitempty"`
 }
 
 type OpenAIConfig struct {
 	APIKey         string `yaml:"api_key" json:"api_key"`
 	BaseURL        string `yaml:"base_url" json:"base_url"`
 	Model          string `yaml:"model" json:"model"`
+	ToolModel      string `yaml:"tool_model,omitempty" json:"tool_model,omitempty"`
+	ToolBaseURL    string `yaml:"tool_base_url,omitempty" json:"tool_base_url,omitempty"`
+	ToolAPIKey     string `yaml:"tool_api_key,omitempty" json:"tool_api_key,omitempty"`
+	SummaryModel   string `yaml:"summary_model,omitempty" json:"summary_model,omitempty"`
+	SummaryBaseURL string `yaml:"summary_base_url,omitempty" json:"summary_base_url,omitempty"`
+	SummaryAPIKey  string `yaml:"summary_api_key,omitempty" json:"summary_api_key,omitempty"`
 	MaxTotalTokens int    `yaml:"max_total_tokens,omitempty" json:"max_total_tokens,omitempty"`
+}
+
+// ApplyModelDefaults normalizes model fields:
+// - If Model is empty, use defaultMainModel.
+// - If ToolModel is empty, fall back to Model.
+// - If SummaryModel is empty, fall back to Model.
+func (c *OpenAIConfig) ApplyModelDefaults(defaultMainModel string) {
+	if c == nil {
+		return
+	}
+	if strings.TrimSpace(defaultMainModel) == "" {
+		defaultMainModel = "gpt-4"
+	}
+	if strings.TrimSpace(c.Model) == "" {
+		c.Model = defaultMainModel
+	}
+	if strings.TrimSpace(c.ToolModel) == "" {
+		c.ToolModel = c.Model
+	}
+	if strings.TrimSpace(c.SummaryModel) == "" {
+		c.SummaryModel = c.Model
+	}
+}
+
+// EffectiveToolConfig returns the base URL and API key to use for tool-calling requests.
+// Falls back to the main config values when tool-specific ones are empty.
+func (c *OpenAIConfig) EffectiveToolConfig() (baseURL, apiKey string) {
+	baseURL = c.ToolBaseURL
+	if baseURL == "" {
+		baseURL = c.BaseURL
+	}
+	apiKey = c.ToolAPIKey
+	if apiKey == "" {
+		apiKey = c.APIKey
+	}
+	return
+}
+
+// EffectiveSummaryConfig returns the base URL and API key to use for summarization requests.
+// Falls back to the main config values when summary-specific ones are empty.
+func (c *OpenAIConfig) EffectiveSummaryConfig() (baseURL, apiKey string) {
+	baseURL = c.SummaryBaseURL
+	if baseURL == "" {
+		baseURL = c.BaseURL
+	}
+	apiKey = c.SummaryAPIKey
+	if apiKey == "" {
+		apiKey = c.APIKey
+	}
+	return
 }
 
 type FofaConfig struct {
@@ -99,6 +141,19 @@ type FofaConfig struct {
 	Email   string `yaml:"email,omitempty" json:"email,omitempty"`
 	APIKey  string `yaml:"api_key,omitempty" json:"api_key,omitempty"`
 	BaseURL string `yaml:"base_url,omitempty" json:"base_url,omitempty"` // Default: https://fofa.info/api/v1/search/all
+}
+
+type ZoomEyeConfig struct {
+	APIKey string `yaml:"api_key,omitempty" json:"api_key,omitempty"` // ZoomEye API key (from https://www.zoomeye.ai/profile)
+}
+
+type ShodanConfig struct {
+	APIKey string `yaml:"api_key,omitempty" json:"api_key,omitempty"` // Shodan API key (from https://account.shodan.io)
+}
+
+type CensysConfig struct {
+	APIID     string `yaml:"api_id,omitempty" json:"api_id,omitempty"`         // Censys API ID
+	APISecret string `yaml:"api_secret,omitempty" json:"api_secret,omitempty"` // Censys API Secret
 }
 
 type SecurityConfig struct {
@@ -113,27 +168,124 @@ type DatabaseConfig struct {
 }
 
 type AgentConfig struct {
-	MaxIterations          int                   `yaml:"max_iterations" json:"max_iterations"`
-	LargeResultThreshold   int                   `yaml:"large_result_threshold" json:"large_result_threshold"`     // Large-result threshold (bytes), default 50 KB
-	ResultStorageDir       string                `yaml:"result_storage_dir" json:"result_storage_dir"`             // Result storage directory, default tmp
-	ParallelToolExecution  bool                  `yaml:"parallel_tool_execution" json:"parallel_tool_execution"`   // Execute multiple tool calls concurrently (default true)
-	MaxParallelTools       int                   `yaml:"max_parallel_tools" json:"max_parallel_tools"`             // Maximum concurrent tool calls (0 = unlimited)
-	ToolRetryCount         int                   `yaml:"tool_retry_count" json:"tool_retry_count"`                 // Number of retries on transient tool errors (default 0)
-	ParallelToolWaitSeconds int                  `yaml:"parallel_tool_wait_seconds" json:"parallel_tool_wait_seconds"` // Max wait per parallel tool before deferring (default 45s)
-	TimeAwareness          TimeAwarenessConfig   `yaml:"time_awareness" json:"time_awareness"`                     // Temporal context injection settings
-	Memory                 MemoryConfig          `yaml:"memory" json:"memory"`                                     // Persistent memory settings
+	MaxIterations           int                 `yaml:"max_iterations" json:"max_iterations"`
+	LargeResultThreshold    int                 `yaml:"large_result_threshold" json:"large_result_threshold"`         // Large-result threshold (bytes), default 50 KB
+	ResultStorageDir        string              `yaml:"result_storage_dir" json:"result_storage_dir"`                 // Result storage directory, default tmp
+	ParallelToolExecution   bool                `yaml:"parallel_tool_execution" json:"parallel_tool_execution"`       // Execute multiple tool calls concurrently (default true)
+	MaxParallelTools        int                 `yaml:"max_parallel_tools" json:"max_parallel_tools"`                 // Maximum concurrent tool calls (0 = unlimited)
+	ToolRetryCount          int                 `yaml:"tool_retry_count" json:"tool_retry_count"`                     // Number of retries on transient tool errors (default 0)
+	ParallelToolWaitSeconds int                 `yaml:"parallel_tool_wait_seconds" json:"parallel_tool_wait_seconds"` // Max wait per parallel tool before deferring (default 45s)
+	TimeAwareness           TimeAwarenessConfig `yaml:"time_awareness" json:"time_awareness"`                         // Temporal context injection settings
+	Memory                  MemoryConfig        `yaml:"memory" json:"memory"`                                         // Persistent memory settings
+	FileManager             FileManagerConfig   `yaml:"file_manager" json:"file_manager"`                             // File manager settings
+	Cuttlefish              CuttlefishConfig    `yaml:"cuttlefish" json:"cuttlefish"`                                 // Android VM (Cuttlefish) settings
+	SSLStrip                SSLStripConfig      `yaml:"sslstrip" json:"sslstrip"`                                     // SSLStrip MITM tool settings
+	ToolTimeout             int                 `yaml:"tool_timeout" json:"tool_timeout"`                             // Per-tool execution timeout in seconds (default 300 = 5 min)
 }
 
 // TimeAwarenessConfig controls whether and how the agent injects time context.
 type TimeAwarenessConfig struct {
-	Enabled  bool   `yaml:"enabled" json:"enabled"`   // Inject current date/time into every system prompt (default true)
-	Timezone string `yaml:"timezone" json:"timezone"` // IANA timezone name, e.g. "America/New_York" (default "UTC")
+	Enabled    bool   `yaml:"enabled" json:"enabled"` // Inject current date/time into every system prompt (default true)
+	EnabledSet bool   `yaml:"-" json:"-"`
+	Timezone   string `yaml:"timezone" json:"timezone"` // IANA timezone name, e.g. "America/New_York" (default "UTC")
 }
 
 // MemoryConfig controls persistent cross-conversation memory behaviour.
 type MemoryConfig struct {
-	Enabled    bool `yaml:"enabled" json:"enabled"`           // Enable the persistent memory store (default true)
-	MaxEntries int  `yaml:"max_entries" json:"max_entries"`   // Hard cap on stored memory entries, 0 = unlimited
+	Enabled    bool `yaml:"enabled" json:"enabled"` // Enable the persistent memory store (default true)
+	EnabledSet bool `yaml:"-" json:"-"`
+	MaxEntries int  `yaml:"max_entries" json:"max_entries"` // Hard cap on stored memory entries, 0 = unlimited
+}
+
+// FileManagerConfig controls the file manager module.
+type FileManagerConfig struct {
+	Enabled    bool   `yaml:"enabled" json:"enabled"` // Enable file manager (default true)
+	EnabledSet bool   `yaml:"-" json:"-"`
+	StorageDir string `yaml:"storage_dir" json:"storage_dir"` // Directory for managed file storage (default "managed_files")
+}
+
+func markEnabledPresence(node *yaml.Node, target *bool) {
+	if node == nil || node.Kind != yaml.MappingNode || target == nil {
+		return
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Kind == yaml.ScalarNode && node.Content[i].Value == "enabled" {
+			*target = true
+			return
+		}
+	}
+}
+
+func (c *MCPConfig) UnmarshalYAML(value *yaml.Node) error {
+	type raw MCPConfig
+	var out raw
+	if err := value.Decode(&out); err != nil {
+		return err
+	}
+	*c = MCPConfig(out)
+	markEnabledPresence(value, &c.EnabledSet)
+	return nil
+}
+
+func (c *TimeAwarenessConfig) UnmarshalYAML(value *yaml.Node) error {
+	type raw TimeAwarenessConfig
+	var out raw
+	if err := value.Decode(&out); err != nil {
+		return err
+	}
+	*c = TimeAwarenessConfig(out)
+	markEnabledPresence(value, &c.EnabledSet)
+	return nil
+}
+
+func (c *MemoryConfig) UnmarshalYAML(value *yaml.Node) error {
+	type raw MemoryConfig
+	var out raw
+	if err := value.Decode(&out); err != nil {
+		return err
+	}
+	*c = MemoryConfig(out)
+	markEnabledPresence(value, &c.EnabledSet)
+	return nil
+}
+
+func (c *FileManagerConfig) UnmarshalYAML(value *yaml.Node) error {
+	type raw FileManagerConfig
+	var out raw
+	if err := value.Decode(&out); err != nil {
+		return err
+	}
+	*c = FileManagerConfig(out)
+	markEnabledPresence(value, &c.EnabledSet)
+	return nil
+}
+
+// CuttlefishConfig controls the Cuttlefish Android VM integration.
+type CuttlefishConfig struct {
+	Enabled         bool   `yaml:"enabled" json:"enabled"`                   // Enable Cuttlefish tools (default true)
+	CvdHome         string `yaml:"cvd_home" json:"cvd_home"`                 // Cuttlefish workspace directory (default ~/cuttlefish-workspace)
+	MemoryMB        int    `yaml:"memory_mb" json:"memory_mb"`               // VM RAM in MB (default 8192)
+	CPUs            int    `yaml:"cpus" json:"cpus"`                         // VM CPU count (default 4)
+	DiskMB          int    `yaml:"disk_mb" json:"disk_mb"`                   // Data partition size in MB (default 16000)
+	GPUMode         string `yaml:"gpu_mode" json:"gpu_mode"`                 // GPU mode: guest_swiftshader, drm_virgl (default guest_swiftshader)
+	AutoLaunch      bool   `yaml:"auto_launch" json:"auto_launch"`           // Auto-launch VM on server start (default false)
+	RussianIdentity bool   `yaml:"russian_identity" json:"russian_identity"` // Apply Russian phone identity on boot (default true)
+	WebRTCPort      int    `yaml:"webrtc_port" json:"webrtc_port"`           // WebRTC display port (default 8443)
+	DroidRunPath    string `yaml:"droidrun_path" json:"droidrun_path"`       // Path to DroidRun installation (default ~/droidrun)
+	DroidRunConfig  string `yaml:"droidrun_config" json:"droidrun_config"`   // Path to DroidRun config YAML (default <cvd_home>/droidrun/config.yaml)
+	BridgeScript    string `yaml:"bridge_script" json:"bridge_script"`       // Path to droidrun-bridge.py (auto-detected if empty)
+	ProxyPort       int    `yaml:"proxy_port" json:"proxy_port"`             // DroidRun proxy HTTP service port (default 18090)
+	ProxyAutoStart  bool   `yaml:"proxy_auto_start" json:"proxy_auto_start"` // Auto-start DroidRun proxy when VM launches (default true)
+	ScreenshotDir   string `yaml:"screenshot_dir" json:"screenshot_dir"`     // Directory for screenshots from proxy (default /tmp/droidrun_screenshots)
+	VisionEnabled   bool   `yaml:"vision_enabled" json:"vision_enabled"`     // Include screenshots in state responses for VL models (default true)
+}
+
+// SSLStripConfig controls SSLStrip MITM tool integration.
+type SSLStripConfig struct {
+	Enabled    bool   `yaml:"enabled" json:"enabled"`         // Enable SSLStrip tool (default true)
+	ListenPort int    `yaml:"listen_port" json:"listen_port"` // Default listen port (default 10000)
+	LogDir     string `yaml:"log_dir" json:"log_dir"`         // Directory for SSLStrip capture logs (default /tmp)
+	AutoProxy  bool   `yaml:"auto_proxy" json:"auto_proxy"`   // Auto-configure Cuttlefish proxy when SSLStrip starts (default false)
 }
 
 type AuthConfig struct {
@@ -211,6 +363,9 @@ func Load(path string) (*Config, error) {
 	if cfg.Auth.SessionDurationHours <= 0 {
 		cfg.Auth.SessionDurationHours = 12
 	}
+
+	// Ensure omitted model fields always fall back to defaults.
+	cfg.ApplyModelDefaults()
 
 	if strings.TrimSpace(cfg.Auth.Password) == "" {
 		password, err := generateStrongPassword(24)
@@ -573,9 +728,11 @@ func Default() *Config {
 			Output: "stdout",
 		},
 		MCP: MCPConfig{
-			Enabled: true,
-			Host:    "0.0.0.0",
-			Port:    8081,
+			Enabled:     true,
+			EnabledSet:  true,
+			Host:        "0.0.0.0",
+			Port:        8081,
+			AllowRemote: false,
 		},
 		OpenAI: OpenAIConfig{
 			BaseURL:        "https://api.openai.com/v1",
@@ -585,11 +742,13 @@ func Default() *Config {
 		Agent: AgentConfig{
 			MaxIterations: 30, // Default maximum iteration count
 			TimeAwareness: TimeAwarenessConfig{
-				Enabled:  true,
-				Timezone: "UTC",
+				Enabled:    true,
+				EnabledSet: true,
+				Timezone:   "UTC",
 			},
 			Memory: MemoryConfig{
 				Enabled:    true,
+				EnabledSet: true,
 				MaxEntries: 200,
 			},
 		},
@@ -631,10 +790,24 @@ type KnowledgeConfig struct {
 
 // EmbeddingConfig holds the embedding model configuration.
 type EmbeddingConfig struct {
-	Provider string `yaml:"provider" json:"provider"` // Embedding model provider
-	Model    string `yaml:"model" json:"model"`       // Model name
-	BaseURL  string `yaml:"base_url" json:"base_url"` // API Base URL
-	APIKey   string `yaml:"api_key" json:"api_key"`   // API Key (inherited from OpenAI config)
+	Provider  string `yaml:"provider" json:"provider"`     // Embedding model provider
+	Model     string `yaml:"model" json:"model"`           // Model name
+	BaseURL   string `yaml:"base_url" json:"base_url"`     // API Base URL
+	APIKey    string `yaml:"api_key" json:"api_key"`       // API Key (inherited from OpenAI config)
+	MaxTokens int    `yaml:"max_tokens" json:"max_tokens"` // Embedding model max token limit (0 = default 512); chunks are sized to fit within this limit
+}
+
+// ApplyModelDefaults normalizes model-related fields across config sections.
+// It ensures all model fields have a valid fallback when omitted by user config.
+func (c *Config) ApplyModelDefaults() {
+	if c == nil {
+		return
+	}
+	defaultCfg := Default()
+
+	// Main/tool/summary model fallback chain.
+	c.OpenAI.ApplyModelDefaults(defaultCfg.OpenAI.Model)
+
 }
 
 // RetrievalConfig holds the retrieval configuration.
