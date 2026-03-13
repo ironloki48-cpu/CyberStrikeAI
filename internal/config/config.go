@@ -163,16 +163,17 @@ type ToolConfig struct {
 
 // ParameterConfig 参数配置
 type ParameterConfig struct {
-	Name        string      `yaml:"name"`               // 参数名称
-	Type        string      `yaml:"type"`               // 参数类型: string, int, bool, array
-	Description string      `yaml:"description"`        // 参数描述
-	Required    bool        `yaml:"required,omitempty"` // 是否必需
-	Default     interface{} `yaml:"default,omitempty"`  // 默认值
-	Flag        string      `yaml:"flag,omitempty"`     // 命令行标志，如 "-u", "--url", "-p"
-	Position    *int        `yaml:"position,omitempty"` // 位置参数的位置（从0开始）
-	Format      string      `yaml:"format,omitempty"`   // 参数格式: "flag", "positional", "combined" (flag=value), "template"
-	Template    string      `yaml:"template,omitempty"` // 模板字符串，如 "{flag} {value}" 或 "{value}"
-	Options     []string    `yaml:"options,omitempty"`  // 可选值列表（用于枚举）
+	Name        string      `yaml:"name"`                  // 参数名称
+	Type        string      `yaml:"type"`                  // 参数类型: string, int, bool, array
+	Description string      `yaml:"description"`           // 参数描述
+	Required    bool        `yaml:"required,omitempty"`    // 是否必需
+	Default     interface{} `yaml:"default,omitempty"`      // 默认值
+	ItemType    string      `yaml:"item_type,omitempty"`    // 当 type 为 array 时，数组元素类型，如 string, number, object
+	Flag        string      `yaml:"flag,omitempty"`         // 命令行标志，如 "-u", "--url", "-p"
+	Position    *int        `yaml:"position,omitempty"`     // 位置参数的位置（从0开始）
+	Format      string      `yaml:"format,omitempty"`      // 参数格式: "flag", "positional", "combined" (flag=value), "template"
+	Template    string      `yaml:"template,omitempty"`    // 模板字符串，如 "{flag} {value}" 或 "{value}"
+	Options     []string    `yaml:"options,omitempty"`     // 可选值列表（用于枚举）
 }
 
 func Load(path string) (*Config, error) {

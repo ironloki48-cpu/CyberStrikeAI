@@ -1229,6 +1229,17 @@ func (e *Executor) buildInputSchema(toolConfig *config.ToolConfig) map[string]in
 				"description": param.Description,
 			}
 
+			// JSON Schema/OpenAI 要求 array 类型必须包含 items，否则 API 报 invalid_function_parameters
+			if openAIType == "array" {
+				itemType := strings.TrimSpace(param.ItemType)
+				if itemType == "" {
+					itemType = "string"
+				}
+				prop["items"] = map[string]interface{}{
+					"type": e.convertToOpenAIType(itemType),
+				}
+			}
+
 			// 添加默认值
 			if param.Default != nil {
 				prop["default"] = param.Default
