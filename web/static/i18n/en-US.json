@@ -24,6 +24,7 @@
   "header": {
     "title": "CyberStrikeAI",
     "apiDocs": "API Docs",
+    "github": "GitHub",
     "logout": "Sign out",
     "language": "Interface language",
     "backToDashboard": "Back to dashboard",
