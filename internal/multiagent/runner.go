@@ -252,7 +252,11 @@ func RunDeepAgent(
 		WithoutGeneralSubAgent: ma.WithoutGeneralSubAgent,
 		WithoutWriteTodos:      ma.WithoutWriteTodos,
 		MaxIteration:           deepMaxIter,
-		Handlers:               []adk.ChatModelAgentMiddleware{mainSumMw},
+		// 防止 sub-agent 再调用 task（再委派 sub-agent），形成无限委派链。
+		Handlers: []adk.ChatModelAgentMiddleware{
+			newNoNestedTaskMiddleware(),
+			mainSumMw,
+		},
 		ToolsConfig: adk.ToolsConfig{
 			ToolsNodeConfig: compose.ToolsNodeConfig{
 				Tools: mainTools,

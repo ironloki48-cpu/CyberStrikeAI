@@ -44,9 +44,18 @@ func (h *AgentHandler) MultiAgentLoopStream(c *gin.Context) {
 
 	c.Header("X-Accel-Buffering", "no")
 
+	// 用于在 sendEvent 中判断是否为用户主动停止导致的取消。
+	// 注意：baseCtx 会在后面创建；该变量用于闭包提前捕获引用。
+	var baseCtx context.Context
+
 	clientDisconnected := false
 	sendEvent := func(eventType, message string, data interface{}) {
 		if clientDisconnected {
+			return
+		}
+		// 用户主动停止时，Eino 可能仍会并发上报 eventType=="error"。
+		// 为避免 UI 看到“取消错误 + cancelled 文案”两条回复，这里直接丢弃取消对应的 error。
+		if eventType == "error" && baseCtx != nil && errors.Is(context.Cause(baseCtx), ErrTaskCancelled) {
 			return
 		}
 		select {
@@ -135,7 +144,6 @@ func (h *AgentHandler) MultiAgentLoopStream(c *gin.Context) {
 	)
 
 	if runErr != nil {
-		h.logger.Error("Eino DeepAgent 执行失败", zap.Error(runErr))
 		cause := context.Cause(baseCtx)
 		if errors.Is(cause, ErrTaskCancelled) {
 			taskStatus = "cancelled"
@@ -153,6 +161,7 @@ func (h *AgentHandler) MultiAgentLoopStream(c *gin.Context) {
 			return
 		}
 
+		h.logger.Error("Eino DeepAgent 执行失败", zap.Error(runErr))
 		taskStatus = "failed"
 		h.tasks.UpdateTaskStatus(conversationID, taskStatus)
 		errMsg := "执行失败: " + runErr.Error()
