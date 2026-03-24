@@ -24,6 +24,9 @@ let webshellClearInProgress = false;
 let webshellAiConvMap = {};
 let webshellAiSending = false;
 let webshellDbConfigByConn = {};
+let webshellDirTreeByConn = {};
+let webshellDirExpandedByConn = {};
+let webshellDirLoadedByConn = {};
 // 流式打字机效果：当前会话的 response 序号，用于中止过期的打字
 let webshellStreamingTypingId = 0;
 let webshellProbeStatusById = {};
@@ -140,6 +143,7 @@ function wsT(key) {
         'webshell.refresh': '刷新',
         'webshell.selectAll': '全选',
         'webshell.breadcrumbHome': '根',
+        'webshell.dirTree': '目录列表',
         'webshell.searchPlaceholder': '搜索连接...',
         'webshell.noMatchConnections': '暂无匹配连接',
         'webshell.batchProbe': '一键批量探活',
@@ -158,6 +162,12 @@ function wsT(key) {
         'common.actions': '操作'
     };
     return fallback[key] || key;
+}
+
+function wsTOr(key, fallbackText) {
+    var text = wsT(key);
+    if (!text || text === key) return fallbackText;
+    return text;
 }
 
 // 全局只绑定一次：清屏 = 销毁终端并重新创建，保证只出现一个 shell>（不依赖 xterm.clear()，避免某些环境下 clear 不生效或重复写入）
@@ -506,6 +516,29 @@ function escapeSingleQuotedShellArg(value) {
 function safeConnIdForStorage(conn) {
     if (!conn || !conn.id) return '';
     return String(conn.id).replace(/[^\w.-]/g, '_');
+}
+
+function normalizeWebshellPath(path) {
+    var p = path == null ? '.' : String(path).trim();
+    if (!p || p === '/') return '.';
+    p = p.replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+/g, '/');
+    if (!p || p === '.') return '.';
+    if (p.endsWith('/')) p = p.slice(0, -1);
+    return p || '.';
+}
+
+function getWebshellTreeState(conn) {
+    var key = safeConnIdForStorage(conn);
+    if (!key) return null;
+    if (!webshellDirTreeByConn[key]) webshellDirTreeByConn[key] = { '.': [] };
+    if (!webshellDirExpandedByConn[key]) webshellDirExpandedByConn[key] = { '.': true };
+    if (!webshellDirLoadedByConn[key]) webshellDirLoadedByConn[key] = { '.': false };
+    return {
+        key: key,
+        tree: webshellDirTreeByConn[key],
+        expanded: webshellDirExpandedByConn[key],
+        loaded: webshellDirLoadedByConn[key]
+    };
 }
 
 function getWebshellDbConfig(conn) {
@@ -918,6 +951,12 @@ function selectWebshell(id) {
         '<div id="webshell-terminal-container" class="webshell-terminal-container"></div>' +
         '</div>' +
         '<div id="webshell-pane-file" class="webshell-pane">' +
+        '<div class="webshell-file-layout">' +
+        '<aside class="webshell-file-sidebar">' +
+        '<div class="webshell-file-sidebar-title">' + wsTOr('webshell.dirTree', '目录列表') + '</div>' +
+        '<div id="webshell-dir-tree" class="webshell-dir-tree"></div>' +
+        '</aside>' +
+        '<section class="webshell-file-main">' +
         '<div class="webshell-file-toolbar">' +
         '<div class="webshell-file-breadcrumb" id="webshell-file-breadcrumb"></div>' +
         '<div class="webshell-file-toolbar-main">' +
@@ -940,6 +979,8 @@ function selectWebshell(id) {
         '</div>' +
         '</div>' +
         '<div id="webshell-file-list" class="webshell-file-list"></div>' +
+        '</section>' +
+        '</div>' +
         '</div>' +
         '<div id="webshell-pane-ai" class="webshell-pane webshell-pane-ai-with-sidebar">' +
         '<div class="webshell-ai-sidebar">' +
@@ -1799,43 +1840,40 @@ function webshellFileListDir(conn, path) {
         });
 }
 
-function renderFileList(listEl, currentPath, rawOutput, conn, nameFilter) {
-    function normalizeLsMtime(month, day, timeOrYear) {
-        if (!month || !day || !timeOrYear) return '';
-        var token = String(timeOrYear).trim();
-        if (/^\d{4}$/.test(token)) {
-            return token + ' ' + month + ' ' + day;
+function normalizeLsMtime(month, day, timeOrYear) {
+    if (!month || !day || !timeOrYear) return '';
+    var token = String(timeOrYear).trim();
+    if (/^\d{4}$/.test(token)) return token + ' ' + month + ' ' + day;
+    var now = new Date();
+    var year = now.getFullYear();
+    if (/^\d{1,2}:\d{2}$/.test(token)) {
+        var monthMap = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 };
+        var m = monthMap[month];
+        var d = parseInt(day, 10);
+        if (m != null && !isNaN(d)) {
+            var inferred = new Date(year, m, d);
+            if (inferred.getTime() > now.getTime()) year = year - 1;
         }
-        var now = new Date();
-        var year = now.getFullYear();
-        if (/^\d{1,2}:\d{2}$/.test(token)) {
-            // ls -l 在半年内通常只显示 HH:MM；推断年份（避免未来日期）
-            var monthMap = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 };
-            var m = monthMap[month];
-            var d = parseInt(day, 10);
-            if (m != null && !isNaN(d)) {
-                var inferred = new Date(year, m, d);
-                if (inferred.getTime() > now.getTime()) year = year - 1;
-            }
-            return year + ' ' + month + ' ' + day + ' ' + token;
-        }
-        return month + ' ' + day + ' ' + token;
+        return year + ' ' + month + ' ' + day + ' ' + token;
     }
+    return month + ' ' + day + ' ' + token;
+}
 
-    function modeToType(mode) {
-        if (!mode || !mode.length) return '';
-        var c = mode.charAt(0);
-        if (c === 'd') return 'dir';
-        if (c === '-') return 'file';
-        if (c === 'l') return 'link';
-        if (c === 'c') return 'char';
-        if (c === 'b') return 'block';
-        if (c === 's') return 'socket';
-        if (c === 'p') return 'pipe';
-        return c;
-    }
+function modeToType(mode) {
+    if (!mode || !mode.length) return '';
+    var c = mode.charAt(0);
+    if (c === 'd') return 'dir';
+    if (c === '-') return 'file';
+    if (c === 'l') return 'link';
+    if (c === 'c') return 'char';
+    if (c === 'b') return 'block';
+    if (c === 's') return 'socket';
+    if (c === 'p') return 'pipe';
+    return c;
+}
 
-    var lines = rawOutput.split(/\n/).filter(function (l) { return l.trim(); });
+function parseWebshellListItems(rawOutput) {
+    var lines = (rawOutput || '').split(/\n/).filter(function (l) { return l.trim(); });
     var items = [];
     for (var i = 0; i < lines.length; i++) {
         var line = lines[i];
@@ -1847,9 +1885,6 @@ function renderFileList(listEl, currentPath, rawOutput, conn, nameFilter) {
         var owner = '';
         var group = '';
         var type = '';
-
-        // 兼容典型：ls -la 输出（mode links owner group size month day time|year name）
-        // 示例：-rw-r--r-- 1 user group 1234 Mar 23 12:34 file.txt
         var mLs = line.match(/^(\S+)\s+(\d+)\s+(\S+)\s+(\S+)\s+(\d+)\s+([A-Za-z]{3})\s+(\d{1,2})\s+(\S+)\s+(.+)$/);
         if (mLs) {
             mode = mLs[1];
@@ -1861,7 +1896,6 @@ function renderFileList(listEl, currentPath, rawOutput, conn, nameFilter) {
             isDir = mode && mode.startsWith('d');
             type = modeToType(mode);
         } else {
-            // 兜底：用最后一段当文件名
             var mName = line.match(/\s*(\S+)\s*$/);
             name = mName ? mName[1].trim() : line.trim();
             if (name === '.' || name === '..') continue;
@@ -1870,17 +1904,40 @@ function renderFileList(listEl, currentPath, rawOutput, conn, nameFilter) {
                 var parts = line.split(/\s+/);
                 if (parts.length >= 5) { mode = parts[0]; size = parts[4]; }
                 if (parts.length >= 4) { owner = parts[2] || ''; group = parts[3] || ''; }
-                // 尝试解析 mtime：month day (time|year)
-                if (parts.length >= 8 && /^[A-Za-z]{3}$/.test(parts[5])) {
-                    mtime = normalizeLsMtime(parts[5], parts[6], parts[7]);
-                }
+                if (parts.length >= 8 && /^[A-Za-z]{3}$/.test(parts[5])) mtime = normalizeLsMtime(parts[5], parts[6], parts[7]);
                 type = modeToType(mode);
             }
         }
-
         if (name === '.' || name === '..') continue;
         items.push({ name: name, isDir: isDir, line: line, size: size, mode: mode, mtime: mtime, owner: owner, group: group, type: type });
     }
+    return items;
+}
+
+function fetchWebshellDirectoryItems(conn, path) {
+    if (!conn || typeof apiFetch === 'undefined') return Promise.resolve([]);
+    return apiFetch('/api/webshell/file', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            url: conn.url,
+            password: conn.password || '',
+            type: conn.type || 'php',
+            method: (conn.method || 'post').toLowerCase(),
+            cmd_param: conn.cmdParam || '',
+            action: 'list',
+            path: path
+        })
+    }).then(function (r) { return r.json(); }).then(function (data) {
+        if (!data || data.error || !data.ok) return [];
+        return parseWebshellListItems(data.output || '');
+    }).catch(function () {
+        return [];
+    });
+}
+
+function renderFileList(listEl, currentPath, rawOutput, conn, nameFilter) {
+    var items = parseWebshellListItems(rawOutput);
     if (nameFilter && nameFilter.trim()) {
         var f = nameFilter.trim().toLowerCase();
         items = items.filter(function (item) { return item.name.toLowerCase().indexOf(f) !== -1; });
@@ -1895,32 +1952,33 @@ function renderFileList(listEl, currentPath, rawOutput, conn, nameFilter) {
                 return ' / <a href="#" class="webshell-breadcrumb-item" data-path="' + escapeHtml(path) + '">' + escapeHtml(p) + '</a>';
             }).join('');
     }
+    renderDirectoryTree(currentPath, items, conn);
     var html = '';
     if (items.length === 0) {
         // 目录为空/过滤后为空时，给出明确空状态，避免 tbody 留白导致“整块抽象大白屏”
         if (rawOutput.trim() && !nameFilter) {
             html = '<pre class="webshell-file-raw">' + escapeHtml(rawOutput) + '</pre>';
         } else {
-            html = '<table class="webshell-file-table"><thead><tr><th class="webshell-col-check"><input type="checkbox" id="webshell-file-select-all" title="' + (wsT('webshell.selectAll') || '全选') + '" /></th><th>' + wsT('webshell.filePath') + '</th><th class="webshell-col-size">大小</th><th class="webshell-col-mtime">' + (wsT('webshell.colModifiedAt') || '修改时间') + '</th><th class="webshell-col-owner">' + (wsT('webshell.colOwner') || '所有者') + '</th><th class="webshell-col-group">' + (wsT('webshell.colGroup') || '用户组') + '</th><th class="webshell-col-perms">' + (wsT('webshell.colPerms') || '权限') + '</th><th class="webshell-col-type">' + (wsT('webshell.colType') || '类型') + '</th><th class="webshell-col-actions"></th></tr></thead><tbody>' +
-                '<tr><td colspan="9" class="webshell-file-empty-state">' + (wsT('common.noData') || '暂无文件') + '</td></tr>' +
+            html = '<table class="webshell-file-table"><thead><tr><th class="webshell-col-check"><input type="checkbox" id="webshell-file-select-all" title="' + (wsT('webshell.selectAll') || '全选') + '" /></th><th>' + wsT('webshell.filePath') + '</th><th class="webshell-col-size">大小</th><th class="webshell-col-mtime">' + (wsT('webshell.colModifiedAt') || '修改时间') + '</th><th class="webshell-col-owner">' + (wsT('webshell.colOwner') || '所有者') + '</th><th class="webshell-col-group">' + (wsT('webshell.colGroup') || '用户组') + '</th><th class="webshell-col-perms">' + (wsT('webshell.colPerms') || '权限') + '</th><th class="webshell-col-actions"></th></tr></thead><tbody>' +
+                '<tr><td colspan="8" class="webshell-file-empty-state">' + (wsT('common.noData') || '暂无文件') + '</td></tr>' +
                 '</tbody></table>';
         }
     } else {
-        html = '<table class="webshell-file-table"><thead><tr><th class="webshell-col-check"><input type="checkbox" id="webshell-file-select-all" title="' + (wsT('webshell.selectAll') || '全选') + '" /></th><th>' + wsT('webshell.filePath') + '</th><th class="webshell-col-size">大小</th><th class="webshell-col-mtime">' + (wsT('webshell.colModifiedAt') || '修改时间') + '</th><th class="webshell-col-owner">' + (wsT('webshell.colOwner') || '所有者') + '</th><th class="webshell-col-group">' + (wsT('webshell.colGroup') || '用户组') + '</th><th class="webshell-col-perms">' + (wsT('webshell.colPerms') || '权限') + '</th><th class="webshell-col-type">' + (wsT('webshell.colType') || '类型') + '</th><th class="webshell-col-actions"></th></tr></thead><tbody>';
+        html = '<table class="webshell-file-table"><thead><tr><th class="webshell-col-check"><input type="checkbox" id="webshell-file-select-all" title="' + (wsT('webshell.selectAll') || '全选') + '" /></th><th>' + wsT('webshell.filePath') + '</th><th class="webshell-col-size">大小</th><th class="webshell-col-mtime">' + (wsT('webshell.colModifiedAt') || '修改时间') + '</th><th class="webshell-col-owner">' + (wsT('webshell.colOwner') || '所有者') + '</th><th class="webshell-col-group">' + (wsT('webshell.colGroup') || '用户组') + '</th><th class="webshell-col-perms">' + (wsT('webshell.colPerms') || '权限') + '</th><th class="webshell-col-actions"></th></tr></thead><tbody>';
         if (currentPath !== '.' && currentPath !== '') {
-            html += '<tr><td></td><td><a href="#" class="webshell-file-link" data-path="' + escapeHtml(currentPath.replace(/\/[^/]+$/, '') || '.') + '" data-isdir="1">..</a></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>';
+            html += '<tr><td></td><td><a href="#" class="webshell-file-link" data-path="' + escapeHtml(currentPath.replace(/\/[^/]+$/, '') || '.') + '" data-isdir="1">..</a></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>';
         }
         items.forEach(function (item) {
             var pathNext = currentPath === '.' ? item.name : currentPath + '/' + item.name;
+            var nameClass = item.isDir ? 'is-dir' : 'is-file';
             html += '<tr><td class="webshell-col-check">';
             if (!item.isDir) html += '<input type="checkbox" class="webshell-file-cb" data-path="' + escapeHtml(pathNext) + '" />';
-            html += '</td><td><a href="#" class="webshell-file-link" data-path="' + escapeHtml(pathNext) + '" data-isdir="' + (item.isDir ? '1' : '0') + '">' + escapeHtml(item.name) + (item.isDir ? '/' : '') + '</a></td>';
+            html += '</td><td><a href="#" class="webshell-file-link ' + nameClass + '" data-path="' + escapeHtml(pathNext) + '" data-isdir="' + (item.isDir ? '1' : '0') + '">' + escapeHtml(item.name) + (item.isDir ? '/' : '') + '</a></td>';
             html += '<td class="webshell-col-size">' + escapeHtml(item.size) + '</td>';
             html += '<td class="webshell-col-mtime">' + escapeHtml(item.mtime || '') + '</td>';
             html += '<td class="webshell-col-owner">' + escapeHtml(item.owner || '') + '</td>';
             html += '<td class="webshell-col-group">' + escapeHtml(item.group || '') + '</td>';
             html += '<td class="webshell-col-perms">' + escapeHtml(item.mode || '') + '</td>';
-            html += '<td class="webshell-col-type">' + escapeHtml(item.type || '') + '</td>';
             html += '<td class="webshell-col-actions">';
             if (item.isDir) {
                 html += '<button type="button" class="btn-ghost btn-sm webshell-file-rename" data-path="' + escapeHtml(pathNext) + '" data-name="' + escapeHtml(item.name) + '">' + (wsT('webshell.rename') || '重命名') + '</button>';
@@ -2006,6 +2064,148 @@ function renderFileList(listEl, currentPath, rawOutput, conn, nameFilter) {
             });
         });
     }
+}
+
+function renderDirectoryTree(currentPath, items, conn) {
+    var treeEl = document.getElementById('webshell-dir-tree');
+    if (!treeEl) return;
+    var state = getWebshellTreeState(conn || webshellCurrentConn);
+    var curr = normalizeWebshellPath(currentPath);
+    var dirs = (items || []).filter(function (item) { return item && item.isDir; });
+    if (!state) {
+        treeEl.innerHTML = '<div class="webshell-empty">暂无目录</div>';
+        return;
+    }
+    var tree = state.tree;
+    var expanded = state.expanded;
+    var loaded = state.loaded;
+    if (!tree['.']) tree['.'] = [];
+    if (expanded['.'] !== false) expanded['.'] = true;
+
+    // 把当前目录的子项（目录+文件）同步到树缓存
+    var childNodes = (items || []).map(function (item) {
+        var childPath = curr === '.' ? normalizeWebshellPath(item.name) : normalizeWebshellPath(curr + '/' + item.name);
+        return {
+            path: childPath,
+            name: item.name,
+            isDir: !!item.isDir
+        };
+    }).filter(function (n) { return !!n.path; });
+    childNodes.sort(function (a, b) {
+        // 目录优先，再按名称排序
+        if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+        return (a.name || '').localeCompare(b.name || '');
+    });
+    tree[curr] = childNodes;
+    loaded[curr] = true;
+    childNodes.forEach(function (node) {
+        if (node.isDir && !tree[node.path]) tree[node.path] = [];
+    });
+
+    // 确保当前路径祖先链存在并展开
+    var parts = curr === '.' ? [] : curr.split('/');
+    var parentPath = '.';
+    for (var i = 0; i < parts.length; i++) {
+        var nextPath = parentPath === '.' ? parts[i] : parentPath + '/' + parts[i];
+        if (!tree[parentPath]) tree[parentPath] = [];
+        var parentChildren = tree[parentPath];
+        var hasAncestorNode = parentChildren.some(function (n) { return n && n.path === nextPath; });
+        if (!hasAncestorNode) {
+            parentChildren.push({ path: nextPath, name: parts[i], isDir: true });
+            parentChildren.sort(function (a, b) {
+                if (!!a.isDir !== !!b.isDir) return a.isDir ? -1 : 1;
+                return (a.name || '').localeCompare(b.name || '');
+            });
+        }
+        if (!tree[nextPath]) tree[nextPath] = [];
+        expanded[parentPath] = true;
+        parentPath = nextPath;
+    }
+    expanded[curr] = true;
+
+    function renderNode(node, depth) {
+        var path = node.path;
+        var isDir = !!node.isDir;
+        var children = isDir ? (tree[path] || []).slice() : [];
+        var hasLoadedChildren = isDir ? (loaded[path] === true) : true;
+        var canExpand = isDir && (path === '.' || !hasLoadedChildren || children.length > 0);
+        var hasChildren = children.length > 0;
+        var isExpanded = isDir ? (expanded[path] !== false) : false;
+        var isActive = path === curr;
+        var name = node.name;
+        var icon = isDir ? (path === '.' ? '🗂' : '📁') : '📄';
+        var nodeHtml =
+            '<div class="webshell-tree-node" data-depth="' + depth + '">' +
+            '<div class="webshell-tree-row' + (isActive ? ' active' : '') + '">' +
+            '<button type="button" class="webshell-tree-toggle' + (canExpand ? '' : ' empty') + '" data-path="' + escapeHtml(path) + '">' + (canExpand ? (isExpanded ? '▾' : '▸') : '·') + '</button>' +
+            '<button type="button" class="webshell-dir-item' + (isDir ? ' is-dir' : ' is-file') + '" data-path="' + escapeHtml(path) + '" data-isdir="' + (isDir ? '1' : '0') + '"><span class="webshell-tree-icon">' + icon + '</span><span class="webshell-tree-name">' + escapeHtml(name) + '</span></button>' +
+            '</div>';
+        if (isDir && hasChildren && isExpanded) {
+            nodeHtml += '<div class="webshell-tree-children">';
+            for (var j = 0; j < children.length; j++) {
+                nodeHtml += renderNode(children[j], depth + 1);
+            }
+            nodeHtml += '</div>';
+        }
+        nodeHtml += '</div>';
+        return nodeHtml;
+    }
+
+    treeEl.innerHTML = '<div class="webshell-tree-root">' + renderNode({ path: '.', name: '/', isDir: true }, 0) + '</div>';
+    treeEl.querySelectorAll('.webshell-tree-toggle').forEach(function (btn) {
+        btn.addEventListener('click', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            var p = normalizeWebshellPath(btn.getAttribute('data-path') || '.');
+            if (expanded[p] !== false) {
+                expanded[p] = false;
+                renderDirectoryTree(curr, items, conn || webshellCurrentConn);
+                return;
+            }
+            if (loaded[p] === true) {
+                expanded[p] = true;
+                renderDirectoryTree(curr, items, conn || webshellCurrentConn);
+                return;
+            }
+            fetchWebshellDirectoryItems(conn || webshellCurrentConn, p).then(function (subItems) {
+                var nextChildren = (subItems || []).map(function (it) {
+                    return {
+                        path: p === '.' ? normalizeWebshellPath(it.name) : normalizeWebshellPath(p + '/' + it.name),
+                        name: it.name,
+                        isDir: !!it.isDir
+                    };
+                }).filter(function (n) { return !!n.path; }).sort(function (a, b) {
+                    if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+                    return (a.name || '').localeCompare(b.name || '');
+                });
+                tree[p] = nextChildren;
+                nextChildren.forEach(function (childNode) {
+                    if (childNode.isDir) {
+                        if (!tree[childNode.path]) tree[childNode.path] = [];
+                        if (loaded[childNode.path] == null) loaded[childNode.path] = false;
+                    }
+                });
+                loaded[p] = true;
+                expanded[p] = true;
+                renderDirectoryTree(curr, items, conn || webshellCurrentConn);
+            });
+        });
+    });
+    treeEl.querySelectorAll('.webshell-dir-item').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            var p = normalizeWebshellPath(btn.getAttribute('data-path') || '.');
+            var isDir = btn.getAttribute('data-isdir') === '1';
+            var pathInput = document.getElementById('webshell-file-path');
+            if (isDir) {
+                if (pathInput) pathInput.value = p;
+                webshellFileListDir(webshellCurrentConn, p);
+                return;
+            }
+            var listEl = document.getElementById('webshell-file-list');
+            var browsePath = p.replace(/\/[^/]+$/, '') || '.';
+            if (listEl) webshellFileRead(webshellCurrentConn, p, listEl, browsePath);
+        });
+    });
 }
 
 function webshellFileListApplyFilter() {

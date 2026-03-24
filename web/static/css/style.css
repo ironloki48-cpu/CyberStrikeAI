@@ -8941,6 +8941,128 @@ header {
     background: rgba(139, 148, 158, 0.7);
 }
 
+.webshell-file-layout {
+    display: flex;
+    gap: 12px;
+    min-height: 0;
+    flex: 1;
+}
+
+.webshell-file-sidebar {
+    width: 280px;
+    min-width: 260px;
+    max-width: 320px;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-primary) 100%);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    box-shadow: var(--shadow-sm);
+}
+
+.webshell-file-sidebar-title {
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border-color);
+    font-weight: 600;
+    color: var(--text-primary);
+    letter-spacing: 0.2px;
+}
+
+.webshell-dir-tree {
+    padding: 10px 8px;
+    overflow: auto;
+    min-height: 0;
+}
+
+.webshell-tree-node {
+    position: relative;
+}
+
+.webshell-tree-row {
+    display: flex;
+    align-items: center;
+    border-radius: 8px;
+    margin: 2px 0;
+}
+
+.webshell-tree-row.active {
+    background: rgba(0, 102, 255, 0.11);
+}
+
+.webshell-tree-toggle {
+    width: 18px;
+    min-width: 18px;
+    height: 24px;
+    margin-left: 2px;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 0;
+    font-size: 12px;
+}
+
+.webshell-tree-toggle.empty {
+    cursor: default;
+    opacity: 0.6;
+}
+
+.webshell-tree-children {
+    margin-left: 14px;
+    border-left: 1px dashed rgba(128, 128, 128, 0.28);
+    padding-left: 6px;
+}
+
+.webshell-dir-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1;
+    text-align: left;
+    border: none;
+    background: transparent;
+    color: var(--text-primary);
+    border-radius: 6px;
+    padding: 4px 8px;
+    margin: 0;
+    cursor: pointer;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.webshell-tree-icon {
+    flex: 0 0 auto;
+    font-size: 0.92rem;
+    opacity: 0.92;
+}
+
+.webshell-tree-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.webshell-dir-item:hover {
+    background: rgba(0, 102, 255, 0.08);
+}
+
+.webshell-tree-row.active .webshell-dir-item {
+    color: var(--accent-color);
+    font-weight: 600;
+}
+
+.webshell-file-main {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    flex: 1;
+}
+
 .webshell-file-toolbar {
     display: flex;
     align-items: center;
@@ -8948,7 +9070,7 @@ header {
     margin-bottom: 12px;
     flex-wrap: wrap;
     padding: 12px 14px;
-    background: var(--bg-secondary);
+    background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-primary) 100%);
     border-radius: 10px;
     border: 1px solid var(--border-color);
     width: 100%;
@@ -9093,6 +9215,19 @@ header {
     width: 100%;
 }
 
+@media (max-width: 1200px) {
+    .webshell-file-layout {
+        flex-direction: column;
+    }
+
+    .webshell-file-sidebar {
+        width: 100%;
+        min-width: 0;
+        max-width: none;
+        max-height: 220px;
+    }
+}
+
 .webshell-file-table {
     width: 100%;
     border-collapse: collapse;
@@ -9152,6 +9287,22 @@ header {
 .webshell-file-table a.webshell-file-link:hover {
     background: rgba(0, 102, 255, 0.08);
     color: var(--accent-hover);
+}
+
+.webshell-file-link.is-dir::before,
+.webshell-file-link.is-file::before {
+    display: inline-block;
+    margin-right: 6px;
+    font-size: 0.95rem;
+    opacity: 0.95;
+}
+
+.webshell-file-link.is-dir::before {
+    content: "📁";
+}
+
+.webshell-file-link.is-file::before {
+    content: "📄";
 }
 
 .webshell-file-table .webshell-file-read {
