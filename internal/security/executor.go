@@ -24,11 +24,71 @@ import (
 // Executor security tool executor
 type Executor struct {
 	config         *config.SecurityConfig
+	proxyConfig    *config.ProxyConfig // global proxy middleware config (nil = disabled)
 	toolIndex      map[string]*config.ToolConfig // tool index for O(1) lookup
 	mcpServer      *mcp.Server
 	logger         *zap.Logger
 	resultStorage  ResultStorage // result storage (for query tools)
 	defaultWorkDir string        // stable default working directory for tool execution
+}
+
+// SetProxyConfig sets the global proxy configuration for tool traffic routing.
+func (e *Executor) SetProxyConfig(proxy *config.ProxyConfig) {
+	e.proxyConfig = proxy
+}
+
+// proxyEnv returns environment variables for proxy routing if proxy is enabled.
+// Returns nil if proxy is disabled.
+func (e *Executor) proxyEnv() []string {
+	if e.proxyConfig == nil || !e.proxyConfig.Enabled {
+		return nil
+	}
+	p := e.proxyConfig
+	host := p.Host
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	port := p.Port
+	if port == 0 {
+		port = 1080
+	}
+
+	var proxyURL string
+	switch p.Type {
+	case "http", "https":
+		proxyURL = fmt.Sprintf("%s://%s:%d", p.Type, host, port)
+	case "gsocket", "socks5", "socks5h", "":
+		proxyURL = fmt.Sprintf("socks5h://%s:%d", host, port)
+	default:
+		proxyURL = fmt.Sprintf("socks5h://%s:%d", host, port)
+	}
+
+	noProxy := p.NoProxy
+	if noProxy == "" {
+		noProxy = "localhost,127.0.0.1"
+	}
+
+	return []string{
+		"HTTP_PROXY=" + proxyURL,
+		"HTTPS_PROXY=" + proxyURL,
+		"ALL_PROXY=" + proxyURL,
+		"http_proxy=" + proxyURL,
+		"https_proxy=" + proxyURL,
+		"all_proxy=" + proxyURL,
+		"NO_PROXY=" + noProxy,
+		"no_proxy=" + noProxy,
+	}
+}
+
+// buildCmdEnv returns the environment for a subprocess, injecting proxy vars if enabled.
+func (e *Executor) buildCmdEnv() []string {
+	proxyVars := e.proxyEnv()
+	if proxyVars == nil {
+		return nil // nil means inherit parent env
+	}
+	env := os.Environ()
+	env = append(env, proxyVars...)
+	return env
 }
 
 // ResultStorage result storage interface (directly using storage package types)
@@ -168,11 +228,15 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 	if workDir := e.resolveToolWorkDir(args); workDir != "" {
 		cmd.Dir = workDir
 	}
+	if cmdEnv := e.buildCmdEnv(); cmdEnv != nil {
+		cmd.Env = cmdEnv
+	}
 
 	e.logger.Info("executing security tool",
 		zap.String("tool", toolName),
 		zap.Strings("args", cmdArgs),
 		zap.String("workdir", cmd.Dir),
+		zap.Bool("proxied", e.proxyConfig != nil && e.proxyConfig.Enabled),
 	)
 
 	output, err := cmd.CombinedOutput()
@@ -1536,6 +1600,9 @@ func (e *Executor) executeSystemCommand(ctx context.Context, args map[string]int
 	} else {
 		cmd = exec.CommandContext(ctx, shell, "-c", command)
 	}
+	if cmdEnv := e.buildCmdEnv(); cmdEnv != nil {
+		cmd.Env = cmdEnv
+	}
 
 	// execute command
 	e.logger.Info("executing system command",
@@ -1543,6 +1610,7 @@ func (e *Executor) executeSystemCommand(ctx context.Context, args map[string]int
 		zap.String("shell", shell),
 		zap.String("workdir", workDir),
 		zap.Bool("isBackground", isBackground),
+		zap.Bool("proxied", e.proxyConfig != nil && e.proxyConfig.Enabled),
 	)
 
 	// if it's a background command, use special handling to get the actual background process PID

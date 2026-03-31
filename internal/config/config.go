@@ -180,6 +180,7 @@ type AgentConfig struct {
 	FileManager             FileManagerConfig   `yaml:"file_manager" json:"file_manager"`                             // File manager settings
 	Cuttlefish              CuttlefishConfig    `yaml:"cuttlefish" json:"cuttlefish"`                                 // Android VM (Cuttlefish) settings
 	SSLStrip                SSLStripConfig      `yaml:"sslstrip" json:"sslstrip"`                                     // SSLStrip MITM tool settings
+	Proxy                   ProxyConfig         `yaml:"proxy" json:"proxy"`                                           // Global proxy middleware for tool traffic routing
 	ToolTimeout             int                 `yaml:"tool_timeout" json:"tool_timeout"`                             // Per-tool execution timeout in seconds (default 300 = 5 min)
 }
 
@@ -286,6 +287,17 @@ type SSLStripConfig struct {
 	ListenPort int    `yaml:"listen_port" json:"listen_port"` // Default listen port (default 10000)
 	LogDir     string `yaml:"log_dir" json:"log_dir"`         // Directory for SSLStrip capture logs (default /tmp)
 	AutoProxy  bool   `yaml:"auto_proxy" json:"auto_proxy"`   // Auto-configure Cuttlefish proxy when SSLStrip starts (default false)
+}
+
+// ProxyConfig controls global proxy middleware for all tool executions.
+// Secrets (gsocket secret, proxy auth) are stored in persistent memory, not here.
+type ProxyConfig struct {
+	Enabled   bool   `yaml:"enabled" json:"enabled"`                       // Enable proxy middleware (default false)
+	Type      string `yaml:"type" json:"type"`                             // Proxy type: socks5, socks5h, http, https, gsocket (default socks5h)
+	Host      string `yaml:"host" json:"host"`                             // Proxy host (default 127.0.0.1)
+	Port      int    `yaml:"port" json:"port"`                             // Proxy port (default 1080)
+	NoProxy   string `yaml:"no_proxy" json:"no_proxy"`                     // Comma-separated bypass list (default: localhost,127.0.0.1)
+	AutoStart bool   `yaml:"auto_start" json:"auto_start"`                 // Auto-start gsocket SOCKS tunnel on server start (default false)
 }
 
 type AuthConfig struct {

@@ -469,6 +469,8 @@ async function loadConfig(loadTools = true) {
             'agent-cuttlefish-vision-enabled': currentConfig.agent.cuttlefish?.vision_enabled !== false,
             'agent-sslstrip-enabled': currentConfig.agent.sslstrip?.enabled !== false,
             'agent-sslstrip-auto-proxy': currentConfig.agent.sslstrip?.auto_proxy === true,
+            'agent-proxy-enabled': currentConfig.agent.proxy?.enabled === true,
+            'agent-proxy-auto-start': currentConfig.agent.proxy?.auto_start === true,
             'ghidra-mcp-enabled': currentConfig.external_mcp?.servers?.['ghidra-headless-mcp']?.external_mcp_enable === true,
         };
         // Cuttlefish text fields
@@ -487,6 +489,10 @@ async function loadConfig(loadTools = true) {
             'agent-cuttlefish-screenshot-dir': currentConfig.agent.cuttlefish?.screenshot_dir || '/tmp/droidrun_screenshots',
             'agent-sslstrip-listen-port': currentConfig.agent.sslstrip?.listen_port || 10000,
             'agent-sslstrip-log-dir': currentConfig.agent.sslstrip?.log_dir || '/tmp',
+            'agent-proxy-type': currentConfig.agent.proxy?.type || 'socks5h',
+            'agent-proxy-host': currentConfig.agent.proxy?.host || '127.0.0.1',
+            'agent-proxy-port': currentConfig.agent.proxy?.port || 1080,
+            'agent-proxy-no-proxy': currentConfig.agent.proxy?.no_proxy || 'localhost,127.0.0.1',
             'ghidra-install-dir': currentConfig.external_mcp?.servers?.['ghidra-headless-mcp']?.env?.GHIDRA_INSTALL_DIR || '',
             'ghidra-mcp-home': currentConfig.external_mcp?.servers?.['ghidra-headless-mcp']?.env?.GHIDRA_MCP_HOME || '',
         };
@@ -1177,6 +1183,14 @@ async function applySettings() {
                     listen_port: parseInt(document.getElementById('agent-sslstrip-listen-port')?.value) || 10000,
                     log_dir: document.getElementById('agent-sslstrip-log-dir')?.value.trim() || '/tmp',
                     auto_proxy: document.getElementById('agent-sslstrip-auto-proxy')?.checked === true
+                },
+                proxy: {
+                    enabled: document.getElementById('agent-proxy-enabled')?.checked === true,
+                    type: document.getElementById('agent-proxy-type')?.value || 'socks5h',
+                    host: document.getElementById('agent-proxy-host')?.value.trim() || '127.0.0.1',
+                    port: parseInt(document.getElementById('agent-proxy-port')?.value) || 1080,
+                    no_proxy: document.getElementById('agent-proxy-no-proxy')?.value.trim() || 'localhost,127.0.0.1',
+                    auto_start: document.getElementById('agent-proxy-auto-start')?.checked === true
                 }
             },
             security: {

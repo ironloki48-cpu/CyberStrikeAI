@@ -1880,6 +1880,51 @@
                                             </label>
                                         </div>
 
+                                        <!-- ── Proxy Middleware ── -->
+                                        <div class="settings-subsection-header">
+                                            <h5>Proxy Middleware (Traffic Routing)</h5>
+                                            <small class="form-hint" style="font-weight:normal">Route all tool traffic through SOCKS5/HTTP proxy or gsocket tunnel. Secrets stored in persistent memory.</small>
+                                        </div>
+                                        <div class="form-group">
+                                            <label class="checkbox-label">
+                                                <input type="checkbox" id="agent-proxy-enabled" class="modern-checkbox" />
+                                                <span class="checkbox-custom"></span>
+                                                <span class="checkbox-text">Enable proxy middleware for all tool executions</span>
+                                            </label>
+                                        </div>
+                                        <div class="form-row" style="display:flex;gap:12px">
+                                            <div class="form-group" style="flex:1">
+                                                <label for="agent-proxy-type">Proxy Type</label>
+                                                <select id="agent-proxy-type" class="modern-select">
+                                                    <option value="socks5h">SOCKS5h (DNS through proxy)</option>
+                                                    <option value="socks5">SOCKS5</option>
+                                                    <option value="http">HTTP</option>
+                                                    <option value="https">HTTPS</option>
+                                                    <option value="gsocket">gsocket (auto-tunnel)</option>
+                                                </select>
+                                            </div>
+                                            <div class="form-group" style="flex:1">
+                                                <label for="agent-proxy-host">Host</label>
+                                                <input type="text" id="agent-proxy-host" placeholder="127.0.0.1" />
+                                            </div>
+                                            <div class="form-group" style="flex:0.5">
+                                                <label for="agent-proxy-port">Port</label>
+                                                <input type="number" id="agent-proxy-port" min="1" max="65535" placeholder="1080" />
+                                            </div>
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="agent-proxy-no-proxy">No-Proxy Bypass</label>
+                                            <input type="text" id="agent-proxy-no-proxy" placeholder="localhost,127.0.0.1" />
+                                            <small class="form-hint">Comma-separated hosts to bypass proxy</small>
+                                        </div>
+                                        <div class="form-group">
+                                            <label class="checkbox-label">
+                                                <input type="checkbox" id="agent-proxy-auto-start" class="modern-checkbox" />
+                                                <span class="checkbox-custom"></span>
+                                                <span class="checkbox-text">Auto-start gsocket SOCKS tunnel on server start (secret from memory)</span>
+                                            </label>
+                                        </div>
+
                                         <div class="settings-subsection-header">
                                             <h5>Ghidra Headless MCP (Binary Analysis)</h5>
                                             <small class="form-hint" style="font-weight:normal">Standalone MCP server — ~212 Ghidra reverse engineering tools. Supports ELF, PE, APK/DEX, firmware, any binary.</small>

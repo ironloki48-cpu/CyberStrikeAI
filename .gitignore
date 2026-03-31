@@ -34,6 +34,9 @@ scripts/__pycache__/
 # Scan results / test output
 nmap_*.txt
 *.nmap
+reconnaissance_report.md
+subdomains_*.txt
+managed_files/
 
 # OS/editor noise
 .DS_Store
