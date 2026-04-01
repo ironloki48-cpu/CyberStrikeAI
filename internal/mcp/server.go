@@ -94,6 +94,15 @@ func (s *Server) RegisterTool(tool Tool, handler ToolHandler) {
 	}
 }
 
+// UnregisterTool removes a single tool by name (used for plugin hot-unload).
+func (s *Server) UnregisterTool(name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.tools, name)
+	delete(s.toolDefs, name)
+	delete(s.resources, fmt.Sprintf("tool://%s", name))
+}
+
 // ClearTools clears all tools (used to reload configuration)
 func (s *Server) ClearTools() {
 	s.mu.Lock()

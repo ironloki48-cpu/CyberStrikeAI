@@ -1,0 +1,35 @@
+name: "censys-search"
+command: "python3"
+args: ["{{PLUGIN_DIR}}/scripts/censys_search.py"]
+enabled: true
+short_description: "Censys internet search — find hosts, services, certificates by IP, domain, or service fingerprint"
+description: |
+  Search the Censys internet-wide scan database for hosts, services, and certificates.
+  
+  Requires CENSYS_API_ID and CENSYS_API_SECRET configured in plugin settings.
+  
+  **Query examples:**
+  - `services.port: 22` — all hosts with SSH
+  - `services.http.response.html_title: "Dashboard"` — web dashboards
+  - `ip: 1.2.3.0/24` — hosts in a CIDR
+  - `services.tls.certificates.leaf_data.subject.common_name: "*.example.com"` — TLS certs
+  - `autonomous_system.name: "HETZNER"` — hosts in an ASN
+parameters:
+  - name: "query"
+    type: "string"
+    description: "Censys search query (CQL syntax)"
+    required: true
+    position: 0
+    format: "positional"
+  - name: "per_page"
+    type: "string"
+    description: "Results per page (default 25, max 100)"
+    required: false
+    position: 1
+    format: "positional"
+  - name: "resource"
+    type: "string"
+    description: "Resource type: hosts (default), certificates"
+    required: false
+    position: 2
+    format: "positional"

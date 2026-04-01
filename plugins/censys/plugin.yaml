@@ -1,0 +1,15 @@
+name: censys
+version: "1.0.0"
+description: "Censys internet search — hosts, certificates, services discovery"
+author: "cybersecua"
+url: "https://github.com/cybersecua/cyberstrike-plugin-censys"
+
+config:
+  - name: CENSYS_API_ID
+    description: "Censys API ID (from https://search.censys.io/account/api)"
+    required: true
+  - name: CENSYS_API_SECRET
+    description: "Censys API Secret"
+    required: true
+
+requirements: "requirements.txt"

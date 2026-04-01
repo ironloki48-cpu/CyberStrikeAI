@@ -22,6 +22,7 @@ import (
 	"cyberstrike-ai/internal/mcp"
 	"cyberstrike-ai/internal/mcp/builtin"
 	"cyberstrike-ai/internal/openai"
+	"cyberstrike-ai/internal/plugins"
 	"cyberstrike-ai/internal/robot"
 	"cyberstrike-ai/internal/security"
 	"cyberstrike-ai/internal/skills"
@@ -98,6 +99,36 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 			zap.String("host", cfg.Agent.Proxy.Host),
 			zap.Int("port", cfg.Agent.Proxy.Port),
 		)
+	}
+
+	// initialize plugin manager
+	pluginsDir := "plugins"
+	if !filepath.IsAbs(pluginsDir) {
+		configDir := filepath.Dir("config.yaml")
+		if len(os.Args) > 1 {
+			configDir = filepath.Dir(os.Args[1])
+		}
+		pluginsDir = filepath.Join(configDir, pluginsDir)
+	}
+	pluginManager, err := plugins.NewManager(pluginsDir, db.DB, log.Logger)
+	if err != nil {
+		log.Logger.Warn("failed to initialize plugin manager", zap.Error(err))
+	} else {
+		if err := pluginManager.ScanPlugins(); err != nil {
+			log.Logger.Warn("failed to scan plugins", zap.Error(err))
+		}
+
+		// Merge enabled plugin tools into security config BEFORE RegisterTools
+		pluginTools := pluginManager.GetEnabledPluginTools()
+		if len(pluginTools) > 0 {
+			cfg.Security.Tools = append(cfg.Security.Tools, pluginTools...)
+			log.Logger.Info("plugin tools merged into security config",
+				zap.Int("pluginToolCount", len(pluginTools)),
+			)
+		}
+
+		// Set plugin env var provider on executor
+		executor.SetPluginEnvProvider(pluginManager.GetToolEnvVars)
 	}
 
 	// DNS pre-check: verify the API host is reachable at startup
@@ -373,6 +404,12 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		skillsHandler.SetDB(db) // database connection
 	}
 
+	// create plugins handler
+	var pluginsHandler *handler.PluginsHandler
+	if pluginManager != nil {
+		pluginsHandler = handler.NewPluginsHandler(pluginManager, executor, mcpServer, &cfg.Security, log.Logger)
+	}
+
 	// create OpenAPI handler
 	conversationHandler := handler.NewConversationHandler(db, log.Logger)
 	robotHandler := handler.NewRobotHandler(cfg, db, agentHandler, log.Logger)
@@ -490,6 +527,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		mcpServer,
 		authManager,
 		openAPIHandler,
+		pluginsHandler,
 	)
 
 	return app, nil
@@ -607,6 +645,7 @@ func setupRoutes(
 	mcpServer *mcp.Server,
 	authManager *security.AuthManager,
 	openAPIHandler *handler.OpenAPIHandler,
+	pluginsHandler *handler.PluginsHandler,
 ) {
 	// API routes
 	api := router.Group("/api")
@@ -909,6 +948,21 @@ func setupRoutes(
 		protected.PUT("/skills/:name", skillsHandler.UpdateSkill)
 		protected.DELETE("/skills/:name", skillsHandler.DeleteSkill)
 		protected.DELETE("/skills/:name/stats", skillsHandler.ClearSkillStatsByName)
+
+		// Plugin management
+		if pluginsHandler != nil {
+			pluginRoutes := protected.Group("/plugins")
+			{
+				pluginRoutes.GET("", pluginsHandler.ListPlugins)
+				pluginRoutes.POST("/upload", pluginsHandler.UploadPlugin)
+				pluginRoutes.POST("/:name/enable", pluginsHandler.EnablePlugin)
+				pluginRoutes.POST("/:name/disable", pluginsHandler.DisablePlugin)
+				pluginRoutes.GET("/:name/config", pluginsHandler.GetPluginConfig)
+				pluginRoutes.POST("/:name/config", pluginsHandler.SetPluginConfig)
+				pluginRoutes.POST("/:name/install", pluginsHandler.InstallRequirements)
+				pluginRoutes.DELETE("/:name", pluginsHandler.DeletePlugin)
+			}
+		}
 
 		// MCP endpoint
 		protected.POST("/mcp", func(c *gin.Context) {

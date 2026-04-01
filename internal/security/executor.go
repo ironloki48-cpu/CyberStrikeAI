@@ -34,13 +34,14 @@ var ToolOutputCallbackCtxKey = toolOutputCallbackCtxKey{}
 
 // Executor security tool executor
 type Executor struct {
-	config         *config.SecurityConfig
-	proxyConfig    *config.ProxyConfig // global proxy middleware config (nil = disabled)
-	toolIndex      map[string]*config.ToolConfig // tool index for O(1) lookup
-	mcpServer      *mcp.Server
-	logger         *zap.Logger
-	resultStorage  ResultStorage // result storage (for query tools)
-	defaultWorkDir string        // stable default working directory for tool execution
+	config             *config.SecurityConfig
+	proxyConfig        *config.ProxyConfig                // global proxy middleware config (nil = disabled)
+	toolIndex          map[string]*config.ToolConfig      // tool index for O(1) lookup
+	mcpServer          *mcp.Server
+	logger             *zap.Logger
+	resultStorage      ResultStorage                      // result storage (for query tools)
+	defaultWorkDir     string                             // stable default working directory for tool execution
+	pluginEnvProvider  func(toolName string) []string     // returns plugin env vars for a tool (nil = none)
 }
 
 // SetProxyConfig sets the global proxy configuration for tool traffic routing.
@@ -99,6 +100,30 @@ func (e *Executor) buildCmdEnv() []string {
 	}
 	env := os.Environ()
 	env = append(env, proxyVars...)
+	return env
+}
+
+// buildCmdEnvForTool returns the environment for a tool subprocess, injecting
+// both proxy vars and plugin-specific env vars. This is the preferred method
+// for tool execution.
+func (e *Executor) buildCmdEnvForTool(toolName string) []string {
+	proxyVars := e.proxyEnv()
+	var pluginVars []string
+	if e.pluginEnvProvider != nil {
+		pluginVars = e.pluginEnvProvider(toolName)
+	}
+
+	if proxyVars == nil && len(pluginVars) == 0 {
+		return nil // nil means inherit parent env
+	}
+
+	env := os.Environ()
+	if proxyVars != nil {
+		env = append(env, proxyVars...)
+	}
+	if len(pluginVars) > 0 {
+		env = append(env, pluginVars...)
+	}
 	return env
 }
 
@@ -239,7 +264,7 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 	if workDir := e.resolveToolWorkDir(args); workDir != "" {
 		cmd.Dir = workDir
 	}
-	if cmdEnv := e.buildCmdEnv(); cmdEnv != nil {
+	if cmdEnv := e.buildCmdEnvForTool(toolName); cmdEnv != nil {
 		cmd.Env = cmdEnv
 	}
 
@@ -825,6 +850,67 @@ func (e *Executor) RegisterTools(mcpServer *mcp.Server) {
 	e.logger.Info("tool registration complete",
 		zap.Int("registeredCount", len(e.config.Tools)),
 	)
+}
+
+// RegisterSingleTool registers a single tool with the MCP server. This is used
+// for plugin hot-load without re-registering every tool.
+func (e *Executor) RegisterSingleTool(mcpServer *mcp.Server, toolConfig *config.ToolConfig) {
+	if toolConfig == nil || !toolConfig.Enabled {
+		return
+	}
+
+	// Add to tool index
+	e.toolIndex[toolConfig.Name] = toolConfig
+
+	toolName := toolConfig.Name
+	toolConfigCopy := *toolConfig
+
+	useFullDescription := strings.TrimSpace(strings.ToLower(e.config.ToolDescriptionMode)) == "full"
+	shortDesc := toolConfigCopy.ShortDescription
+	if shortDesc == "" {
+		desc := toolConfigCopy.Description
+		if len(desc) > 10000 {
+			if idx := strings.Index(desc, "\n"); idx > 0 && idx < 10000 {
+				shortDesc = strings.TrimSpace(desc[:idx])
+			} else {
+				shortDesc = desc[:10000] + "..."
+			}
+		} else {
+			shortDesc = desc
+		}
+	}
+	if useFullDescription {
+		shortDesc = ""
+	}
+
+	tool := mcp.Tool{
+		Name:             toolConfigCopy.Name,
+		Description:      toolConfigCopy.Description,
+		ShortDescription: shortDesc,
+		InputSchema:      e.buildInputSchema(&toolConfigCopy),
+	}
+
+	handler := func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		return e.ExecuteTool(ctx, toolName, args)
+	}
+
+	mcpServer.RegisterTool(tool, handler)
+	e.logger.Info("single tool registered",
+		zap.String("tool", toolConfigCopy.Name),
+		zap.String("command", toolConfigCopy.Command),
+	)
+}
+
+// RebuildToolIndex rebuilds the internal tool name -> config index.
+func (e *Executor) RebuildToolIndex() {
+	e.buildToolIndex()
+}
+
+// SetPluginEnvProvider sets a function that provides extra environment variables
+// for plugin tools. When ExecuteTool runs, it calls this to get plugin-specific
+// env vars for the tool being executed.
+func (e *Executor) SetPluginEnvProvider(provider func(toolName string) []string) {
+	e.pluginEnvProvider = provider
 }
 
 // buildCommandArgs builds command arguments
