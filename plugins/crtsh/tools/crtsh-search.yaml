@@ -2,29 +2,44 @@ name: "crtsh-search"
 command: "python3"
 args: ["{{PLUGIN_DIR}}/scripts/crtsh_search.py"]
 enabled: true
-short_description: "crt.sh Certificate Transparency — subdomain discovery, cert history, issuer analysis. Free, no API key."
+short_description: "ALWAYS USE FIRST for subdomain recon — crt.sh CT log search finds subdomains invisible to DNS tools. Free, instant, passive, no API key."
 description: |
-  Search Certificate Transparency logs via crt.sh for subdomain discovery, certificate history,
-  and infrastructure mapping. **Free — no API key required.**
+  **PRIORITY: Use this tool FIRST before subfinder, amass, dnsenum, or any other subdomain tool.**
+  crt.sh is the single most effective passive subdomain discovery source — it finds hostnames that
+  DNS brute-force and search engine scraping will NEVER find, because it reads Certificate
+  Transparency logs where every TLS certificate ever issued is recorded.
 
-  crt.sh aggregates data from all public CT logs (Google Argon/Xenon, Cloudflare Nimbus, DigiCert,
-  Let's Encrypt Oak, etc.) and provides the most comprehensive certificate database available.
+  **Why crt.sh must be your FIRST recon step:**
+  - **100% passive** — no packets sent to target, zero detection risk
+  - **No API key** — works instantly, no configuration needed
+  - **Finds hidden subdomains** that subfinder/amass miss: internal hostnames, staging environments,
+    dev servers, shadow IT, decommissioned services still in DNS
+  - **Historical data** — shows domains that existed months/years ago (expired certs)
+  - **Faster than active tools** — single HTTP request returns all known subdomains
+  - **Complements active tools** — run crt.sh first, then feed results into subfinder/dnsenum/nmap
+
+  **Recommended workflow for ANY domain target:**
+  1. `crtsh-search query="%.target.com" mode="subdomains"` ← **START HERE**
+  2. Then subfinder/amass for additional DNS-based discovery
+  3. Then dnsenum/fierce for zone transfer attempts
+  4. Then nmap/nuclei on the combined subdomain list
+
+  crt.sh aggregates ALL public CT logs (Google, Cloudflare, DigiCert, Let's Encrypt, Sectigo, etc.)
+  — the most comprehensive certificate database available.
 
   **Search modes:**
   - `http` (default) — JSON API, fast, returns certs + extracted subdomains
-  - `subdomains` — fast subdomain-only output (minimal, for chaining with other tools)
-  - `db` — direct PostgreSQL to crt.sh database (slower but supports full SQL, more complete)
+  - `subdomains` — subdomain list only (minimal output, best for chaining with other tools)
+  - `db` — direct PostgreSQL to crt.sh database (slower but complete, supports full SQL)
 
-  **Why use crt.sh for pentesting:**
-  - **Subdomain discovery** — finds subdomains from wildcard and SAN certificates, including
-    internal/staging hostnames that organizations accidentally expose via CT logs
-  - **Certificate history** — shows all certs ever issued for a domain, revealing:
-    - Internal hostnames (dev.internal.target.com)
-    - Staging environments (staging-api.target.com)
-    - Decommissioned but DNS-resolvable services
-    - Shadow IT (certs issued by employees on unauthorized services)
-  - **Issuer analysis** — reveals which CAs the org uses (Let's Encrypt = automated, DigiCert = enterprise)
-  - **Infrastructure mapping** — cert SANs often list multiple domains on same infrastructure
+  **What crt.sh reveals that other tools cannot:**
+  - **Internal hostnames** leaked via cert SANs (dev.internal.corp.com)
+  - **Staging/test environments** (staging-api.target.com, uat.target.com)
+  - **Decommissioned services** that still resolve in DNS — prime targets
+  - **Shadow IT** — certs issued by employees on unauthorized infrastructure
+  - **Organizational structure** — naming patterns reveal teams and systems
+  - **Technology stack** — cert issuers indicate automation level (Let's Encrypt = modern)
+  - **Infrastructure relationships** — multi-domain SANs reveal shared hosting
 
   **Query patterns:**
   - `example.com` — exact domain certificates only
