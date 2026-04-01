@@ -1,12 +1,19 @@
 #!/usr/bin/env python3
 """
-Censys Search Plugin for CyberStrikeAI
-=======================================
-Searches Censys internet-wide scan database for hosts, services, and certificates.
-Supports: host search, certificate search, host detail lookup, account balance check.
+Censys Platform API v3 Plugin for CyberStrikeAI
+================================================
+Uses the new Censys Platform API (api.platform.censys.io/v3/).
+Auth: Bearer token (Personal Access Token), NOT the old API ID/Secret.
 
-API credentials are injected as environment variables by the plugin system.
-API docs: https://search.censys.io/api
+Generate token: https://accounts.censys.io/settings/personal-access-tokens
+
+Endpoints used:
+  POST /v3/global/search/query     — search hosts/certs/web properties (1 credit)
+  GET  /v3/global/asset/host/{ip}  — host detail lookup (free)
+  GET  /v3/global/asset/certificate/{fp} — cert detail (free)
+  POST /v3/global/search/aggregate — field aggregation (1 credit)
+  GET  /v3/accounts/users/credits  — check credit balance (free)
+  GET  /v3/global/asset/host/{ip}/names — get hostnames for IP (free)
 """
 
 import os
@@ -15,222 +22,165 @@ import json
 import requests
 
 # ── Config ──────────────────────────────────────────────────────────
-API_BASE = "https://search.censys.io/api/v2"
-API_ID = os.environ.get("CENSYS_API_ID", "").strip()
-API_SECRET = os.environ.get("CENSYS_API_SECRET", "").strip()
+API_BASE = "https://api.platform.censys.io/v3"
+PAT = os.environ.get("CENSYS_PAT", "").strip()
 TIMEOUT = 30
 
 
-def api_auth():
-    """Return requests auth tuple."""
-    return (API_ID, API_SECRET)
+def headers():
+    return {
+        "Authorization": f"Bearer {PAT}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
 
 
-def mask(s, keep=4):
-    """Mask a secret for display."""
+def mask(s, keep=8):
     if len(s) <= keep * 2:
         return "*" * len(s)
-    return s[:keep] + "*" * (len(s) - keep * 2) + s[-keep:]
+    return s[:keep] + "*" * (len(s) - keep * 2) + s[-4:]
 
 
-def validate_credentials():
-    """Validate API credentials by calling /v1/account endpoint.
-    Returns account info including quota/credits."""
-    resp = requests.get("https://search.censys.io/api/v1/account",
-                        auth=api_auth(), timeout=TIMEOUT)
+def handle_error(resp):
+    """Parse Censys v3 error response."""
+    try:
+        data = resp.json()
+        msg = data.get("error", {}).get("message", "") or data.get("message", "") or resp.text[:200]
+    except Exception:
+        msg = resp.text[:200]
+    return {"status": "error", "http_code": resp.status_code, "message": msg}
+
+
+# ── Commands ────────────────────────────────────────────────────────
+
+def check_credits():
+    """Check account credit balance and validate token."""
+    resp = requests.get(f"{API_BASE}/accounts/users/credits", headers=headers(), timeout=TIMEOUT)
     if resp.status_code == 401:
-        return {"status": "error", "message": "Invalid Censys API credentials (401 Unauthorized)",
-                "api_id_preview": mask(API_ID)}
-    resp.raise_for_status()
+        return {"status": "error", "message": "Invalid Censys PAT (401 Unauthorized). Generate at https://accounts.censys.io/settings/personal-access-tokens",
+                "token_preview": mask(PAT)}
+    if resp.status_code != 200:
+        return handle_error(resp)
     data = resp.json()
-    quota = data.get("quota", {})
     return {
         "status": "ok",
-        "message": "Censys API credentials valid",
-        "api_id_preview": mask(API_ID),
-        "login": data.get("login", ""),
-        "email": data.get("email", ""),
-        "quota": {
-            "used": quota.get("used", 0),
-            "allowance": quota.get("allowance", 0),
-            "resets_at": quota.get("resets_at", ""),
-        },
+        "message": "Censys token valid",
+        "token_preview": mask(PAT),
+        "credits": data,
     }
 
 
-def search_hosts(query, per_page=25, cursor=None, virtual_hosts="EXCLUDE"):
-    """Search Censys hosts database.
-
-    Args:
-        query: CQL query string
-        per_page: results per page (1-100)
-        cursor: pagination cursor from previous response
-        virtual_hosts: EXCLUDE, INCLUDE, or ONLY
-    """
-    params = {"q": query, "per_page": min(int(per_page), 100)}
+def search_query(query, resource_type="host", limit=50, cursor=None, fields=None):
+    """Search hosts, certificates, or web properties.
+    Costs 1 credit per query."""
+    body = {
+        "q": query,
+        "resource_type": resource_type,
+        "limit": min(int(limit), 100),
+    }
     if cursor:
-        params["cursor"] = cursor
-    if virtual_hosts != "EXCLUDE":
-        params["virtual_hosts"] = virtual_hosts
+        body["cursor"] = cursor
+    if fields:
+        body["fields"] = fields if isinstance(fields, list) else [f.strip() for f in fields.split(",")]
 
-    resp = requests.get(f"{API_BASE}/hosts/search",
-                        params=params, auth=api_auth(), timeout=TIMEOUT)
+    resp = requests.post(f"{API_BASE}/global/search/query", headers=headers(),
+                         json=body, timeout=TIMEOUT)
     if resp.status_code == 401:
-        return {"status": "error", "message": "Invalid Censys API credentials"}
+        return {"status": "error", "message": "Invalid Censys PAT"}
     if resp.status_code == 422:
-        return {"status": "error", "message": f"Invalid query syntax: {resp.json().get('error', resp.text)}"}
-    resp.raise_for_status()
+        return {"status": "error", "message": f"Invalid query: {resp.json().get('error', {}).get('message', resp.text[:200])}"}
+    if resp.status_code != 200:
+        return handle_error(resp)
 
     data = resp.json()
-    result = data.get("result", {})
-    hits = result.get("hits", [])
-    total = result.get("total", 0)
-
-    formatted = []
-    for hit in hits:
-        entry = {
-            "ip": hit.get("ip", ""),
-            "services": [],
-            "autonomous_system": {},
-            "location": {},
-            "last_updated": hit.get("last_updated_at", ""),
-        }
-        # Services
-        for svc in hit.get("services", []):
-            svc_entry = {
-                "port": svc.get("port"),
-                "service_name": svc.get("service_name", "UNKNOWN"),
-                "transport": svc.get("transport_protocol", ""),
-            }
-            if svc.get("software"):
-                svc_entry["software"] = [s.get("product", "") + " " + s.get("version", "")
-                                          for s in svc["software"] if s.get("product")]
-            if svc.get("tls", {}).get("certificates", {}).get("leaf_data", {}).get("subject", {}).get("common_name"):
-                svc_entry["tls_cn"] = svc["tls"]["certificates"]["leaf_data"]["subject"]["common_name"]
-            if svc.get("http", {}).get("response", {}).get("html_title"):
-                svc_entry["http_title"] = svc["http"]["response"]["html_title"]
-            if svc.get("http", {}).get("response", {}).get("status_code"):
-                svc_entry["http_status"] = svc["http"]["response"]["status_code"]
-            if svc.get("banner"):
-                svc_entry["banner_preview"] = svc["banner"][:200]
-            entry["services"].append(svc_entry)
-        # ASN
-        asn = hit.get("autonomous_system", {})
-        if asn:
-            entry["autonomous_system"] = {
-                "asn": asn.get("asn"),
-                "name": asn.get("name", ""),
-                "bgp_prefix": asn.get("bgp_prefix", ""),
-                "country_code": asn.get("country_code", ""),
-            }
-        # Location
-        loc = hit.get("location", {})
-        if loc:
-            entry["location"] = {
-                "country": loc.get("country", ""),
-                "city": loc.get("city", ""),
-                "province": loc.get("province", ""),
-                "coordinates": loc.get("coordinates", {}),
-            }
-        # Operating system
-        if hit.get("operating_system", {}).get("product"):
-            entry["os"] = hit["operating_system"]["product"] + " " + hit["operating_system"].get("version", "")
-        # DNS
-        if hit.get("dns", {}).get("reverse_dns", {}).get("names"):
-            entry["reverse_dns"] = hit["dns"]["reverse_dns"]["names"]
-
-        formatted.append(entry)
-
-    output = {
+    result = {
         "status": "success",
         "query": query,
-        "total": total,
-        "count": len(formatted),
-        "results": formatted,
+        "resource_type": resource_type,
+        "total": data.get("total", 0),
+        "count": len(data.get("result", [])),
+        "results": data.get("result", []),
     }
-    # Pagination
-    links = result.get("links", {})
-    if links.get("next"):
-        output["next_cursor"] = links["next"]
-    if links.get("prev"):
-        output["prev_cursor"] = links["prev"]
-
-    return output
+    if data.get("cursor"):
+        result["next_cursor"] = data["cursor"]
+    if data.get("query_credits_used"):
+        result["credits_used"] = data["query_credits_used"]
+    return result
 
 
-def search_certificates(query, per_page=25, cursor=None):
-    """Search Censys certificate database."""
-    params = {"q": query, "per_page": min(int(per_page), 100)}
-    if cursor:
-        params["cursor"] = cursor
-
-    resp = requests.get(f"{API_BASE}/certificates/search",
-                        params=params, auth=api_auth(), timeout=TIMEOUT)
+def host_lookup(ip):
+    """Get detailed info for a specific IP (free, no credits)."""
+    resp = requests.get(f"{API_BASE}/global/asset/host/{ip}", headers=headers(), timeout=TIMEOUT)
     if resp.status_code == 401:
-        return {"status": "error", "message": "Invalid Censys API credentials"}
-    resp.raise_for_status()
-
-    data = resp.json()
-    result = data.get("result", {})
-    hits = result.get("hits", [])
-    total = result.get("total", 0)
-
-    formatted = []
-    for hit in hits:
-        entry = {
-            "fingerprint_sha256": hit.get("fingerprint_sha256", ""),
-            "names": hit.get("names", []),
-            "issuer": hit.get("parsed", {}).get("issuer_dn", ""),
-            "subject": hit.get("parsed", {}).get("subject_dn", ""),
-            "validity": {
-                "start": hit.get("parsed", {}).get("validity_period", {}).get("not_before", ""),
-                "end": hit.get("parsed", {}).get("validity_period", {}).get("not_after", ""),
-            },
-        }
-        formatted.append(entry)
-
-    output = {
-        "status": "success",
-        "query": query,
-        "total": total,
-        "count": len(formatted),
-        "results": formatted,
-    }
-    links = result.get("links", {})
-    if links.get("next"):
-        output["next_cursor"] = links["next"]
-    return output
-
-
-def host_detail(ip):
-    """Get detailed information for a specific IP address."""
-    resp = requests.get(f"{API_BASE}/hosts/{ip}",
-                        auth=api_auth(), timeout=TIMEOUT)
-    if resp.status_code == 401:
-        return {"status": "error", "message": "Invalid Censys API credentials"}
+        return {"status": "error", "message": "Invalid Censys PAT"}
     if resp.status_code == 404:
-        return {"status": "error", "message": f"Host {ip} not found in Censys database"}
-    resp.raise_for_status()
+        return {"status": "error", "message": f"Host {ip} not found in Censys"}
+    if resp.status_code != 200:
+        return handle_error(resp)
+    return {"status": "success", "ip": ip, "data": resp.json()}
 
+
+def host_names(ip):
+    """Get DNS names associated with an IP (free)."""
+    resp = requests.get(f"{API_BASE}/global/asset/host/{ip}/names", headers=headers(), timeout=TIMEOUT)
+    if resp.status_code != 200:
+        return handle_error(resp)
     data = resp.json()
-    result = data.get("result", {})
     return {
         "status": "success",
         "ip": ip,
-        "services": result.get("services", []),
-        "autonomous_system": result.get("autonomous_system", {}),
-        "location": result.get("location", {}),
-        "operating_system": result.get("operating_system", {}),
-        "dns": result.get("dns", {}),
-        "last_updated_at": result.get("last_updated_at", ""),
-        "labels": result.get("labels", []),
+        "names": data.get("result", []),
+        "total": data.get("total", 0),
     }
+
+
+def cert_lookup(fingerprint):
+    """Get certificate details by SHA-256 fingerprint (free)."""
+    resp = requests.get(f"{API_BASE}/global/asset/certificate/{fingerprint}",
+                        headers=headers(), timeout=TIMEOUT)
+    if resp.status_code == 404:
+        return {"status": "error", "message": f"Certificate {fingerprint} not found"}
+    if resp.status_code != 200:
+        return handle_error(resp)
+    return {"status": "success", "fingerprint": fingerprint, "data": resp.json()}
+
+
+def aggregate(query, resource_type="host", agg_field="autonomous_system.name", num_buckets=25):
+    """Aggregate search results by a field (1 credit)."""
+    body = {
+        "q": query,
+        "resource_type": resource_type,
+        "agg_field": agg_field,
+        "num_buckets": min(int(num_buckets), 100),
+    }
+    resp = requests.post(f"{API_BASE}/global/search/aggregate", headers=headers(),
+                         json=body, timeout=TIMEOUT)
+    if resp.status_code != 200:
+        return handle_error(resp)
+    data = resp.json()
+    return {
+        "status": "success",
+        "query": query,
+        "agg_field": agg_field,
+        "total": data.get("total", 0),
+        "buckets": data.get("result", []),
+    }
+
+
+def webproperty_lookup(hostname, port=443):
+    """Look up a web property by hostname:port (free)."""
+    resp = requests.get(f"{API_BASE}/global/asset/webproperty/{hostname}:{port}",
+                        headers=headers(), timeout=TIMEOUT)
+    if resp.status_code == 404:
+        return {"status": "error", "message": f"Web property {hostname}:{port} not found"}
+    if resp.status_code != 200:
+        return handle_error(resp)
+    return {"status": "success", "hostname": hostname, "port": port, "data": resp.json()}
 
 
 # ── Argument Parsing ────────────────────────────────────────────────
 
 def parse_args():
-    """Parse arguments from positional args or JSON."""
     if len(sys.argv) > 1:
         try:
             config = json.loads(sys.argv[1])
@@ -243,38 +193,39 @@ def parse_args():
     if len(sys.argv) > 1:
         config["query"] = sys.argv[1]
     if len(sys.argv) > 2:
-        try:
-            config["per_page"] = int(sys.argv[2])
-        except ValueError:
-            config["resource"] = sys.argv[2]
+        config["resource_type"] = sys.argv[2]
     if len(sys.argv) > 3:
-        config["resource"] = sys.argv[3]
-    if len(sys.argv) > 4:
-        config["cursor"] = sys.argv[4]
+        try:
+            config["limit"] = int(sys.argv[3])
+        except ValueError:
+            config["command"] = sys.argv[3]
     return config
 
 
 # ── Main ────────────────────────────────────────────────────────────
 
 def main():
-    if not API_ID or not API_SECRET:
+    if not PAT:
         print(json.dumps({
             "status": "error",
-            "message": "CENSYS_API_ID and CENSYS_API_SECRET are not configured",
-            "required_config": ["CENSYS_API_ID", "CENSYS_API_SECRET"],
-            "note": "Go to Settings → Plugins → Censys → configure API keys. Get keys at https://search.censys.io/account/api"
+            "message": "CENSYS_PAT not configured. Set your Personal Access Token in Settings > Plugins > Censys.",
+            "note": "Generate token at https://accounts.censys.io/settings/personal-access-tokens",
+            "migration": "Censys migrated to Platform API v3. Old API ID/Secret no longer works. Use a Personal Access Token (PAT) instead."
         }, indent=2))
         sys.exit(1)
 
     config = parse_args()
     query = config.get("query", "").strip()
-    resource = config.get("resource", "hosts").strip().lower()
-    per_page = config.get("per_page", 25)
-    cursor = config.get("cursor", None)
+    resource_type = config.get("resource_type", "host").strip().lower()
+    limit = config.get("limit", 50)
+    cursor = config.get("cursor")
+    fields = config.get("fields")
+    agg_field = config.get("agg_field")
+    command = config.get("command", "").strip().lower()
 
     # Special commands
-    if query in ("validate", "balance", "account", "status"):
-        result = validate_credentials()
+    if query in ("validate", "credits", "balance", "status") or command in ("validate", "credits"):
+        result = check_credits()
         print(json.dumps(result, indent=2))
         sys.exit(0 if result["status"] == "ok" else 1)
 
@@ -282,73 +233,64 @@ def main():
         print(json.dumps({
             "status": "error",
             "message": "Missing required parameter: query",
-            "required_params": ["query"],
-            "special_commands": ["validate — check API key validity and quota balance"],
-            "query_examples": {
-                "hosts": [
-                    'services.port: 22',
+            "special_commands": ["validate — check token validity and credit balance"],
+            "search_examples": {
+                "host": [
+                    'port: 22',
                     'services.http.response.html_title: "Dashboard"',
                     'ip: 1.2.3.0/24',
-                    'services.tls.certificates.leaf_data.subject.common_name: "*.example.com"',
+                    'services.tls.certificate.names: "*.example.com"',
                     'autonomous_system.name: "HETZNER"',
-                    'services.service_name: SSH AND services.software.product: OpenSSH AND services.software.version: 7.*',
                     'labels: "c2"',
-                    'services.http.response.headers.server: "Apache/2.4*"',
-                    'operating_system.product: "Windows Server"',
+                    'location.country: "Ukraine"',
+                    'services.software.product: "OpenSSH" AND services.software.version: "7.*"',
                 ],
-                "certificates": [
-                    'parsed.names: "*.example.com"',
-                    'parsed.issuer.organization: "Let\'s Encrypt"',
-                    'parsed.subject.common_name: "example.com"',
+                "certificate": [
+                    'names: "*.example.com"',
+                    'issuer.organization: "Let\'s Encrypt"',
                 ],
-                "detail": [
-                    '1.2.3.4  (returns full host detail for an IP)',
-                ],
-            }
+            },
+            "resource_types": ["host (default)", "certificate", "webproperty"],
+            "free_lookups": [
+                "Set resource_type=lookup and query=IP for free host detail",
+                "Set resource_type=names and query=IP for DNS names",
+                "Set resource_type=cert and query=SHA256 for cert detail",
+                "Set resource_type=web and query=hostname for web property",
+                "Set resource_type=aggregate and agg_field=field for aggregation",
+            ],
         }, indent=2))
         sys.exit(1)
 
-    # Route to the appropriate search function
     try:
-        if resource == "certificates" or resource == "certs":
-            result = search_certificates(query, per_page, cursor)
-        elif resource == "detail" or resource == "host":
-            result = host_detail(query)
+        # Route to the right function
+        if resource_type in ("lookup", "detail", "host-detail"):
+            result = host_lookup(query)
+        elif resource_type == "names":
+            result = host_names(query)
+        elif resource_type in ("cert", "cert-detail", "certificate-detail"):
+            result = cert_lookup(query)
+        elif resource_type in ("web", "webproperty", "webprop"):
+            port = config.get("port", 443)
+            result = webproperty_lookup(query, port)
+        elif resource_type == "aggregate":
+            field = agg_field or "autonomous_system.name"
+            result = aggregate(query, "host", field, limit)
+        elif resource_type in ("certificate", "certificates", "certs"):
+            result = search_query(query, "certificate", limit, cursor, fields)
         else:
-            result = search_hosts(query, per_page, cursor)
+            result = search_query(query, "host", limit, cursor, fields)
 
         print(json.dumps(result, indent=2, default=str))
-        sys.exit(0 if result.get("status") == "success" else 1)
+        sys.exit(0 if result.get("status") == "success" or result.get("status") == "ok" else 1)
 
-    except requests.exceptions.HTTPError as e:
-        error_body = ""
-        try:
-            error_body = e.response.json().get("error", e.response.text[:200])
-        except Exception:
-            error_body = str(e)
-        print(json.dumps({
-            "status": "error",
-            "message": f"Censys API error (HTTP {e.response.status_code}): {error_body}",
-            "suggestion": "Check query syntax at https://search.censys.io/search/explanations"
-        }, indent=2))
-        sys.exit(1)
     except requests.exceptions.ConnectionError:
-        print(json.dumps({
-            "status": "error",
-            "message": "Cannot connect to Censys API (search.censys.io). Check network/DNS."
-        }, indent=2))
+        print(json.dumps({"status": "error", "message": "Cannot connect to Censys API. Check network/DNS."}))
         sys.exit(1)
     except requests.exceptions.Timeout:
-        print(json.dumps({
-            "status": "error",
-            "message": "Censys API request timed out (30s). Try a more specific query."
-        }, indent=2))
+        print(json.dumps({"status": "error", "message": "Censys API timed out. Try a more specific query."}))
         sys.exit(1)
     except Exception as e:
-        print(json.dumps({
-            "status": "error",
-            "message": f"Unexpected error: {type(e).__name__}: {str(e)}"
-        }, indent=2))
+        print(json.dumps({"status": "error", "message": f"{type(e).__name__}: {str(e)}"}))
         sys.exit(1)
 
 
