@@ -559,3 +559,418 @@ curl -X POST http://localhost:8080/api/plugins/my-plugin/install -H "Authorizati
 # Or manually:
 cd plugins/my-plugin && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 ```
+
+---
+
+## Plugin Frontend Development
+
+Plugins can extend the CyberStrikeAI web UI with custom pages, navigation items, JavaScript, CSS, and translations — all without modifying core code.
+
+### Frontend Directory Structure
+
+```
+plugins/my-plugin/
+├── plugin.yaml
+├── i18n/                        # Translations (merged into global i18n)
+│   ├── en-US.json
+│   └── uk-UA.json
+└── web/                         # Frontend assets
+    ├── pages/                   # HTML page fragments
+    │   └── my-page.html
+    ├── js/                      # JavaScript modules
+    │   └── my-plugin.js
+    └── css/                     # Stylesheets
+        └── my-plugin.css
+```
+
+### Manifest: frontend section
+
+Declare frontend assets in `plugin.yaml`:
+
+```yaml
+name: my-plugin
+version: "1.0.0"
+description: "My plugin with custom UI"
+
+frontend:
+  nav_items:
+    - id: "my-plugin-dashboard"      # Page ID (must be unique)
+      label: "My Plugin"             # Display text in sidebar
+      icon: "🔌"                     # Emoji or SVG string
+      i18n: "myPlugin.navLabel"      # i18n key (optional, overrides label)
+
+  pages:
+    - "my-page.html"                 # Files in web/pages/
+
+  scripts:
+    - "my-plugin.js"                 # Files in web/js/
+
+  styles:
+    - "my-plugin.css"                # Files in web/css/
+```
+
+### Loading Order
+
+When CyberStrikeAI starts and a plugin is enabled:
+
+1. **CSS** loaded first (prevents FOUC)
+2. **i18n** translations merged into global bundle
+3. **Nav items** injected into sidebar (before Settings)
+4. **Page HTML** loaded and appended to main content area
+5. **JavaScript** loaded last (DOM is ready)
+
+### Custom Pages
+
+`plugins/my-plugin/web/pages/my-page.html`:
+
+```html
+<!-- Page content fragment — no <html>/<head>/<body> wrappers needed -->
+<!-- The page ID is derived from filename: my-page.html → page-my-page -->
+
+<div class="page-header">
+    <h2 data-i18n="myPlugin.title">My Plugin Dashboard</h2>
+</div>
+
+<div class="page-content" style="padding: 20px;">
+    <div id="my-plugin-results"></div>
+    <button class="btn-primary" onclick="myPluginSearch()">
+        <span data-i18n="myPlugin.searchBtn">Search</span>
+    </button>
+</div>
+```
+
+**Page ID mapping**: filename `my-page.html` becomes container `id="page-my-page"`. The `nav_items[].id` must match this (without the `page-` prefix): `id: "my-page"`.
+
+### Custom JavaScript
+
+`plugins/my-plugin/web/js/my-plugin.js`:
+
+```javascript
+// Plugin JS runs after the page HTML is in the DOM.
+// You have access to all CyberStrikeAI globals:
+//   - apiFetch(url, opts)    — authenticated API calls
+//   - showNotification(msg, type) — toast notifications
+//   - switchPage(pageId)     — navigate to a page
+//   - window.t(key)          — i18n translation
+//   - CyberStrikePlugins     — plugin loader API
+
+(function() {
+    'use strict';
+
+    // Your plugin initialization
+    console.log('My plugin loaded');
+
+    // Example: custom API call
+    window.myPluginSearch = async function() {
+        const resultsEl = document.getElementById('my-plugin-results');
+        resultsEl.innerHTML = '<p>Searching...</p>';
+
+        try {
+            // Call your plugin's backend tool via the agent API,
+            // or call any custom endpoint you've added
+            const resp = await apiFetch('/api/plugins/my-plugin/web/data/results.json');
+            const data = await resp.json();
+            resultsEl.innerHTML = `<pre>${JSON.stringify(data, null, 2)}</pre>`;
+        } catch (err) {
+            resultsEl.innerHTML = `<p style="color:red;">${err.message}</p>`;
+        }
+    };
+
+    // Example: hook into page navigation
+    const origSwitchPage = window.switchPage;
+    const wrappedSwitchPage = function(pageId) {
+        origSwitchPage(pageId);
+        if (pageId === 'my-page') {
+            // Page became active — refresh data
+            myPluginSearch();
+        }
+    };
+    window.switchPage = wrappedSwitchPage;
+})();
+```
+
+### Custom CSS
+
+`plugins/my-plugin/web/css/my-plugin.css`:
+
+```css
+/* Plugin styles — use specific selectors to avoid conflicts */
+#page-my-page .page-header {
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 12px;
+    margin-bottom: 16px;
+}
+
+#page-my-page .result-card {
+    background: var(--card-bg, var(--bg-secondary));
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 12px;
+}
+```
+
+**Tip**: Always scope styles to your page ID (`#page-my-page`) to avoid CSS conflicts with the core UI.
+
+### Translations (i18n)
+
+`plugins/my-plugin/i18n/en-US.json`:
+
+```json
+{
+  "myPlugin": {
+    "navLabel": "My Plugin",
+    "title": "My Plugin Dashboard",
+    "searchBtn": "Search",
+    "noResults": "No results found",
+    "error": "An error occurred"
+  }
+}
+```
+
+`plugins/my-plugin/i18n/uk-UA.json`:
+
+```json
+{
+  "myPlugin": {
+    "navLabel": "Мій плагін",
+    "title": "Панель мого плагіна",
+    "searchBtn": "Пошук",
+    "noResults": "Результатів не знайдено",
+    "error": "Виникла помилка"
+  }
+}
+```
+
+Translations merge into the global i18n bundle at load time. Use `data-i18n="myPlugin.title"` in HTML or `window.t('myPlugin.title')` in JavaScript.
+
+### Static File Serving
+
+Plugin assets are served at:
+```
+/api/plugins/<name>/web/<path>    — CSS, JS, HTML, images, data files
+/api/plugins/<name>/i18n/<lang>   — Translation JSON files
+```
+
+These routes do NOT require authentication (they load before login on page init).
+
+**Security**: path traversal is blocked — `..` in paths returns 403.
+
+### Accessing Plugin Config in Frontend
+
+Plugin config vars (API keys) are not directly accessible in the frontend for security reasons. If your plugin needs to make authenticated API calls from the browser:
+
+1. Create a backend tool or script that reads the env var and proxies the call
+2. Call the tool through the agent API: `POST /api/agent-loop/stream`
+3. Or create a custom MCP endpoint
+
+### Plugin JS API Reference
+
+The `CyberStrikePlugins` global provides:
+
+```javascript
+// Check if a plugin is loaded
+CyberStrikePlugins.loaded['my-plugin']  // true/false
+
+// Manually load a plugin (normally automatic)
+await CyberStrikePlugins.loadPlugin(pluginState)
+
+// Reload i18n for a plugin (e.g., after language switch)
+await CyberStrikePlugins.loadI18n('my-plugin')
+
+// Add a nav item programmatically
+CyberStrikePlugins.addNavItem('my-plugin', {
+    id: 'my-page',
+    label: 'My Page',
+    icon: '🔌',
+    i18n: 'myPlugin.navLabel'
+})
+```
+
+### Core UI Globals Available to Plugins
+
+| Function | Description |
+|----------|-------------|
+| `apiFetch(url, opts)` | Authenticated fetch (adds Bearer token) |
+| `showNotification(msg, type)` | Toast notification (`'success'`, `'error'`, `'info'`) |
+| `switchPage(pageId)` | Navigate to a page |
+| `window.t(key)` / `window.t(key, params)` | i18n translation |
+| `i18next.language` | Current language code (`'en-US'`, `'uk-UA'`) |
+| `currentConversationId` | Active conversation ID |
+
+---
+
+## Full Plugin Example with Frontend
+
+Complete example: a plugin that adds a custom recon dashboard page.
+
+### Directory structure
+
+```
+plugins/recon-dashboard/
+├── plugin.yaml
+├── i18n/
+│   ├── en-US.json
+│   └── uk-UA.json
+├── web/
+│   ├── pages/
+│   │   └── recon-dashboard.html
+│   ├── js/
+│   │   └── recon-dashboard.js
+│   └── css/
+│       └── recon-dashboard.css
+├── tools/
+│   └── recon-summary.yaml
+└── scripts/
+    └── recon_summary.py
+```
+
+### plugin.yaml
+
+```yaml
+name: recon-dashboard
+version: "1.0.0"
+description: "Visual recon dashboard with aggregated scan results"
+author: "cybersecua"
+
+provides:
+  tools: true
+
+frontend:
+  nav_items:
+    - id: "recon-dashboard"
+      label: "Recon Dashboard"
+      icon: "🗺️"
+      i18n: "reconDashboard.nav"
+  pages:
+    - "recon-dashboard.html"
+  scripts:
+    - "recon-dashboard.js"
+  styles:
+    - "recon-dashboard.css"
+```
+
+### i18n/en-US.json
+
+```json
+{
+  "reconDashboard": {
+    "nav": "Recon Dashboard",
+    "title": "Reconnaissance Dashboard",
+    "subtitle": "Aggregated scan results and attack surface overview",
+    "scanTarget": "Scan Target",
+    "runScan": "Run Full Recon",
+    "results": "Results",
+    "noData": "No recon data. Run a scan to populate."
+  }
+}
+```
+
+### web/pages/recon-dashboard.html
+
+```html
+<div class="page-header" style="display:flex; justify-content:space-between; align-items:center; padding: 16px 24px; border-bottom: 1px solid var(--border-color);">
+    <div>
+        <h2 data-i18n="reconDashboard.title">Reconnaissance Dashboard</h2>
+        <p style="color: var(--text-muted); font-size: 13px;" data-i18n="reconDashboard.subtitle">Aggregated scan results</p>
+    </div>
+    <div style="display:flex; gap:8px; align-items:center;">
+        <input type="text" id="recon-target-input" placeholder="example.com" style="width:250px;" />
+        <button class="btn-primary" onclick="reconDashboardScan()" data-i18n="reconDashboard.runScan">Run Full Recon</button>
+    </div>
+</div>
+<div id="recon-dashboard-content" style="padding: 24px;">
+    <p style="color: var(--text-muted); text-align:center; padding:40px;" data-i18n="reconDashboard.noData">No recon data</p>
+</div>
+```
+
+### web/js/recon-dashboard.js
+
+```javascript
+(function() {
+    'use strict';
+
+    window.reconDashboardScan = async function() {
+        const target = document.getElementById('recon-target-input').value.trim();
+        if (!target) {
+            showNotification('Enter a target domain', 'error');
+            return;
+        }
+
+        const content = document.getElementById('recon-dashboard-content');
+        content.innerHTML = '<p style="text-align:center; padding:40px;">Running recon on ' + target + '...</p>';
+
+        // Trigger the agent to run recon via the chat API
+        try {
+            const resp = await apiFetch('/api/agent-loop/stream', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    message: 'Run full reconnaissance on ' + target + '. Use subfinder, dnsenum, nmap, and nuclei. Report all findings.',
+                    role: 'Information_Gathering'
+                })
+            });
+            // The agent runs async — switch to chat to see progress
+            switchPage('chat');
+            showNotification('Recon started for ' + target + ' — see chat for progress', 'success');
+        } catch (err) {
+            content.innerHTML = '<p style="color:red;">' + err.message + '</p>';
+        }
+    };
+})();
+```
+
+This example demonstrates: a plugin with its own sidebar page, custom UI, i18n support, and integration with the agent API — all without touching any Go source code.
+
+---
+
+## Developer Checklist
+
+When creating a new plugin:
+
+- [ ] Create `plugins/<name>/plugin.yaml` with name, version, description
+- [ ] Add tool YAMLs in `tools/` using `{{PLUGIN_DIR}}` for script paths
+- [ ] Write Python scripts in `scripts/` that read config from env vars
+- [ ] Add `requirements.txt` if using Python packages
+- [ ] Define `config` vars in manifest for any API keys needed
+- [ ] Write a `skills/*/SKILL.md` teaching the AI when to use your tool
+- [ ] Add `knowledge/*.md` reference docs for the RAG knowledge base
+- [ ] (Optional) Add `frontend` section with pages, JS, CSS, nav items
+- [ ] (Optional) Add `i18n/en-US.json` + `i18n/uk-UA.json` translations
+- [ ] Test: install deps, set config, enable, verify tool appears in agent
+- [ ] Test: script runs standalone with env vars set manually
+- [ ] Test: frontend page loads, navigation works, i18n displays correctly
+
+## Plugin Distribution
+
+### As a directory (local development)
+
+Just copy the plugin folder into `plugins/`:
+```bash
+cp -r ~/my-plugin plugins/
+```
+
+### As a ZIP (remote install)
+
+```bash
+# Create a ZIP with the plugin directory at root
+cd plugins && zip -r my-plugin.zip my-plugin/
+
+# Upload via API
+curl -X POST http://localhost:8080/api/plugins/upload \
+  -H "Authorization: Bearer TOKEN" \
+  -F "file=@my-plugin.zip"
+```
+
+### As a Git repository
+
+```bash
+cd plugins && git clone https://github.com/user/cyberstrike-plugin-example.git example
+```
+
+### Plugin naming conventions
+
+- Use lowercase with hyphens: `censys`, `virus-total`, `recon-dashboard`
+- Prefix tool names with the plugin name to avoid collisions: `censys-search`, `vt-lookup`
+- Prefix i18n keys with a unique namespace: `censys.title`, `reconDashboard.nav`
+- Prefix page IDs: `censys-page`, `recon-dashboard`
