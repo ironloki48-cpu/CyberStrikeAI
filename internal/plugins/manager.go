@@ -556,7 +556,8 @@ func (m *Manager) InstallRequirements(name string) error {
 	if reqFile == "" {
 		reqFile = "requirements.txt"
 	}
-	reqPath := filepath.Join(state.Dir, reqFile)
+	absDir, _ := filepath.Abs(state.Dir)
+	reqPath := filepath.Join(absDir, reqFile)
 
 	if _, err := os.Stat(reqPath); os.IsNotExist(err) {
 		m.logger.Info("no requirements.txt for plugin, skipping install", zap.String("plugin", name))
@@ -567,11 +568,11 @@ func (m *Manager) InstallRequirements(name string) error {
 		return nil
 	}
 
-	venvDir := filepath.Join(state.Dir, ".venv")
+	venvDir := filepath.Join(absDir, ".venv")
 	if _, err := os.Stat(venvDir); os.IsNotExist(err) {
 		m.logger.Info("creating venv for plugin", zap.String("plugin", name), zap.String("venv", venvDir))
 		cmd := exec.Command("python3", "-m", "venv", venvDir)
-		cmd.Dir = state.Dir
+		cmd.Dir = absDir
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("create venv: %w\noutput: %s", err, string(out))
 		}
@@ -584,7 +585,7 @@ func (m *Manager) InstallRequirements(name string) error {
 	)
 
 	cmd := exec.Command(pipPath, "install", "-r", reqPath)
-	cmd.Dir = state.Dir
+	cmd.Dir = absDir
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("pip install: %w\noutput: %s", err, string(out))
 	}

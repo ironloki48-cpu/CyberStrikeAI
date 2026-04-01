@@ -1,6 +1,6 @@
 name: censys
-version: "1.0.0"
-description: "Censys internet search — hosts, certificates, services discovery"
+version: "2.0.0"
+description: "Censys internet search engine — host discovery, service fingerprinting, certificate transparency, attack surface mapping"
 author: "cybersecua"
 url: "https://github.com/cybersecua/cyberstrike-plugin-censys"
 

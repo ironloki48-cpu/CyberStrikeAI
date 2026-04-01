@@ -2,34 +2,144 @@ name: "censys-search"
 command: "python3"
 args: ["{{PLUGIN_DIR}}/scripts/censys_search.py"]
 enabled: true
-short_description: "Censys internet search — find hosts, services, certificates by IP, domain, or service fingerprint"
+short_description: "Censys internet-wide search — hosts, services, certificates, attack surface mapping with CQL queries"
 description: |
-  Search the Censys internet-wide scan database for hosts, services, and certificates.
-  
-  Requires CENSYS_API_ID and CENSYS_API_SECRET configured in plugin settings.
-  
-  **Query examples:**
-  - `services.port: 22` — all hosts with SSH
-  - `services.http.response.html_title: "Dashboard"` — web dashboards
-  - `ip: 1.2.3.0/24` — hosts in a CIDR
-  - `services.tls.certificates.leaf_data.subject.common_name: "*.example.com"` — TLS certs
-  - `autonomous_system.name: "HETZNER"` — hosts in an ASN
+  Censys searches the internet-wide scan database covering IPv4/IPv6 hosts, services, and TLS certificates.
+  Updated daily from global scan data. Useful for attack surface discovery, infrastructure mapping, and threat intel.
+
+  **API keys required:** CENSYS_API_ID + CENSYS_API_SECRET (configure in Settings → Plugins → Censys)
+  Get keys at: https://search.censys.io/account/api
+
+  **Special commands (pass as query):**
+  - `validate` — check API key validity and remaining quota/credits
+  - `balance` — same as validate
+
+  **Resource types (via resource parameter):**
+  - `hosts` (default) — search IPv4/IPv6 hosts by services, ports, software, ASN, location
+  - `certificates` / `certs` — search TLS/SSL certificates by name, issuer, validity
+  - `detail` / `host` — get full details for a specific IP (pass IP as query)
+
+  **Censys Query Language (CQL) syntax:**
+
+  **Host queries:**
+  - `services.port: 22` — hosts with SSH open
+  - `services.port: 443` — hosts with HTTPS
+  - `services.service_name: HTTP` — all HTTP services
+  - `services.http.response.html_title: "Dashboard"` — web pages with specific title
+  - `services.http.response.status_code: 200` — HTTP 200 responses
+  - `services.http.response.headers.server: "Apache/2.4*"` — specific server versions
+  - `services.software.product: "OpenSSH"` — hosts running OpenSSH
+  - `services.software.version: "7.*"` — specific software versions
+  - `services.banner: "220 ProFTPD"` — FTP banner matching
+  - `services.tls.certificates.leaf_data.subject.common_name: "*.example.com"` — TLS cert CN
+  - `services.tls.certificates.leaf_data.issuer.organization: "Let's Encrypt"` — cert issuer
+  - `services.jarm.fingerprint: "xxx"` — JARM fingerprint matching
+
+  **Network queries:**
+  - `ip: 1.2.3.4` — exact IP
+  - `ip: 1.2.3.0/24` — CIDR range
+  - `autonomous_system.asn: 13335` — ASN number
+  - `autonomous_system.name: "CLOUDFLARE"` — ASN name
+  - `autonomous_system.bgp_prefix: "1.0.0.0/24"` — BGP prefix
+
+  **Location queries:**
+  - `location.country: "United States"` — by country
+  - `location.country_code: UA` — by country code
+  - `location.city: "Kyiv"` — by city
+
+  **OS / labels:**
+  - `operating_system.product: "Windows Server"` — OS detection
+  - `labels: "c2"` — known C2 infrastructure
+  - `labels: "iot"` — IoT devices
+  - `labels: "self-signed"` — self-signed certificates
+
+  **DNS:**
+  - `dns.reverse_dns.names: "mail.example.com"` — reverse DNS
+
+  **Boolean operators:**
+  - `AND` — both conditions must match
+  - `OR` — either condition matches
+  - `NOT` — exclude matches
+  - Parentheses for grouping: `(services.port: 80 OR services.port: 443) AND location.country_code: UA`
+
+  **Certificate queries (resource=certificates):**
+  - `parsed.names: "*.example.com"` — certificate names
+  - `parsed.issuer.organization: "Let's Encrypt"` — issuer org
+  - `parsed.subject.common_name: "example.com"` — subject CN
+  - `parsed.validity_period.not_after: [now TO *]` — currently valid certs
+
+  **Common pentest patterns:**
+  - `services.port: 3389 AND location.country_code: UA` — RDP in Ukraine
+  - `services.http.response.html_title: "phpMyAdmin"` — exposed phpMyAdmin
+  - `services.http.response.html_title: "Kibana" AND NOT services.http.response.status_code: 401` — unauth Kibana
+  - `services.port: 9200 AND services.http.response.headers: "elasticsearch"` — exposed Elasticsearch
+  - `services.banner: "MongoDB" AND services.port: 27017` — exposed MongoDB
+  - `services.software.product: "OpenSSH" AND services.software.version: "7.4"` — specific vuln SSH
+  - `services.tls.certificates.leaf_data.subject.organization: "Target Corp"` — org's TLS certs
+
+  **Response includes:**
+  - IP address, services (port, name, software, TLS CN, HTTP title, banner)
+  - Autonomous system (ASN, name, BGP prefix, country)
+  - Geolocation (country, city, province, coordinates)
+  - Operating system, reverse DNS, labels
+  - Pagination cursor for large result sets
+
+  **Rate limits:** Free tier = 250 queries/month. Check with: query=`validate`
+
+  **Notes:**
+  - Boolean operators MUST be uppercase: `AND`, `OR`, `NOT`
+  - String values with spaces must be quoted: `"United States"`
+  - Wildcards: `*` at end of strings, e.g. `"Apache/2.4*"`
+  - CIDR notation supported for IP ranges
+  - Results are from Censys's most recent scan (typically <24h for major services)
+
 parameters:
   - name: "query"
     type: "string"
-    description: "Censys search query (CQL syntax)"
+    description: |
+      Censys CQL query string (required).
+
+      Can also be a special command: "validate" to check API key and quota.
+      For host detail: set resource="detail" and query=IP address.
+
+      Examples:
+      - services.port: 22
+      - services.http.response.html_title: "Dashboard"
+      - ip: 1.2.3.0/24
+      - autonomous_system.name: "HETZNER"
+      - validate
     required: true
     position: 0
     format: "positional"
+
   - name: "per_page"
-    type: "string"
-    description: "Results per page (default 25, max 100)"
+    type: "int"
+    description: |
+      Number of results per page (optional, default 25, max 100).
     required: false
     position: 1
     format: "positional"
+    default: 25
+
   - name: "resource"
     type: "string"
-    description: "Resource type: hosts (default), certificates"
+    description: |
+      Resource type to search (optional, default "hosts").
+
+      Available values:
+      - hosts — IPv4/IPv6 host search (default)
+      - certificates / certs — TLS certificate search
+      - detail / host — detailed view for a single IP (pass IP as query)
     required: false
     position: 2
+    format: "positional"
+    default: "hosts"
+
+  - name: "cursor"
+    type: "string"
+    description: |
+      Pagination cursor from a previous search response (optional).
+      Use the "next_cursor" value from a previous result to get the next page.
+    required: false
+    position: 3
     format: "positional"
