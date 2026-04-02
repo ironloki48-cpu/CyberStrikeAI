@@ -1280,14 +1280,14 @@ func (a *Agent) callOpenAI(ctx context.Context, messages []ChatMessage, tools []
 			// 
 			select {
 			case <-ctx.Done():
-				return nil, fmt.Errorf(": %w", ctx.Err())
+				return nil, fmt.Errorf("context cancelled during retry: %w", ctx.Err())
 			case <-time.After(backoff):
 				// 
 			}
 		}
 	}
 
-	return nil, fmt.Errorf("%d: %w", maxRetries, lastErr)
+	return nil, fmt.Errorf("failed after %d retries: %w", maxRetries, lastErr)
 }
 
 // callOpenAISingle OpenAI API（）
@@ -1316,7 +1316,7 @@ func (a *Agent) callOpenAISingle(ctx context.Context, messages []ChatMessage, to
 	}
 	var response OpenAIResponse
 	if client == nil {
-		return nil, fmt.Errorf("OpenAI")
+		return nil, fmt.Errorf("OpenAI client not initialized")
 	}
 	if err := client.ChatCompletion(ctx, reqBody, &response); err != nil {
 		return nil, err
@@ -1346,7 +1346,7 @@ func (a *Agent) callOpenAISingleStreamText(ctx context.Context, messages []ChatM
 		client = a.toolOpenAIClient
 	}
 	if client == nil {
-		return "", fmt.Errorf("OpenAI")
+		return "", fmt.Errorf("OpenAI client not initialized")
 	}
 
 	return client.ChatCompletionStream(ctx, reqBody, onDelta)
@@ -1397,13 +1397,13 @@ func (a *Agent) callOpenAIStreamText(ctx context.Context, messages []ChatMessage
 
 			select {
 			case <-ctx.Done():
-				return "", fmt.Errorf(": %w", ctx.Err())
+				return "", fmt.Errorf("context cancelled during retry: %w", ctx.Err())
 			case <-time.After(backoff):
 			}
 		}
 	}
 
-	return "", fmt.Errorf("%d: %w", maxRetries, lastErr)
+	return "", fmt.Errorf("failed after %d retries: %w", maxRetries, lastErr)
 }
 
 // callOpenAISingleStreamWithToolCalls OpenAI（），。
@@ -1426,14 +1426,26 @@ func (a *Agent) callOpenAISingleStreamWithToolCalls(
 		reqBody.Tools = tools
 	}
 	client := a.openAIClient
+	usingToolClient := false
 	if len(tools) > 0 && a.toolOpenAIClient != nil {
 		client = a.toolOpenAIClient
+		usingToolClient = true
 	}
 	if client == nil {
-		return nil, fmt.Errorf("OpenAI")
+		return nil, fmt.Errorf("OpenAI client not initialized")
 	}
 
 	content, streamToolCalls, finishReason, err := client.ChatCompletionStreamWithToolCalls(ctx, reqBody, onContentDelta)
+	if err != nil && usingToolClient && a.openAIClient != nil {
+		// Fallback to main model if tool endpoint fails
+		a.logger.Warn("tool model endpoint failed, falling back to main model",
+			zap.Error(err),
+			zap.String("tool_model", model),
+			zap.String("main_model", a.config.Model),
+		)
+		reqBody.Model = a.config.Model
+		content, streamToolCalls, finishReason, err = a.openAIClient.ChatCompletionStreamWithToolCalls(ctx, reqBody, onContentDelta)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -1532,13 +1544,13 @@ func (a *Agent) callOpenAIStreamWithToolCalls(
 
 			select {
 			case <-ctx.Done():
-				return nil, fmt.Errorf(": %w", ctx.Err())
+				return nil, fmt.Errorf("context cancelled during retry: %w", ctx.Err())
 			case <-time.After(backoff):
 			}
 		}
 	}
 
-	return nil, fmt.Errorf("%d: %w", maxRetries, lastErr)
+	return nil, fmt.Errorf("failed after %d retries: %w", maxRetries, lastErr)
 }
 
 // ToolExecutionResult 

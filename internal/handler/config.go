@@ -1742,15 +1742,26 @@ func classifyHTTPError(err error) TestAPIResponse {
 	return TestAPIResponse{Status: "error", Error: err.Error()}
 }
 
-// ModelHealthResponse is the JSON returned by the model health check endpoint.
-type ModelHealthResponse struct {
-	Status    string `json:"status"`               // "ok", "error", "unconfigured"
-	Provider  string `json:"provider,omitempty"`
+// EndpointHealth describes a single endpoint's status.
+type EndpointHealth struct {
+	Status    string `json:"status"`               // "ok", "error", "not_configured"
 	Model     string `json:"model,omitempty"`
 	BaseURL   string `json:"base_url,omitempty"`
-	Message   string `json:"message,omitempty"`
 	LatencyMs int64  `json:"latency_ms,omitempty"`
-	ErrorCode string `json:"error_code,omitempty"` // "auth_failed", "dns_error", "timeout", "unconfigured"
+	Message   string `json:"message,omitempty"`
+}
+
+// ModelHealthResponse is the JSON returned by the model health check endpoint.
+type ModelHealthResponse struct {
+	Status    string          `json:"status"`               // "ok", "error", "unconfigured"
+	Provider  string          `json:"provider,omitempty"`
+	Model     string          `json:"model,omitempty"`
+	BaseURL   string          `json:"base_url,omitempty"`
+	Message   string          `json:"message,omitempty"`
+	LatencyMs int64           `json:"latency_ms,omitempty"`
+	ErrorCode string          `json:"error_code,omitempty"` // "auth_failed", "dns_error", "timeout", "unconfigured"
+	Tool      *EndpointHealth `json:"tool,omitempty"`       // tool model endpoint status (nil if not configured)
+	Summary   *EndpointHealth `json:"summary,omitempty"`    // summary model endpoint status (nil if not configured)
 }
 
 // ModelHealthCheck tests the configured AI model endpoint and returns status.
@@ -1870,15 +1881,95 @@ func (h *ConfigHandler) ModelHealthCheck(c *gin.Context) {
 			ErrorCode: "api_error",
 		})
 	default:
-		c.JSON(http.StatusOK, ModelHealthResponse{
+		result := ModelHealthResponse{
 			Status:    "ok",
 			Provider:  provider,
 			Model:     model,
 			BaseURL:   baseURL,
 			Message:   "Model endpoint reachable",
 			LatencyMs: latencyMs,
-		})
+		}
+
+		// Check tool model endpoint if configured
+		toolBaseURL, toolAPIKey := cfg.OpenAI.EffectiveToolConfig()
+		if cfg.OpenAI.ToolModel != "" || cfg.OpenAI.ToolBaseURL != "" {
+			toolHealth := checkEndpointHealth(c.Request.Context(), provider, cfg.OpenAI.ToolModel, toolBaseURL, toolAPIKey)
+			result.Tool = &toolHealth
+		}
+
+		// Check summary model endpoint if configured
+		summaryBaseURL, summaryAPIKey := cfg.OpenAI.EffectiveSummaryConfig()
+		if cfg.OpenAI.SummaryModel != "" || cfg.OpenAI.SummaryBaseURL != "" {
+			summaryHealth := checkEndpointHealth(c.Request.Context(), provider, cfg.OpenAI.SummaryModel, summaryBaseURL, summaryAPIKey)
+			result.Summary = &summaryHealth
+		}
+
+		c.JSON(http.StatusOK, result)
 	}
+}
+
+// checkEndpointHealth does a quick ping to a model endpoint.
+func checkEndpointHealth(ctx context.Context, provider, model, baseURL, apiKey string) EndpointHealth {
+	if baseURL == "" || apiKey == "" {
+		return EndpointHealth{Status: "not_configured", Model: model, BaseURL: baseURL}
+	}
+
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+	start := time.Now()
+
+	var body []byte
+	var endpoint string
+	var req *http.Request
+	var err error
+
+	testModel := model
+	if testModel == "" {
+		testModel = "ping"
+	}
+
+	if provider == "anthropic" {
+		body = []byte(fmt.Sprintf(`{"model":%q,"max_tokens":1,"messages":[{"role":"user","content":"ping"}]}`, testModel))
+		endpoint = strings.TrimRight(baseURL, "/") + "/messages"
+		req, err = http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+		if err == nil {
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("x-api-key", apiKey)
+			req.Header.Set("anthropic-version", "2023-06-01")
+		}
+	} else {
+		body = []byte(fmt.Sprintf(`{"model":%q,"max_tokens":1,"messages":[{"role":"user","content":"ping"}]}`, testModel))
+		endpoint = strings.TrimRight(baseURL, "/") + "/chat/completions"
+		req, err = http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+		if err == nil {
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer "+apiKey)
+		}
+	}
+
+	if err != nil {
+		return EndpointHealth{Status: "error", Model: model, BaseURL: baseURL, Message: err.Error()}
+	}
+
+	resp, err := httpClient.Do(req)
+	latency := time.Since(start).Milliseconds()
+	if err != nil {
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "no such host") {
+			errMsg = "DNS resolution failed"
+		} else if strings.Contains(errMsg, "connection refused") {
+			errMsg = "connection refused"
+		} else if strings.Contains(errMsg, "timeout") {
+			errMsg = "timeout"
+		}
+		return EndpointHealth{Status: "error", Model: model, BaseURL: baseURL, LatencyMs: latency, Message: errMsg}
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 401 || resp.StatusCode == 403 {
+		return EndpointHealth{Status: "error", Model: model, BaseURL: baseURL, LatencyMs: latency, Message: "authentication failed"}
+	}
+
+	return EndpointHealth{Status: "ok", Model: model, BaseURL: baseURL, LatencyMs: latency}
 }
 
 // classifyModelHealthError converts a net/http error into a ModelHealthResponse.
