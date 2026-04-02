@@ -442,6 +442,25 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 		}, nil
 	}
 
+	// Auto-inject proxy into FlareSolverr if proxy is configured and --proxy-url not already set
+	if toolName == "flaresolverr" && e.proxyConfig != nil && e.proxyConfig.Enabled {
+		hasProxyArg := false
+		for _, arg := range cmdArgs {
+			if strings.Contains(arg, "--proxy-url") {
+				hasProxyArg = true
+				break
+			}
+		}
+		if !hasProxyArg {
+			proxyURL := e.proxyURL()
+			if proxyURL != "" {
+				cmdArgs = append(cmdArgs, "--proxy-url", proxyURL)
+				e.logger.Info("auto-injected proxy into FlareSolverr",
+					zap.String("proxy_url", proxyURL))
+			}
+		}
+	}
+
 	// execute command — wrap with proxychains for tools that don't respect env proxy vars
 	var cmd *exec.Cmd
 	proxied := false

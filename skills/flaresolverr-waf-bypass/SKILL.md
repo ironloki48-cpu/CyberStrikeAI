@@ -2,72 +2,109 @@
 
 ## Overview
 
-FlareSolverr runs a real Chromium browser that solves Cloudflare, Akamai, and WAF challenge pages. Once solved, it exports clearance cookies and the accepted user-agent. These can be reused with ANY tool — curl, nuclei, ffuf, sqlmap, nikto, httpx — to access content that would otherwise return 403/challenge pages.
+FlareSolverr runs a real Chromium browser that solves anti-bot challenge pages from DDoS-Guard, QRator, Cloudflare, and similar WAF/protection services. Once solved, it exports clearance cookies and the accepted user-agent. These can be reused with ANY tool — curl, nuclei, ffuf, sqlmap, nikto, httpx — to access content that would otherwise return 403/challenge pages.
 
-**This is the #1 technique for accessing WAF-protected targets during authorized pentesting.**
+**Primary use case: bypassing Russian WAF services (DDoS-Guard, QRator, StormWall, Wallarm) on target infrastructure.**
+
+## Target WAF Services (Priority Order)
+
+| WAF Service | Detection | Cookie Names | Prevalence |
+|-------------|-----------|-------------|------------|
+| **DDoS-Guard** | `server: ddos-guard`, `__ddg1_`, `__ddg2_` headers | `__ddg1_`, `__ddg2_`, `__ddgid_`, `__ddgmark_` | Very common on .ru/.su domains |
+| **QRator** | `server: qrator`, `qrator_jsid` cookie | `qrator_jsid`, `qrator_jsr` | Russian gov, banking, media |
+| **StormWall** | `server: stormwall`, JS challenge | `swp_token`, `__swp_*` | Russian hosting, ISPs |
+| **Wallarm** | `wallarm-waf-*` headers | varies | Russian enterprise |
+| **Cloudflare** | `server: cloudflare`, `cf-ray` header | `cf_clearance`, `__cf_bm` | International |
+| **Akamai** | `server: AkamaiGHost` | `_abck`, `bm_sz`, `akaalb_*` | International |
+| **Imperva/Incapsula** | `X-CDN: Imperva` | `visid_incap_*`, `incap_ses_*` | International |
 
 ## When to Use FlareSolverr
 
-- Target returns **403 Forbidden** or an HTML challenge page to curl/httpx
-- **Nuclei/ffuf/nikto scans return empty** or only challenge responses
-- Target is behind **Cloudflare, Akamai, Imperva, AWS WAF, Sucuri**
-- You see `cf_clearance`, `__cf_bm`, `_cf_chl_*` cookies in browser DevTools
-- HTTP response headers contain `cf-ray`, `server: cloudflare`
-- You need to **maintain authenticated sessions** across multiple tools
+- Target returns **403 Forbidden** or JavaScript challenge to direct HTTP requests
+- Scanning tools (nuclei/ffuf/nikto) return empty or blocked responses
+- Target is behind **DDoS-Guard, QRator, StormWall** (common on Russian .ru/.su infrastructure)
+- HTTP headers contain `server: ddos-guard` or `server: qrator`
+- Response body contains anti-bot JavaScript challenges
+- You need cookies from the solved challenge to feed into other scanning tools
+
+## Proxy Integration
+
+**FlareSolverr inherits CyberStrikeAI's proxy configuration automatically.**
+
+If CyberStrikeAI proxy is configured (Settings → Proxy), FlareSolverr's browser routes through the same proxy:
+
+- **Tor** configured → FlareSolverr browser uses `socks5://127.0.0.1:9050`
+- **SOCKS5** configured → FlareSolverr browser uses the same SOCKS5 proxy
+- **HTTP proxy** configured → FlareSolverr browser uses the same HTTP proxy
+
+This means cookies extracted through Tor will be valid for requests made through Tor. The IP seen by the WAF matches across all tools.
+
+**Manual proxy override** (if you need a different proxy for FlareSolverr):
+```bash
+flaresolverr --url https://target.ru --proxy-url socks5://127.0.0.1:9050 --cookies-only
+```
 
 ## Quick Start
 
 ```bash
-# Step 1: Solve the challenge and extract cookies
-flaresolverr --url https://target.example --cookies-only
+# Step 1: Detect WAF on Russian target
+curl -sI https://target.ru | grep -i "server\|ddos-guard\|qrator\|stormwall"
 
-# Step 2: Use the extracted cookies with any tool
-curl -H "Cookie: cf_clearance=abc123; __cf_bm=xyz" \
-     -A "Mozilla/5.0 (X11; Linux x86_64)..." \
-     https://target.example/admin
+# Step 2: Solve the challenge and extract cookies
+flaresolverr --url https://target.ru --cookies-only
 
-# Step 3: Feed cookies to scanning tools
-nuclei -u https://target.example \
-       -H "Cookie: cf_clearance=abc123" \
-       -H "User-Agent: Mozilla/5.0..."
+# Step 3: Use extracted cookies with scanning tools
+nuclei -u https://target.ru \
+       -H "Cookie: __ddg1_=abc123; __ddg2_=xyz" \
+       -H "User-Agent: Mozilla/5.0..." \
+       -t cves/
 ```
 
-## Cookie Reuse Workflow (Step by Step)
+## Cookie Extraction Workflow
 
 ### Phase 1: Detect WAF Protection
 
-Before using FlareSolverr, confirm the target is WAF-protected:
-
 ```bash
-# Quick check — if this returns 403 or challenge HTML, WAF is active
-curl -sI https://target.example | head -20
+# Quick check — look for WAF indicators
+curl -sI https://target.ru | head -20
 
-# Look for these indicators:
-# - HTTP 403 with "cf-ray" header → Cloudflare
-# - HTTP 403 with "server: AkamaiGHost" → Akamai
-# - JavaScript challenge page in body
-# - "Checking your browser" text
-# - "__cf_bm" or "cf_clearance" in Set-Cookie
+# DDoS-Guard indicators:
+#   server: ddos-guard
+#   Set-Cookie: __ddg1_=...; __ddg2_=...
+#   JavaScript challenge in response body
+
+# QRator indicators:
+#   server: qrator
+#   Set-Cookie: qrator_jsid=...
+#   302 redirect to challenge URL
+
+# StormWall indicators:
+#   server: stormwall
+#   Set-Cookie: swp_token=...
+#   JS challenge with CAPTCHA
 ```
 
 ### Phase 2: Extract Clearance Cookies
 
 ```bash
-# Basic cookie extraction
-flaresolverr --url https://target.example --cookies-only
+# Basic — auto-detects and solves whatever WAF is present
+flaresolverr --url https://target.ru --cookies-only
+
+# With proxy (inherits from CyberStrikeAI config, or manual override)
+flaresolverr --url https://target.ru --cookies-only --proxy-url socks5://127.0.0.1:9050
+
+# With increased timeout for slow Russian infrastructure
+flaresolverr --url https://target.ru --cookies-only --max-timeout 120000
 
 # Output:
 # {
-#   "cookie_header": "cf_clearance=abc123; __cf_bm=xyz789",
+#   "cookie_header": "__ddg1_=abc123; __ddg2_=xyz789; __ddgid_=def456",
 #   "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36...",
-#   "cookies": [
-#     {"name": "cf_clearance", "value": "abc123", "domain": ".target.example", ...},
-#     {"name": "__cf_bm", "value": "xyz789", "domain": ".target.example", ...}
-#   ]
+#   "cookies": [...]
 # }
 ```
 
-**Save both `cookie_header` and `user_agent` — you need BOTH for the bypass to work.**
+**Save both `cookie_header` and `user_agent` — WAFs verify both together.**
 
 ### Phase 3: Reuse Cookies with Security Tools
 
@@ -75,184 +112,129 @@ flaresolverr --url https://target.example --cookies-only
 ```bash
 curl -H "Cookie: <cookie_header>" \
      -H "User-Agent: <user_agent>" \
-     https://target.example/api/v1/users
+     https://target.ru/admin/
 ```
 
-#### nuclei
+#### nuclei (vulnerability scanning)
 ```bash
-nuclei -u https://target.example \
+nuclei -u https://target.ru \
        -H "Cookie: <cookie_header>" \
        -H "User-Agent: <user_agent>" \
-       -t cves/ -t vulnerabilities/
+       -t cves/ -t vulnerabilities/ -t misconfiguration/
 ```
 
 #### ffuf (directory bruteforce)
 ```bash
-ffuf -u https://target.example/FUZZ \
+ffuf -u https://target.ru/FUZZ \
      -w /usr/share/wordlists/common.txt \
      -H "Cookie: <cookie_header>" \
      -H "User-Agent: <user_agent>"
 ```
 
-#### sqlmap
+#### sqlmap (SQL injection)
 ```bash
-sqlmap -u "https://target.example/page?id=1" \
+sqlmap -u "https://target.ru/page?id=1" \
        --cookie="<cookie_header>" \
        --user-agent="<user_agent>" \
-       --batch
+       --batch --risk=3 --level=5
 ```
 
-#### nikto
+#### httpx (technology detection)
 ```bash
-nikto -h https://target.example \
-      -C all \
-      -useragent "<user_agent>" \
-      -o nikto_results.txt
-# Note: nikto doesn't directly support cookie injection via CLI;
-# use FlareSolverr as a proxy or modify the request with a wrapper
-```
-
-#### httpx
-```bash
-echo "https://target.example" | httpx \
+echo "https://target.ru" | httpx \
      -H "Cookie: <cookie_header>" \
      -H "User-Agent: <user_agent>" \
-     -status-code -title -tech-detect
+     -status-code -title -tech-detect -web-server
 ```
 
-#### gobuster
+#### gobuster (directory enumeration)
 ```bash
-gobuster dir -u https://target.example \
+gobuster dir -u https://target.ru \
              -w /usr/share/wordlists/common.txt \
              -c "<cookie_header>" \
              -a "<user_agent>"
 ```
 
-#### feroxbuster
+#### feroxbuster (recursive scanning)
 ```bash
-feroxbuster -u https://target.example \
+feroxbuster -u https://target.ru \
             -H "Cookie: <cookie_header>" \
             -H "User-Agent: <user_agent>" \
-            -w /usr/share/wordlists/common.txt
+            -w /usr/share/wordlists/common.txt --depth 3
 ```
 
-### Phase 4: Session Persistence (Multi-Step Workflows)
+### Phase 4: Session Persistence
 
-For workflows that require maintaining browser state across multiple requests:
+For multi-step workflows (login forms, multi-page assessment):
 
 ```bash
-# Create a persistent session
-flaresolverr --cmd sessions.create --session-id pentest-session-1
+# Create persistent session
+flaresolverr --cmd sessions.create --session-id target-ru-session
 
-# Use the session for multiple requests (cookies are maintained)
-flaresolverr --url https://target.example/login --session-id pentest-session-1
-flaresolverr --url https://target.example/admin --session-id pentest-session-1
-flaresolverr --url https://target.example/api/users --session-id pentest-session-1
+# Multiple requests with maintained cookie jar
+flaresolverr --url https://target.ru/login --session-id target-ru-session
+flaresolverr --url https://target.ru/admin --session-id target-ru-session
+flaresolverr --url https://target.ru/api/users --session-id target-ru-session
 
-# Clean up when done
-flaresolverr --cmd sessions.destroy --session-id pentest-session-1
+# Clean up
+flaresolverr --cmd sessions.destroy --session-id target-ru-session
 ```
 
 ### Phase 5: Cookie Refresh
 
-Cloudflare clearance cookies typically expire after **15-30 minutes**. Signs they've expired:
+WAF cookies expire — DDoS-Guard typically 15-30 min, QRator varies.
+
+Signs of expired cookies:
 - Tools start getting 403 again
-- Response body contains challenge HTML
-- New `cf_chl_*` cookies appear
+- Response body shows challenge page
+- New `__ddg*` or `qrator_*` cookies in Set-Cookie headers
 
-**Refresh:**
+**Refresh:** Re-run `flaresolverr --url ... --cookies-only` and update cookie headers.
+
+## DDoS-Guard Specific Notes
+
+DDoS-Guard is the most common WAF on Russian military, government, and media targets.
+
+**Detection:**
 ```bash
-# Just re-run the cookie extraction
-flaresolverr --url https://target.example --cookies-only
-# Update the cookie_header in your subsequent tool commands
+# All of these indicate DDoS-Guard
+curl -sI https://target.ru | grep -i "ddos-guard"
+curl -s https://target.ru | grep -i "ddos" | head -5
 ```
 
-## Advanced Techniques
+**Cookie chain:** DDoS-Guard uses a multi-step challenge:
+1. Initial request → 302 redirect to challenge
+2. JavaScript execution → generates `__ddg1_` cookie
+3. Second request with cookie → generates `__ddg2_` and `__ddgid_`
+4. Final request with all cookies → 200 OK
 
-### POST Request Bypass (Login Forms)
+FlareSolverr handles the entire chain automatically.
 
+**Persistence:** DDoS-Guard cookies are IP-bound. If your IP changes (Tor circuit rotation), cookies become invalid. Use `--proxy-url` with a stable exit node if needed.
+
+## QRator Specific Notes
+
+QRator is used by Russian banking, government services, and major enterprises.
+
+**Detection:**
 ```bash
-flaresolverr --cmd request.post \
-             --url https://target.example/login \
-             --post-data "username=admin&password=test"
+curl -sI https://target.ru | grep -i "qrator"
 ```
 
-### Custom Headers
-
+**Challenge type:** QRator uses JavaScript computation challenges (proof-of-work style). These take longer to solve — increase timeout:
 ```bash
-flaresolverr --url https://target.example \
-             --headers-json '{"X-Forwarded-For":"127.0.0.1","Accept-Language":"en-US"}'
+flaresolverr --url https://target.ru --cookies-only --max-timeout 120000
 ```
 
-### Through Proxy (Tor/SOCKS5)
+## Agent Integration Pattern
 
-```bash
-flaresolverr --url https://target.example \
-             --proxy-url socks5://127.0.0.1:9050 \
-             --cookies-only
-```
+The AI agent should follow this workflow automatically:
 
-### Full Page Content + Cookies
+1. **First attempt** — direct tool call (nuclei, ffuf, etc.)
+2. **403/challenge detected** → call `flaresolverr --url <target> --cookies-only`
+3. **Extract** `cookie_header` and `user_agent` from response
+4. **Re-run** original tool with `-H "Cookie: ..."` and `-H "User-Agent: ..."` injected
+5. **Set timer** — refresh cookies every 15 minutes during long scans
+6. **Proxy consistency** — ensure FlareSolverr and scanning tools use the same proxy/Tor circuit
 
-```bash
-# Get both the rendered page content AND cookies (default mode)
-flaresolverr --url https://target.example
-
-# Output includes:
-# - solution.response (full rendered HTML after JS execution)
-# - solution.cookies (all cookies)
-# - solution.userAgent
-# - solution.status (HTTP status code)
-```
-
-## Cookie Types and Their Purposes
-
-| Cookie | Set By | Purpose | Lifetime |
-|--------|--------|---------|----------|
-| `cf_clearance` | Cloudflare | Challenge solved proof | 15-30 min |
-| `__cf_bm` | Cloudflare | Bot management | ~30 min |
-| `_cf_chl_*` | Cloudflare | Challenge tracking | Session |
-| `__cflb` | Cloudflare | Load balancer affinity | Session |
-| `akaalb_*` | Akamai | Load balancer | Session |
-| `_abck` | Akamai | Bot detection | ~1 hour |
-| `bm_sz` | Akamai | Bot manager size | Session |
-
-## Troubleshooting
-
-### FlareSolverr not responding
-```bash
-# Check if service is running
-curl -s http://127.0.0.1:8191/ | head -5
-
-# Docker: restart the container
-docker restart flaresolverr
-
-# Standalone: restart the service
-systemctl restart flaresolverr
-```
-
-### Challenge not solved (timeout)
-```bash
-# Increase timeout (default 60s)
-flaresolverr --url https://target.example --max-timeout 120000
-
-# Some challenges require multiple attempts
-flaresolverr --url https://target.example --cookies-only  # try again
-```
-
-### Cookies not working with other tools
-- Ensure you're using BOTH `cookie_header` AND `user_agent` — WAFs check both
-- Check cookie domain matches your request domain
-- Cookies may have expired — re-extract them
-- Some WAFs also check TLS fingerprint (JA3) — FlareSolverr's Chromium fingerprint may differ from curl's
-
-## Integration with CyberStrikeAI Agent
-
-The AI agent should follow this pattern automatically:
-1. First attempt with direct tool (nuclei, ffuf, etc.)
-2. If 403/challenge detected → call `flaresolverr --cookies-only`
-3. Extract `cookie_header` and `user_agent` from the response
-4. Re-run the original tool with cookie/UA headers injected
-5. Set a timer to refresh cookies every 15 minutes during long scans
-
-This is the standard WAF bypass workflow for all authorized penetration testing.
+This is the standard WAF bypass workflow for all authorized security assessments.

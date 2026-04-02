@@ -1,13 +1,21 @@
 name: "flaresolverr"
 command: "flaresolverr-client"
 enabled: true
-short_description: "Bypass Cloudflare/WAF challenges and extract cookies for reuse with other tools"
+short_description: "Bypass DDoS-Guard, QRator, StormWall, Cloudflare WAF challenges — extract cookies for reuse with other tools"
 description: |
-  FlareSolverr tool for bypassing Cloudflare, anti-bot, and WAF challenge pages using a real
-  browser context. Returns page content, cookies, and user-agent from the solved session.
+  FlareSolverr uses a real Chromium browser to solve anti-bot challenge pages from DDoS-Guard,
+  QRator, StormWall, Cloudflare, and other WAF services. Returns clearance cookies and user-agent
+  that can be reused with curl, nuclei, ffuf, sqlmap, and any other HTTP tool.
+
+  **Proxy integration:** When CyberStrikeAI proxy is configured (Tor/SOCKS5/HTTP), FlareSolverr's
+  browser automatically routes through the same proxy. This ensures the IP that solves the challenge
+  matches the IP used by subsequent scanning tools — critical for IP-bound cookies (DDoS-Guard).
+
+  **Primary targets:** DDoS-Guard (.ru/.su domains), QRator (Russian gov/banking), StormWall, Wallarm.
+  Also works against: Cloudflare, Akamai, Imperva, AWS WAF, Sucuri.
 
   **Key Features:**
-  - Bypasses Cloudflare, Akamai, and similar challenge/CAPTCHA pages
+  - Bypasses DDoS-Guard, QRator, StormWall, Cloudflare, Akamai challenge pages
   - Extracts clearance cookies (cf_clearance, __cf_bm, etc.) for reuse with other tools
   - Supports `request.get` and `request.post`
   - Session create/destroy for sticky browser state across multiple requests
