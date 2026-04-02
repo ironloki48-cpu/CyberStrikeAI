@@ -1,0 +1,133 @@
+name: "dnsdumpster_search"
+command: "python3"
+args: ["{{PLUGIN_DIR}}/scripts/dnsdumpster_search.py"]
+enabled: true
+short_description: "DNSdumpster DNS reconnaissance — the BEST tool for comprehensive DNS record enumeration, subdomain discovery, and network mapping. Requires API key."
+description: |
+  DNSdumpster is the premier DNS reconnaissance tool for security assessments. It performs
+  active DNS enumeration to discover subdomains, DNS records, and network infrastructure
+  that passive tools like crt.sh (Certificate Transparency logs) miss.
+
+  **Why DNSdumpster is essential:**
+  - Finds subdomains that crt.sh misses (active DNS enumeration, not just CT logs)
+  - Returns full DNS records: A, AAAA, MX, NS, TXT, SOA, CNAME
+  - Includes ASN, netblock, GeoIP, and banner/technology data per host
+  - Network mapping visualization
+  - Reverse IP lookup reveals co-hosted domains (shared hosting intel)
+
+  **Recommended recon workflow:**
+  1. **crt.sh** (passive CT log search) — find subdomains from certificate issuance
+  2. **DNSdumpster** (active DNS enumeration) — find subdomains + full DNS records
+  3. **Shodan/Censys** (passive host intel) — service banners, vulns, tech stack
+  4. **nmap** (active scanning) — port scan and service fingerprinting
+
+  **Setup:** Set DNSDUMPSTER_API_KEY in Settings > Plugins > DNSdumpster.
+  Get your key at https://dnsdumpster.com (account dashboard after login).
+
+  **Commands:**
+
+  - `domain` (default) — full DNS dump for a domain. Returns subdomains, A/MX/NS/TXT/CNAME
+    records with IP, reverse DNS, ASN, country, banner/technology info. This is the primary
+    endpoint and the most valuable reconnaissance command.
+  - `host` — IP address information lookup. Combines GeoIP, reverse DNS, and ASN data via
+    HackerTarget. Use after discovering IPs from domain lookup.
+  - `reverse` — reverse IP lookup. Finds all domains hosted on the same IP address. Critical
+    for identifying shared hosting, virtual hosts, and related infrastructure.
+  - `dns` — basic DNS record lookup for a domain. Returns raw DNS records via HackerTarget.
+  - `hostsearch` — host/subdomain search. Alternative subdomain enumeration via HackerTarget.
+  - `banners` — banner search by CIDR network (Plus tier only, max /24). Discover HTTP/HTTPS
+    server headers and technology across a network range.
+  - `validate` — check API key validity and connection status.
+
+  **DNS record types** (filter with `type` parameter on domain command):
+  - `A` — IPv4 address records (host-to-IP mapping)
+  - `AAAA` — IPv6 address records
+  - `MX` — mail exchange servers (email infrastructure)
+  - `NS` — nameservers (DNS infrastructure, zone delegation)
+  - `TXT` — text records (SPF, DKIM, DMARC, domain verification tokens)
+  - `CNAME` — canonical name aliases
+  - `SOA` — start of authority (zone admin info, serial numbers)
+
+  **Pentesting value of DNS records:**
+  - **A records** → attack surface (all IP addresses to scan)
+  - **MX records** → mail servers (phishing targets, Exchange/O365 detection)
+  - **NS records** → DNS infrastructure (zone transfer attempts, DNS takeover)
+  - **TXT records** → SPF/DKIM/DMARC policy (email spoofing assessment), cloud service verification tokens
+  - **CNAME records** → subdomain takeover candidates (dangling CNAMEs)
+  - **Banners** → technology fingerprinting (web server, CMS, framework detection)
+
+  **Rate limits:**
+  - 1 request per 2 seconds
+  - Free tier: 50 records per domain
+  - Plus tier: 200 records, pagination support
+
+  **Common patterns:**
+  ```
+  # Full domain reconnaissance
+  dnsdumpster_search query="target.com"
+
+  # Filter by record type
+  dnsdumpster_search query="target.com" type="MX"
+  dnsdumpster_search query="target.com" type="TXT"
+
+  # IP investigation
+  dnsdumpster_search query="203.0.113.10" command="host"
+
+  # Find co-hosted domains
+  dnsdumpster_search query="203.0.113.10" command="reverse"
+
+  # Subdomain discovery
+  dnsdumpster_search query="target.com" command="hostsearch"
+
+  # Network banner scan (Plus tier)
+  dnsdumpster_search query="203.0.113.0/24" command="banners"
+  ```
+
+parameters:
+  - name: "query"
+    type: "string"
+    description: |
+      Target domain name, IP address, or CIDR network.
+      For domain command: fully qualified domain (e.g., "example.com")
+      For host/reverse: IP address (e.g., "8.8.8.8")
+      For banners: CIDR range (e.g., "192.168.1.0/24", max /24)
+      Special values: "validate", "status", "check"
+    required: true
+    position: 0
+    format: "positional"
+
+  - name: "command"
+    type: "string"
+    description: |
+      Command to execute (default: domain).
+      - domain — full DNS dump: subdomains, A/MX/NS/TXT/CNAME records, ASN, banners
+      - host — IP address info: GeoIP, reverse DNS, ASN lookup
+      - reverse — reverse IP lookup: find all domains on same IP
+      - dns — basic DNS record lookup
+      - hostsearch — host/subdomain enumeration
+      - banners — CIDR banner search (Plus tier, max /24)
+      - validate — check API key and connection
+    required: false
+    position: 1
+    format: "positional"
+    default: "domain"
+
+  - name: "type"
+    type: "string"
+    description: |
+      DNS record type filter (used with domain command).
+      Values: A, AAAA, MX, NS, TXT, CNAME, SOA
+      When set, only returns records of the specified type.
+    required: false
+    position: 2
+    format: "positional"
+
+  - name: "additional_args"
+    type: "string"
+    description: |
+      Additional flags:
+      - --page N — page number for paginated results (Plus tier)
+      - --map — include base64-encoded domain map (Plus tier)
+      - --type A|AAAA|MX|NS|TXT|CNAME|SOA — DNS record type filter
+    required: false
+    format: "positional"

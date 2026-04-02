@@ -1,0 +1,53 @@
+<div class="info-collect-panel">
+    <div class="info-collect-form">
+        <div class="form-group">
+            <label for="dnsdumpster-query">Domain / IP</label>
+            <textarea id="dnsdumpster-query" class="info-collect-query-input" rows="1" placeholder="example.com"></textarea>
+            <small class="form-hint">Enter a domain name, IP address, or CIDR range (e.g. target.com, 8.8.8.8, 192.168.1.0/24)</small>
+            <div class="info-collect-presets">
+                <button class="preset-chip" onclick="document.getElementById('dnsdumpster-query').value='google.com'">google.com</button>
+                <button class="preset-chip" onclick="document.getElementById('dnsdumpster-query').value='github.com'">github.com</button>
+                <button class="preset-chip" onclick="document.getElementById('dnsdumpster-query').value='cloudflare.com'">cloudflare.com</button>
+                <button class="preset-chip" onclick="document.getElementById('dnsdumpster-query').value='microsoft.com'">microsoft.com</button>
+                <button class="preset-chip" onclick="document.getElementById('dnsdumpster-query').value='amazon.com'">amazon.com</button>
+                <button class="preset-chip" onclick="document.getElementById('dnsdumpster-query').value='8.8.8.8'">8.8.8.8</button>
+            </div>
+        </div>
+        <div class="info-collect-form-row">
+            <div class="form-group">
+                <label for="dnsdumpster-command">Command</label>
+                <select id="dnsdumpster-command">
+                    <option value="domain">Domain Lookup</option>
+                    <option value="host">Host Info</option>
+                    <option value="reverse">Reverse IP</option>
+                    <option value="dns">DNS Records</option>
+                    <option value="hostsearch">Host Search</option>
+                    <option value="banners">Banners (CIDR)</option>
+                    <option value="validate">Validate Key</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="dnsdumpster-type">Record Type</label>
+                <select id="dnsdumpster-type">
+                    <option value="">All Records</option>
+                    <option value="A">A (IPv4)</option>
+                    <option value="AAAA">AAAA (IPv6)</option>
+                    <option value="MX">MX (Mail)</option>
+                    <option value="NS">NS (Nameserver)</option>
+                    <option value="TXT">TXT (SPF/DKIM)</option>
+                    <option value="CNAME">CNAME (Alias)</option>
+                    <option value="SOA">SOA (Authority)</option>
+                </select>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="info-collect-results">
+    <div class="info-collect-results-header">
+        <div class="info-collect-results-title">DNSdumpster Results</div>
+        <div class="info-collect-results-meta" id="dnsdumpster-results-meta">-</div>
+    </div>
+    <div id="dnsdumpster-results-body" style="padding: 12px;">
+        <p class="muted">Enter a domain or IP and click Search. Requires API key configured in Settings.</p>
+    </div>
+</div>
