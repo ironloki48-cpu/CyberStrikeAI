@@ -121,6 +121,14 @@
             ws.onopen = function () {
                 if (tab.term) {
                     tab.term.focus();
+                    // Send the actual terminal dimensions to the backend immediately
+                    // so the PTY size matches what xterm.js is displaying (the server
+                    // reads these JSON messages in internal/handler/terminal_ws_unix.go).
+                    if (tab.term.cols && tab.term.rows) {
+                        try {
+                            ws.send(JSON.stringify({ type: 'resize', cols: tab.term.cols, rows: tab.term.rows }));
+                        } catch (e) {}
+                    }
                 }
             };
 
@@ -225,14 +233,28 @@
             }
         }
 
+        function sendResize() {
+            if (tab.ws && tab.ws.readyState === WebSocket.OPEN && term.cols && term.rows) {
+                try {
+                    tab.ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+                } catch (e) {}
+            }
+        }
+
         term.onData(function (data) {
- // Ctrl+L:localclear screen,at the same time ^L alsotobackend
+            // Ctrl+L: clear locally and forward ^L to the backend.
             if (data === '\x0c') {
                 term.clear();
                 sendToWS(data);
                 return;
             }
             sendToWS(data);
+        });
+
+        // Keep the PTY size in sync with the xterm.js viewport so full-screen
+        // programs (vi/vim/less/htop) render correctly after the window resizes.
+        term.onResize(function () {
+            sendResize();
         });
 
         tab.term = term;
