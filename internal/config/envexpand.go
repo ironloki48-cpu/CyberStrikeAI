@@ -51,16 +51,42 @@ func expandEnvVar(s string) string {
 // env-var-bearing fields of an ExternalMCPServerConfig (Command, Args, Env
 // values, URL, Headers values). This lets MCP server definitions keep secrets
 // out of the repo by referencing environment variables instead.
+//
+// Args, Env, and Headers are allocated fresh before being written into cfg.
+// A naive in-place rewrite of those fields would mutate the slice / map the
+// caller passed in, which is a correctness hazard when the caller is working
+// on a *struct copy* of a value stored in a map (see internal/mcp createSDKClient):
+// Go's struct-by-value semantics do not extend to slices and maps, so the
+// backing storage is still shared with the stored config. Mutating it would
+// leak resolved secrets back into the caller's state — precisely the bug this
+// function is supposed to prevent. Reallocating keeps expansion scoped to
+// the copy.
 func ExpandConfigEnv(cfg *ExternalMCPServerConfig) {
 	cfg.Command = expandEnvVar(cfg.Command)
-	for i, arg := range cfg.Args {
-		cfg.Args[i] = expandEnvVar(arg)
+
+	if len(cfg.Args) > 0 {
+		newArgs := make([]string, len(cfg.Args))
+		for i, arg := range cfg.Args {
+			newArgs[i] = expandEnvVar(arg)
+		}
+		cfg.Args = newArgs
 	}
-	for k, v := range cfg.Env {
-		cfg.Env[k] = expandEnvVar(v)
+
+	if len(cfg.Env) > 0 {
+		newEnv := make(map[string]string, len(cfg.Env))
+		for k, v := range cfg.Env {
+			newEnv[k] = expandEnvVar(v)
+		}
+		cfg.Env = newEnv
 	}
+
 	cfg.URL = expandEnvVar(cfg.URL)
-	for k, v := range cfg.Headers {
-		cfg.Headers[k] = expandEnvVar(v)
+
+	if len(cfg.Headers) > 0 {
+		newHeaders := make(map[string]string, len(cfg.Headers))
+		for k, v := range cfg.Headers {
+			newHeaders[k] = expandEnvVar(v)
+		}
+		cfg.Headers = newHeaders
 	}
 }
