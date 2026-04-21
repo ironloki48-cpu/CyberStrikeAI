@@ -187,6 +187,10 @@ func (h *ExternalMCPHandler) AddOrUpdateExternalMCP(c *gin.Context) {
 		cfg.Disabled = false
 	}
 
+	// Expand ${VAR} / ${VAR:-default} env refs before the config is persisted
+	// and handed to the manager so startup sees the resolved values.
+	config.ExpandConfigEnv(&cfg)
+
 	h.config.ExternalMCP.Servers[name] = cfg
 
 	// save to config file

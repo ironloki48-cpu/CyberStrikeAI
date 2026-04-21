@@ -501,6 +501,10 @@ func Load(path string) (*Config, error) {
 				// Neither set; default to enabled
 				serverCfg.ExternalMCPEnable = true
 			}
+			// Expand ${VAR} / ${VAR:-default} references in command/args/env/url/headers so
+			// MCP server definitions can reference secrets via environment instead of
+			// hard-coding them. Matches Claude Desktop / Cursor / VS Code mcpServers.
+			ExpandConfigEnv(&serverCfg)
 			cfg.ExternalMCP.Servers[name] = serverCfg
 		}
 	}
