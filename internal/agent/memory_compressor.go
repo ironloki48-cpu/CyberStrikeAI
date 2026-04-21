@@ -65,31 +65,31 @@ Conversation segments to compress:
 %s
 
 Output format requirements (strict):
-1) [TOOLS_EXECUTED] — list of tools run with key parameters and execution references, e.g.:
+1) [TOOLS_EXECUTED] - list of tools run with key parameters and execution references, e.g.:
    - nmap -sV -sC 10.0.0.1 → 3 open ports (22,80,443) [ref:exec-abc123]
    - sqlmap -u http://... → no injection found [ref:exec-def456]
-2) [TASK_STATUS] — objective progress and current state in 2-4 bullets.
-3) [KEY_TECHNICAL_FINDINGS] — critical findings only (vulns, credentials, exploitable paths, decisive errors).
-4) [NEXT_BEST_ACTIONS] — concrete next actions (max 5 bullets), aligned to current objective.
+2) [TASK_STATUS] - objective progress and current state in 2-4 bullets.
+3) [KEY_TECHNICAL_FINDINGS] - critical findings only (vulns, credentials, exploitable paths, decisive errors).
+4) [NEXT_BEST_ACTIONS] - concrete next actions (max 5 bullets), aligned to current objective.
 
 Rules:
 - Keep it compact and actionable; remove duplicate details.
 - Preserve exact indicators when available (host/IP/URL/port/CVE/payload/parameter/path).
-- ALWAYS preserve [ref:execution_id] markers — these are the agent's lifeline to retrieve full outputs.
+- ALWAYS preserve [ref:execution_id] markers - these are the agent's lifeline to retrieve full outputs.
 - Do not include narrative filler.
 - If no findings exist, explicitly state "No confirmed findings yet".`
 )
 
 // MemoryCompressor is responsible for compressing historical context before calling the LLM to avoid token explosion.
 type MemoryCompressor struct {
-	maxTotalTokens   int
-	minRecentMessage int
-	maxImages        int
-	chunkSize        int
+	maxTotalTokens     int
+	minRecentMessage   int
+	maxImages          int
+	chunkSize          int
 	summaryModel       string
 	summaryTemperature float64
 	summaryTopP        float64
-	timeout          time.Duration
+	timeout            time.Duration
 
 	tokenCounter     TokenCounter
 	completionClient CompletionClient
@@ -174,17 +174,17 @@ func NewMemoryCompressor(cfg MemoryCompressorConfig) (*MemoryCompressor, error) 
 	}
 
 	return &MemoryCompressor{
-		maxTotalTokens:   cfg.MaxTotalTokens,
-		minRecentMessage: cfg.MinRecentMessage,
-		maxImages:        cfg.MaxImages,
-		chunkSize:        cfg.ChunkSize,
+		maxTotalTokens:     cfg.MaxTotalTokens,
+		minRecentMessage:   cfg.MinRecentMessage,
+		maxImages:          cfg.MaxImages,
+		chunkSize:          cfg.ChunkSize,
 		summaryModel:       cfg.SummaryModel,
 		summaryTemperature: cfg.OpenAIConfig.SummaryTemperature,
 		summaryTopP:        cfg.OpenAIConfig.SummaryTopP,
-		timeout:          cfg.Timeout,
-		tokenCounter:     cfg.TokenCounter,
-		completionClient: cfg.CompletionClient,
-		logger:           cfg.Logger,
+		timeout:            cfg.Timeout,
+		tokenCounter:       cfg.TokenCounter,
+		completionClient:   cfg.CompletionClient,
+		logger:             cfg.Logger,
 	}, nil
 }
 

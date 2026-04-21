@@ -187,6 +187,10 @@ func (h *ExternalMCPHandler) AddOrUpdateExternalMCP(c *gin.Context) {
 		cfg.Disabled = false
 	}
 
+	// Env-var resolution happens lazily at connection time inside the mcp
+	// package - do NOT expand here, because cfg is then stored in h.config
+	// and written back to disk by saveConfig, which would persist resolved
+	// secrets into config.yaml and defeat the point of using ${VAR} refs.
 	h.config.ExternalMCP.Servers[name] = cfg
 
 	// save to config file

@@ -1,5 +1,5 @@
 /**
- * systemsettings - Terminal：manytab、streamingoutput、commandhistory、Ctrl+L clear screen、longtimecanCancel
+ * systemsettings - Terminal:manytab,streamingoutput,commandhistory,Ctrl+L clear screen,longtimecanCancel
  */
 (function () {
     var getContext = HTMLCanvasElement.prototype.getContext;
@@ -15,7 +15,7 @@
     var currentTabId = 1;
     var inited = false;
     var tabIdCounter = 1;
-    var PROMPT = ''; // real Shell itselfoutputprompt，hereno longercustom
+    var PROMPT = ''; // real Shell itselfoutputprompt,hereno longercustom
     var HISTORY_MAX = 100;
     var CANCEL_AFTER_MS = 125000;
 
@@ -30,15 +30,15 @@
         if (typeof window !== 'undefined' && typeof window.t === 'function') {
             return window.t(key, opts);
         }
-        // i18n not yetreadywhen's fallback（and zh-CN consistent）
+        // i18n not yetreadywhen's fallback(and zh-CN consistent)
         var fallbacks = {
-            'settingsTerminal.welcomeLine': 'CyberStrikeAI Terminal - real Shell Conversation，directlyinputcommand；Ctrl+L clear screen',
+            'settingsTerminal.welcomeLine': 'CyberStrikeAI Terminal - real Shell Conversation,directlyinputcommand;Ctrl+L clear screen',
             'settingsTerminal.sessionClosed': '[ConversationalreadyClose]',
             'settingsTerminal.connectionError': '[Terminalconnectionerror]',
             'settingsTerminal.connectFailed': '[cannotconnectionTerminalservice: {{msg}}]',
             'settingsTerminal.closeTabTitle': 'Close',
  'settingsTerminal.containerClickTitle': 'clickthisafterinputcommand',
-            'settingsTerminal.xtermNotLoaded': 'not loaded xterm.js，Please refresh page or check network.',
+            'settingsTerminal.xtermNotLoaded': 'not loaded xterm.js,Please refresh page or check network.',
             'settingsTerminal.terminalTab': 'Terminal {{n}}'
         };
         var s = fallbacks[key] || key;
@@ -55,7 +55,7 @@
     }
 
     function writePrompt(tab) {
- // promptdelegated tobackend Shell lineoutput，hereonlypreserveplaceholderfunction，avoidoldcodethrow error
+ // promptdelegated tobackend Shell lineoutput,hereonlypreserveplaceholderfunction,avoidoldcodethrow error
     }
 
     function redrawTabDisplay(t) {
@@ -87,7 +87,7 @@
         t.term.write(suffix);
     }
 
-    // fromlocalstorageingetcurrentlogin token（and auth.js use's structuremaintainconsistent）
+    // fromlocalstorageingetcurrentlogin token(and auth.js use's structuremaintainconsistent)
     function getStoredAuthToken() {
         try {
             var raw = localStorage.getItem('cyberstrike-auth');
@@ -98,7 +98,7 @@
         return null;
     }
 
- // WebSocket addressconstruct（compatible http/https，via query pass token toviabackendauthentication）
+ // WebSocket addressconstruct(compatible http/https,via query pass token toviabackendauthentication)
     function buildTerminalWSURL() {
         var proto = (window.location.protocol === 'https:') ? 'wss://' : 'ws://';
         var url = proto + window.location.host + '/api/terminal/ws';
@@ -121,6 +121,14 @@
             ws.onopen = function () {
                 if (tab.term) {
                     tab.term.focus();
+                    // Send the actual terminal dimensions to the backend immediately
+                    // so the PTY size matches what xterm.js is displaying (the server
+                    // reads these JSON messages in internal/handler/terminal_ws_unix.go).
+                    if (tab.term.cols && tab.term.rows) {
+                        try {
+                            ws.send(JSON.stringify({ type: 'resize', cols: tab.term.cols, rows: tab.term.rows }));
+                        } catch (e) {}
+                    }
                 }
             };
 
@@ -131,7 +139,7 @@
                     var decoder = new TextDecoder('utf-8');
                     tab.term.write(decoder.decode(ev.data));
                 } else if (ev.data instanceof Blob) {
-                    // Blob Type，needasyncread
+                    // Blob Type,needasyncread
                     var reader = new FileReader();
                     reader.onload = function () {
                         var decoder = new TextDecoder('utf-8');
@@ -225,8 +233,16 @@
             }
         }
 
+        function sendResize() {
+            if (tab.ws && tab.ws.readyState === WebSocket.OPEN && term.cols && term.rows) {
+                try {
+                    tab.ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+                } catch (e) {}
+            }
+        }
+
         term.onData(function (data) {
- // Ctrl+L：localclear screen，at the same time ^L alsotobackend
+            // Ctrl+L: clear locally and forward ^L to the backend.
             if (data === '\x0c') {
                 term.clear();
                 sendToWS(data);
@@ -235,10 +251,16 @@
             sendToWS(data);
         });
 
+        // Keep the PTY size in sync with the xterm.js viewport so full-screen
+        // programs (vi/vim/less/htop) render correctly after the window resizes.
+        term.onResize(function () {
+            sendResize();
+        });
+
         tab.term = term;
         tab.fitAddon = fitAddon;
- // immediatelyestablish WebSocket，letbackend PTY/Shell onStartoutputprompt；
- // ifetctofirst timekeypressonly connect，usewillfeelmustfirstbyenter keyonly caninput（asconnectionnot yetestablish）。
+ // immediatelyestablish WebSocket,letbackend PTY/Shell onStartoutputprompt;
+ // ifetctofirst timekeypressonly connect,usewillfeelmustfirstbyenter keyonly caninput(asconnectionnot yetestablish).
         ensureTerminalWS(tab);
         return term;
     }
@@ -402,7 +424,7 @@
     }
 
     function refreshTerminalI18n() {
- // languageswitchafterupdatetabandcontainer title；alreadyopen's Terminalcontentnotforceclear screen，toloseConversationoutput
+ // languageswitchafterupdatetabandcontainer title;alreadyopen's Terminalcontentnotforceclear screen,toloseConversationoutput
         try {
             var tabsEl = document.querySelector('.terminal-tabs');
             if (tabsEl) {

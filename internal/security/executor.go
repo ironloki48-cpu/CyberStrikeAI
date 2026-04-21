@@ -35,14 +35,14 @@ var ToolOutputCallbackCtxKey = toolOutputCallbackCtxKey{}
 
 // Executor security tool executor
 type Executor struct {
-	config             *config.SecurityConfig
-	proxyConfig        *config.ProxyConfig                // global proxy middleware config (nil = disabled)
-	toolIndex          map[string]*config.ToolConfig      // tool index for O(1) lookup
-	mcpServer          *mcp.Server
-	logger             *zap.Logger
-	resultStorage      ResultStorage                      // result storage (for query tools)
-	defaultWorkDir     string                             // stable default working directory for tool execution
-	pluginEnvProvider  func(toolName string) []string     // returns plugin env vars for a tool (nil = none)
+	config            *config.SecurityConfig
+	proxyConfig       *config.ProxyConfig           // global proxy middleware config (nil = disabled)
+	toolIndex         map[string]*config.ToolConfig // tool index for O(1) lookup
+	mcpServer         *mcp.Server
+	logger            *zap.Logger
+	resultStorage     ResultStorage                  // result storage (for query tools)
+	defaultWorkDir    string                         // stable default working directory for tool execution
+	pluginEnvProvider func(toolName string) []string // returns plugin env vars for a tool (nil = none)
 }
 
 // SetProxyConfig sets the global proxy configuration for tool traffic routing.
@@ -461,7 +461,7 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 		}
 	}
 
-	// execute command — wrap with proxychains for tools that don't respect env proxy vars
+	// execute command - wrap with proxychains for tools that don't respect env proxy vars
 	var cmd *exec.Cmd
 	proxied := false
 	if e.shouldUseProxyChains(toolName) {
@@ -694,7 +694,7 @@ func looksMalformedArgValue(value interface{}) bool {
 		return false
 	}
 	trimmed := strings.TrimSpace(s)
-	// Skip multiline values — these are likely script content, not malformed args
+	// Skip multiline values - these are likely script content, not malformed args
 	if strings.Count(trimmed, "\n") > 2 {
 		return false
 	}

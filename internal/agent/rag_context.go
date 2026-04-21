@@ -36,7 +36,7 @@ type RAGContextInjector struct {
 	fetchTimeout  time.Duration // per-request timeout for the pre-flight knowledge fetch
 
 	// Cache to avoid re-fetching identical or very similar queries.
-	cacheMu   sync.Mutex
+	cacheMu    sync.Mutex
 	blockCache *ragCache // cached BuildContextBlock result
 	hintCache  *ragCache // cached ToolGuidanceHint result
 }
@@ -335,7 +335,7 @@ func (r *RAGContextInjector) ToolGuidanceHint(ctx context.Context, query string)
 		return ""
 	}
 
-	hint := fmt.Sprintf("\nKnowledge base hint: Relevant attack categories detected — %s. "+
+	hint := fmt.Sprintf("\nKnowledge base hint: Relevant attack categories detected - %s. "+
 		"Use search_knowledge_base for detailed exploitation techniques.",
 		strings.Join(categories, ", "))
 

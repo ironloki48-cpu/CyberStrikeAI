@@ -439,6 +439,11 @@ func (c *simpleHTTPClient) Close() error {
 // returning a *sdkClient implementing ExternalMCPClient.
 // Returns (nil, error) on connection failure. ctx is used for connection timeout and cancellation.
 func createSDKClient(ctx context.Context, serverCfg config.ExternalMCPServerConfig, logger *zap.Logger) (ExternalMCPClient, error) {
+	// Resolve ${VAR} / ${VAR:-default} env refs on the local copy only - keeping the
+	// template strings in the caller's stored config is what prevents saveConfig()
+	// from persisting resolved secrets back to config.yaml on subsequent writes.
+	config.ExpandConfigEnv(&serverCfg)
+
 	timeout := time.Duration(serverCfg.Timeout) * time.Second
 	if timeout <= 0 {
 		timeout = 30 * time.Second
@@ -466,9 +471,17 @@ func createSDKClient(ctx context.Context, serverCfg config.ExternalMCPServerConf
 		if serverCfg.Command == "" {
 			return nil, fmt.Errorf("stdio mode requires command to be configured")
 		}
-		// must use exec.Command instead of CommandContext: ctx is cancelled after doConnect returns,
-		// using CommandContext(ctx) would immediately kill the child process, causing ListTools and other
-		// subsequent requests to fail and show 0 tools
+		// Use exec.Command (not exec.CommandContext): ctx is cancelled when
+		// doConnect returns, and CommandContext(ctx) would immediately kill
+		// the child, causing every subsequent ListTools / CallTool to fail.
+		//
+		// Child-process reaping is therefore delegated to the SDK's
+		// mcp.CommandTransport / ClientSession.Close() path: we never call
+		// cmd.Wait() ourselves. The modelcontextprotocol/go-sdk contract is
+		// expected to kill and wait the child on session close - if a future
+		// SDK version breaks that, orphan children will accumulate after
+		// server restarts. When bumping the SDK version, verify that
+		// session.Close() still reaps the CommandTransport process.
 		cmd := exec.Command(serverCfg.Command, serverCfg.Args...)
 		if len(serverCfg.Env) > 0 {
 			cmd.Env = append(cmd.Env, envMapToSlice(serverCfg.Env)...)

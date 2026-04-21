@@ -22,12 +22,12 @@ const (
 	terminalTimeout       = 30 * time.Minute
 )
 
-// TerminalHandler 
+// TerminalHandler
 type TerminalHandler struct {
 	logger *zap.Logger
 }
 
-// maskTerminalCommand ，record
+// maskTerminalCommand ,record
 func maskTerminalCommand(cmd string) string {
 	trimmed := strings.TrimSpace(cmd)
 	lower := strings.ToLower(trimmed)
@@ -45,14 +45,14 @@ func NewTerminalHandler(logger *zap.Logger) *TerminalHandler {
 	return &TerminalHandler{logger: logger}
 }
 
-// RunCommandRequest 
+// RunCommandRequest
 type RunCommandRequest struct {
 	Command string `json:"command"`
 	Shell   string `json:"shell,omitempty"`
 	Cwd     string `json:"cwd,omitempty"`
 }
 
-// RunCommandResponse 
+// RunCommandResponse
 type RunCommandResponse struct {
 	Stdout   string `json:"stdout"`
 	Stderr   string `json:"stderr"`
@@ -60,11 +60,11 @@ type RunCommandResponse struct {
 	Error    string `json:"error,omitempty"`
 }
 
-// RunCommand （）
+// RunCommand ()
 func (h *TerminalHandler) RunCommand(c *gin.Context) {
 	var req RunCommandRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body， command "})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body, command "})
 		return
 	}
 
@@ -95,7 +95,7 @@ func (h *TerminalHandler) RunCommand(c *gin.Context) {
 		cmd = exec.CommandContext(ctx, "cmd", "/c", cmdStr)
 	} else {
 		cmd = exec.CommandContext(ctx, shell, "-c", cmdStr)
-		// TTY COLUMNS/TERM， ping usage 
+		// TTY COLUMNS/TERM, ping usage
 		cmd.Env = append(os.Environ(), "COLUMNS=256", "LINES=40", "TERM=xterm-256color")
 	}
 
@@ -123,7 +123,7 @@ func (h *TerminalHandler) RunCommand(c *gin.Context) {
 	stdoutBytes := stdout.Bytes()
 	stderrBytes := stderr.Bytes()
 
-	// ，（， buffer）
+	// ,(, buffer)
 	truncSuffix := []byte("\n...(output truncated)\n")
 	if len(stdoutBytes) > terminalMaxOutputLen {
 		tmp := make([]byte, terminalMaxOutputLen+len(truncSuffix))
@@ -154,7 +154,7 @@ func (h *TerminalHandler) RunCommand(c *gin.Context) {
 				Stdout:   so,
 				Stderr:   se,
 				ExitCode: -1,
-				Error:    "command execution timed out（" + terminalTimeout.String() + "）",
+				Error:    "command execution timed out(" + terminalTimeout.String() + ")",
 			}
 			c.JSON(http.StatusOK, resp)
 			return
@@ -162,7 +162,7 @@ func (h *TerminalHandler) RunCommand(c *gin.Context) {
 		h.logger.Debug("terminal command execution error", zap.String("command", maskTerminalCommand(cmdStr)), zap.Error(err))
 	}
 
-	// \n， \r /
+	// \n, \r /
 	stdoutStr := strings.ReplaceAll(string(stdoutBytes), "\r\n", "\n")
 	stdoutStr = strings.ReplaceAll(stdoutStr, "\r", "\n")
 	stderrStr := strings.ReplaceAll(string(stderrBytes), "\r\n", "\n")
@@ -179,18 +179,18 @@ func (h *TerminalHandler) RunCommand(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
-// streamEvent SSE 
+// streamEvent SSE
 type streamEvent struct {
 	T string `json:"t"` // "out" | "err" | "exit"
 	D string `json:"d,omitempty"`
-	C int `json:"c"` // exit code（ omitempty， 0 [exit undefined]）
+	C int    `json:"c"` // exit code( omitempty, 0 [exit undefined])
 }
 
-// RunCommandStream ，（SSE）
+// RunCommandStream ,(SSE)
 func (h *TerminalHandler) RunCommandStream(c *gin.Context) {
 	var req RunCommandRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body， command "})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body, command "})
 		return
 	}
 	cmdStr := strings.TrimSpace(req.Command)

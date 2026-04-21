@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 	"go.uber.org/zap"
@@ -15,12 +16,28 @@ type DB struct {
 	logger *zap.Logger
 }
 
+// configureDBPool tunes the SQLite connection pool for typical server workloads.
+// SQLite writes serialize on the file lock anyway, so a very wide pool buys
+// nothing and wastes goroutines - 25 open / 5 idle is enough headroom for
+// bursty reads, and recycling every 30 min avoids stale cached prepared
+// statements on long-running processes.
+func configureDBPool(db *sql.DB) {
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(30 * time.Minute)
+}
+
 // NewDB database connection
 func NewDB(dbPath string, logger *zap.Logger) (*DB, error) {
-	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_foreign_keys=1")
+	// _busy_timeout lets SQLite wait 5s for a locked write instead of returning
+	// SQLITE_BUSY immediately; _synchronous=NORMAL is the standard WAL pairing
+	// that keeps durability without fsync-per-commit latency.
+	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_foreign_keys=1&_busy_timeout=5000&_synchronous=NORMAL")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
+
+	configureDBPool(db)
 
 	if err := db.Ping(); err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
@@ -31,7 +48,7 @@ func NewDB(dbPath string, logger *zap.Logger) (*DB, error) {
 		logger: logger,
 	}
 
-	// 
+	//
 	if err := database.initTables(); err != nil {
 		return nil, fmt.Errorf("failed to initialize tables: %w", err)
 	}
@@ -145,7 +162,7 @@ func (db *DB) initTables() error {
 		FOREIGN KEY (target_node_id) REFERENCES attack_chain_nodes(id) ON DELETE CASCADE
 	);`
 
-	// create knowledge retrieval logs table（，）
+	// create knowledge retrieval logs table(,)
 	createKnowledgeRetrievalLogsTable := `
 	CREATE TABLE IF NOT EXISTS knowledge_retrieval_logs (
 		id TEXT PRIMARY KEY,
@@ -240,7 +257,7 @@ func (db *DB) initTables() error {
 		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 	);`
 
-	// create WebShell connection states table（/status）
+	// create WebShell connection states table(/status)
 	createWebshellConnectionStatesTable := `
 	CREATE TABLE IF NOT EXISTS webshell_connection_states (
 		connection_id TEXT PRIMARY KEY,
@@ -343,7 +360,7 @@ func (db *DB) initTables() error {
 		return fmt.Errorf("webshell_connection_statestable failed: %w", err)
 	}
 
-	// add new fields to existing tables（）- create indexes
+	// add new fields to existing tables()- create indexes
 	if err := db.migrateConversationsTable(); err != nil {
 		db.logger.Warn("migrateconversationstable failed", zap.Error(err))
 		// do not return error, allow to continue
@@ -372,7 +389,7 @@ func (db *DB) initTables() error {
 	return nil
 }
 
-// migrateConversationsTable migrateconversations，add
+// migrateConversationsTable migrateconversations,add
 func (db *DB) migrateConversationsTable() error {
 	// last_react_inputfield exists
 	var count int
@@ -380,7 +397,7 @@ func (db *DB) migrateConversationsTable() error {
 	if err != nil {
 		// if query fails, try to add field
 		if _, addErr := db.Exec("ALTER TABLE conversations ADD COLUMN last_react_input TEXT"); addErr != nil {
-			// if field already exists, ignore error（SQLiteerror）
+			// if field already exists, ignore error(SQLiteerror)
 			errMsg := strings.ToLower(addErr.Error())
 			if !strings.Contains(errMsg, "duplicate column") && !strings.Contains(errMsg, "already exists") {
 				db.logger.Warn("addlast_react_inputfield failed", zap.Error(addErr))
@@ -429,7 +446,7 @@ func (db *DB) migrateConversationsTable() error {
 		}
 	}
 
-	// webshell_connection_id field exists（WebShell AI conversation）
+	// webshell_connection_id field exists(WebShell AI conversation)
 	err = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('conversations') WHERE name='webshell_connection_id'").Scan(&count)
 	if err != nil {
 		if _, addErr := db.Exec("ALTER TABLE conversations ADD COLUMN webshell_connection_id TEXT"); addErr != nil {
@@ -447,7 +464,7 @@ func (db *DB) migrateConversationsTable() error {
 	return nil
 }
 
-// migrateConversationGroupsTable migrateconversation_groups，add
+// migrateConversationGroupsTable migrateconversation_groups,add
 func (db *DB) migrateConversationGroupsTable() error {
 	// pinnedfield exists
 	var count int
@@ -471,7 +488,7 @@ func (db *DB) migrateConversationGroupsTable() error {
 	return nil
 }
 
-// migrateConversationGroupMappingsTable migrateconversation_group_mappings，add
+// migrateConversationGroupMappingsTable migrateconversation_group_mappings,add
 func (db *DB) migrateConversationGroupMappingsTable() error {
 	// pinnedfield exists
 	var count int
@@ -495,7 +512,7 @@ func (db *DB) migrateConversationGroupMappingsTable() error {
 	return nil
 }
 
-// migrateBatchTaskQueuesTable migratebatch_task_queues，addtitlerole
+// migrateBatchTaskQueuesTable migratebatch_task_queues,addtitlerole
 func (db *DB) migrateBatchTaskQueuesTable() error {
 	// titlefield exists
 	var count int
@@ -538,7 +555,7 @@ func (db *DB) migrateBatchTaskQueuesTable() error {
 	return nil
 }
 
-// NewKnowledgeDB knowledge basedatabase connection（knowledge base）
+// NewKnowledgeDB knowledge basedatabase connection(knowledge base)
 func NewKnowledgeDB(dbPath string, logger *zap.Logger) (*DB, error) {
 	sqlDB, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_foreign_keys=1")
 	if err != nil {
@@ -562,7 +579,7 @@ func NewKnowledgeDB(dbPath string, logger *zap.Logger) (*DB, error) {
 	return database, nil
 }
 
-// initKnowledgeTables knowledge base（knowledge base）
+// initKnowledgeTables knowledge base(knowledge base)
 func (db *DB) initKnowledgeTables() error {
 	// knowledge base
 	createKnowledgeBaseItemsTable := `
@@ -588,7 +605,7 @@ func (db *DB) initKnowledgeTables() error {
 		FOREIGN KEY (item_id) REFERENCES knowledge_base_items(id) ON DELETE CASCADE
 	);`
 
-	// create knowledge retrieval logs table（knowledge base，，conversationsmessages）
+	// create knowledge retrieval logs table(knowledge base,,conversationsmessages)
 	createKnowledgeRetrievalLogsTable := `
 	CREATE TABLE IF NOT EXISTS knowledge_retrieval_logs (
 		id TEXT PRIMARY KEY,

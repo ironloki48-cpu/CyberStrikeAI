@@ -24,7 +24,7 @@ type Client struct {
 	limiter    *rateLimiter // serialize API calls, backoff on 429
 }
 
-// APIError OpenAIreturns200error。
+// APIError OpenAIreturns200error.
 type APIError struct {
 	StatusCode int
 	Body       string
@@ -34,7 +34,7 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("openai api error: status=%d body=%s", e.StatusCode, e.Body)
 }
 
-// NewClient creates a new OpenAI client。
+// NewClient creates a new OpenAI client.
 func NewClient(cfg *config.OpenAIConfig, httpClient *http.Client, logger *zap.Logger) *Client {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
@@ -72,7 +72,7 @@ func (c *Client) UpdateConfig(cfg *config.OpenAIConfig) {
 	c.limiter = newRateLimiter(rateLimitFromConfig(cfg))
 }
 
-// ChatCompletion call /chat/completions API。
+// ChatCompletion call /chat/completions API.
 func (c *Client) ChatCompletion(ctx context.Context, payload interface{}, out interface{}) error {
 	if c == nil {
 		return fmt.Errorf("openai client is not initialized")
@@ -188,8 +188,8 @@ func (c *Client) ChatCompletion(ctx context.Context, payload interface{}, out in
 	return nil
 }
 
-// ChatCompletionStream /chat/completions streaming mode（stream=true）， delta onDelta。
-// returns final concatenated content（ content delta； delta ）。
+// ChatCompletionStream /chat/completions streaming mode(stream=true), delta onDelta.
+// returns final concatenated content( content delta; delta ).
 func (c *Client) ChatCompletionStream(ctx context.Context, payload interface{}, onDelta func(delta string) error) (string, error) {
 	if c == nil {
 		return "", fmt.Errorf("openai client is not initialized")
@@ -242,7 +242,7 @@ func (c *Client) ChatCompletionStream(ctx context.Context, payload interface{}, 
 	}
 
 	type streamDelta struct {
-		// OpenAI content； text。
+		// OpenAI content; text.
 		Content string `json:"content,omitempty"`
 		Text    string `json:"text,omitempty"`
 	}
@@ -262,7 +262,7 @@ func (c *Client) ChatCompletionStream(ctx context.Context, payload interface{}, 
 	reader := bufio.NewReader(resp.Body)
 	var full strings.Builder
 
-	// SSE ：
+	// SSE :
 	// data: {...}\n\n
 	// data: [DONE]\n\n
 	for {
@@ -287,7 +287,7 @@ func (c *Client) ChatCompletionStream(ctx context.Context, payload interface{}, 
 
 		var chunk streamResponse
 		if err := json.Unmarshal([]byte(dataStr), &chunk); err != nil {
-			// parseskip（compatible with various compatibility layers）
+			// parseskip(compatible with various compatibility layers)
 			continue
 		}
 		if chunk.Error != nil && strings.TrimSpace(chunk.Error.Message) != "" {
@@ -321,16 +321,16 @@ func (c *Client) ChatCompletionStream(ctx context.Context, payload interface{}, 
 	return full.String(), nil
 }
 
-// StreamToolCall accumulated result of streaming tool calls（arguments ，parse JSON）。
+// StreamToolCall accumulated result of streaming tool calls(arguments ,parse JSON).
 type StreamToolCall struct {
-	Index            int
-	ID               string
-	Type             string
+	Index           int
+	ID              string
+	Type            string
 	FunctionName    string
 	FunctionArgsStr string
 }
 
-// ChatCompletionStreamWithToolCalls streaming mode：simultaneously real-time callback for content delta，returns tool_calls finish_reason。
+// ChatCompletionStreamWithToolCalls streaming mode:simultaneously real-time callback for content delta,returns tool_calls finish_reason.
 func (c *Client) ChatCompletionStreamWithToolCalls(
 	ctx context.Context,
 	payload interface{},
@@ -391,10 +391,10 @@ func (c *Client) ChatCompletionStreamWithToolCalls(
 		Arguments string `json:"arguments,omitempty"`
 	}
 	type toolCallDelta struct {
-		Index    int                     `json:"index,omitempty"`
-		ID       string                  `json:"id,omitempty"`
-		Type     string                  `json:"type,omitempty"`
-		Function toolCallFunctionDelta  `json:"function,omitempty"`
+		Index    int                   `json:"index,omitempty"`
+		ID       string                `json:"id,omitempty"`
+		Type     string                `json:"type,omitempty"`
+		Function toolCallFunctionDelta `json:"function,omitempty"`
 	}
 	type streamDelta2 struct {
 		Content   string          `json:"content,omitempty"`
@@ -414,10 +414,10 @@ func (c *Client) ChatCompletionStreamWithToolCalls(
 	}
 
 	type toolCallAccum struct {
-		id    string
-		typ   string
-		name  string
-		args  strings.Builder
+		id   string
+		typ  string
+		name string
+		args strings.Builder
 	}
 	toolCallAccums := make(map[int]*toolCallAccum)
 
@@ -447,7 +447,7 @@ func (c *Client) ChatCompletionStreamWithToolCalls(
 
 		var chunk streamResponse2
 		if err := json.Unmarshal([]byte(dataStr), &chunk); err != nil {
-			// ：parseskip
+			// :parseskip
 			continue
 		}
 		if chunk.Error != nil && strings.TrimSpace(chunk.Error.Message) != "" {
@@ -518,9 +518,9 @@ func (c *Client) ChatCompletionStreamWithToolCalls(
 	for _, idx := range indices {
 		acc := toolCallAccums[idx]
 		tc := StreamToolCall{
-			Index:            idx,
-			ID:               acc.id,
-			Type:             acc.typ,
+			Index:           idx,
+			ID:              acc.id,
+			Type:            acc.typ,
 			FunctionName:    acc.name,
 			FunctionArgsStr: acc.args.String(),
 		}

@@ -3,7 +3,7 @@ let currentPage = 'dashboard';
 
 // initializeroute
 function initRouter() {
-    // fromURL hashreadpage（ifhas）
+    // fromURL hashreadpage(ifhas)
     const hash = window.location.hash.slice(1);
     if (hash) {
         const hashParts = hash.split('?');
@@ -11,7 +11,7 @@ function initRouter() {
         if (pageId && ['dashboard', 'chat', 'info-collect', 'vulnerabilities', 'webshell', 'chat-files', 'mcp-monitor', 'mcp-management', 'knowledge-management', 'knowledge-retrieval-logs', 'roles-management', 'skills-monitor', 'skills-management', 'agents-management', 'settings', 'tasks'].includes(pageId)) {
             switchPage(pageId);
             
- // if it ischatpageandhasconversationparameter，loadforshouldconversation
+ // if it ischatpageandhasconversationparameter,loadforshouldconversation
             if (pageId === 'chat' && hashParts.length > 1) {
                 const params = new URLSearchParams(hashParts[1]);
                 const conversationId = params.get('conversation');
@@ -52,15 +52,15 @@ function switchPage(pageId) {
         // updateURL hash
         window.location.hash = pageId;
         
-        // updatenavigationstatus
+        // update navigation state
         updateNavState(pageId);
-        
- // page's initialize
+
+        // per-page initialize (async — awaits i18n readiness internally)
         initPage(pageId);
     }
 }
 
-// updatenavigationstatus
+// update navigation state
 function updateNavState(pageId) {
     // removeallactivestatus
     document.querySelectorAll('.nav-item').forEach(item => {
@@ -160,13 +160,13 @@ function toggleSubmenu(menuId) {
     }
 }
 
-// Show menuout
+// Show submenu popup
 function showSubmenuPopup(navItem, menuId) {
     // removeotheralreadyopen's popup menu
     const existingPopup = document.querySelector('.submenu-popup');
     if (existingPopup) {
         existingPopup.remove();
-        return; // ifalreadyopen，clickwhenClose
+        return; // ifalreadyopen,clickwhenClose
     }
     
     const navItemContent = navItem.querySelector('.nav-item-content');
@@ -225,14 +225,19 @@ function showSubmenuPopup(navItem, menuId) {
         }
     };
     
-    // delayaddeventlisten，avoidimmediatelytrigger
+    // delayaddeventlisten,avoidimmediatelytrigger
     setTimeout(() => {
         document.addEventListener('click', closePopup);
     }, 0);
 }
 
-// initializepage
-function initPage(pageId) {
+// initialize page
+async function initPage(pageId) {
+    // Wait for the i18n catalog to finish loading so fast navigation doesn't
+    // paint raw translation keys before the labels are resolved.
+    if (window.i18nReady && typeof window.i18nReady.then === 'function') {
+        try { await window.i18nReady; } catch (e) { /* ignore — fall through */ }
+    }
     switch(pageId) {
         case 'dashboard':
             if (typeof refreshDashboard === 'function') {
@@ -240,7 +245,7 @@ function initPage(pageId) {
             }
             break;
         case 'chat':
- // restoreconversationlistcollapsestatus（fromotherpagereturnwhenmaintainuseselect）
+ // restoreconversationlistcollapsestatus(fromotherpagereturnwhenmaintainuseselect)
             initConversationSidebarState();
             break;
         case 'info-collect':
@@ -263,20 +268,20 @@ function initPage(pageId) {
             break;
         case 'mcp-management':
             // initializeMCPmanagement
- // firstloadExternalMCPlist（fast），afterloadtoollist
+ // firstloadExternalMCPlist(fast),afterloadtoollist
             if (typeof loadExternalMCPs === 'function') {
                 loadExternalMCPs().catch(err => {
                     console.warn('loadExternalMCPlist failed:', err);
                 });
             }
- // loadtoollist（MCPtoolconfigurationalreadytoMCPmanagement page）
-            // useasyncload，avoidblockpagerender
+ // loadtoollist(MCPtoolconfigurationalreadytoMCPmanagement page)
+            // useasyncload,avoidblockpagerender
             if (typeof loadToolsList === 'function') {
                 // ensuretoolpaginationsettingsalreadyinitialize
                 if (typeof getToolsPageSize === 'function' && typeof toolsPagination !== 'undefined') {
                     toolsPagination.pageSize = getToolsPageSize();
                 }
-                // delayload，letpagefirstrender
+                // delayload,letpagefirstrender
                 setTimeout(() => {
                     loadToolsList(1, '').catch(err => {
                         console.error('Failed to load tool list:', err);
@@ -302,14 +307,14 @@ function initPage(pageId) {
             }
             break;
         case 'settings':
-            // initializesettingspage（notneedloadtoollist）
+            // initializesettingspage(notneedloadtoollist)
             if (typeof loadConfig === 'function') {
                 loadConfig(false);
             }
             break;
         case 'roles-management':
             // initializerolemanagement page
-            // resetsearchUI（variablewillatundertimesearchwhenautoupdate）
+            // resetsearchUI(variablewillatundertimesearchwhenautoupdate)
             const rolesSearchInput = document.getElementById('roles-search');
             if (rolesSearchInput) {
                 rolesSearchInput.value = '';
@@ -334,7 +339,7 @@ function initPage(pageId) {
             break;
         case 'skills-management':
             // initializeSkillsmanagement page
-            // resetsearchUI（variablewillatundertimesearchwhenautoupdate）
+            // resetsearchUI(variablewillatundertimesearchwhenautoupdate)
             const skillsSearchInput = document.getElementById('skills-search');
             if (skillsSearchInput) {
                 skillsSearchInput.value = '';
@@ -371,14 +376,14 @@ document.addEventListener('DOMContentLoaded', function() {
     // listenhashchange
     window.addEventListener('hashchange', function() {
         const hash = window.location.hash.slice(1);
- // processparameter's hash（like chat?conversation=xxx）
+ // processparameter's hash(like chat?conversation=xxx)
         const hashParts = hash.split('?');
         const pageId = hashParts[0];
         
         if (pageId && ['chat', 'info-collect', 'tasks', 'vulnerabilities', 'webshell', 'chat-files', 'mcp-monitor', 'mcp-management', 'knowledge-management', 'knowledge-retrieval-logs', 'roles-management', 'skills-monitor', 'skills-management', 'agents-management', 'settings'].includes(pageId)) {
             switchPage(pageId);
             
- // if it ischatpageandhasconversationparameter，loadforshouldconversation
+ // if it ischatpageandhasconversationparameter,loadforshouldconversation
             if (pageId === 'chat' && hashParts.length > 1) {
                 const params = new URLSearchParams(hashParts[1]);
                 const conversationId = params.get('conversation');
@@ -415,18 +420,18 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 });
 
-// switchsidebarcollapse/expand
+// toggle sidebar collapse/expand
 function toggleSidebar() {
     const sidebar = document.getElementById('main-sidebar');
     if (sidebar) {
         sidebar.classList.toggle('collapsed');
-        // SavecollapsestatustolocalStorage
+        // persist collapse state to localStorage
         const isCollapsed = sidebar.classList.contains('collapsed');
         localStorage.setItem('sidebarCollapsed', isCollapsed ? 'true' : 'false');
     }
 }
 
-// initializesidebarstatus
+// initialize sidebar state
 function initSidebarState() {
     const sidebar = document.getElementById('main-sidebar');
     if (sidebar) {
@@ -438,7 +443,7 @@ function initSidebarState() {
     initConversationSidebarState();
 }
 
-// switchconversationpageleft sidelistcollapse/expand
+// toggle chat-page left-side list collapse/expand
 function toggleConversationSidebar() {
     const sidebar = document.getElementById('conversation-sidebar');
     if (sidebar) {
@@ -448,7 +453,7 @@ function toggleConversationSidebar() {
     }
 }
 
-// restoreconversationlistcollapsestatus（Enterconversationpagewhentake effect）
+// restore chat-list collapse state on nav into the chat page
 function initConversationSidebarState() {
     const sidebar = document.getElementById('conversation-sidebar');
     if (sidebar) {
