@@ -68,7 +68,7 @@ See [tools/README.md](tools/README.md) for the full YAML schema and how to add y
 
 ### Prerequisites
 
-- **Go 1.21+** — [install](https://go.dev/dl/)
+- **Go 1.25+** — [install](https://go.dev/dl/)
 - **Python 3.10+** — for Python-based tools (api-fuzzer, http-framework-test, …)
 - **Security tools** — nmap, subfinder, nuclei, etc. (the agent uses what is on `PATH` and falls back gracefully when a tool is missing)
 - **API key** — Anthropic (Claude) or any OpenAI-compatible provider
