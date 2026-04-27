@@ -40,8 +40,7 @@ type RobotHandler struct {
 	db             *database.DB
 	agentHandler   *AgentHandler
 	logger         *zap.Logger
-	mu             sync.RWMutex
-	sessions       map[string]string             // key: "platform_userID", value: conversationID
+	mu             sync.RWMutex                  // guards sessionRoles
 	sessionRoles   map[string]string             // key: "platform_userID", value: roleName (default "default")
 	cancelMu       sync.Mutex                    // guards runningCancels
 	runningCancels map[string]context.CancelFunc // key: "platform_userID", stop
@@ -54,7 +53,6 @@ func NewRobotHandler(cfg *config.Config, db *database.DB, agentHandler *AgentHan
 		db:             db,
 		agentHandler:   agentHandler,
 		logger:         logger,
-		sessions:       make(map[string]string),
 		sessionRoles:   make(map[string]string),
 		runningCancels: make(map[string]context.CancelFunc),
 	}
@@ -65,13 +63,16 @@ func (h *RobotHandler) sessionKey(platform, userID string) string {
 	return platform + "_" + userID
 }
 
-// getOrCreateConversation returns the current conversation or creates a new one.
+// getOrCreateConversation returns the current conversation (DB-backed),
+// or creates a fresh one tagged with the given platform.
 func (h *RobotHandler) getOrCreateConversation(platform, userID, title string) (convID string, isNew bool) {
-	h.mu.RLock()
-	convID = h.sessions[h.sessionKey(platform, userID)]
-	h.mu.RUnlock()
-	if convID != "" {
-		return convID, false
+	sess, err := h.db.GetBotSession(platform, userID)
+	if err != nil {
+		h.logger.Warn("GetBotSession failed; falling back to fresh conversation",
+			zap.String("platform", platform), zap.String("user_id", userID), zap.Error(err))
+	}
+	if sess != nil && sess.ConversationID != "" {
+		return sess.ConversationID, false
 	}
 	t := strings.TrimSpace(title)
 	if t == "" {
@@ -79,23 +80,32 @@ func (h *RobotHandler) getOrCreateConversation(platform, userID, title string) (
 	} else {
 		t = safeTruncateString(t, 50)
 	}
-	conv, err := h.db.CreateConversation(t)
+	conv, err := h.db.CreateConversationWithPlatform(t, platform)
 	if err != nil {
-		h.logger.Warn("", zap.Error(err))
-		return "", false
+		h.logger.Error("CreateConversationWithPlatform failed", zap.Error(err))
+		return "", true
 	}
-	convID = conv.ID
-	h.mu.Lock()
-	h.sessions[h.sessionKey(platform, userID)] = convID
-	h.mu.Unlock()
-	return convID, true
+	mode := ""
+	if sess != nil {
+		mode = sess.CurrentMode // preserve mode override if session existed but conversation was deleted
+	}
+	if upErr := h.db.UpsertBotSession(platform, userID, conv.ID, mode); upErr != nil {
+		h.logger.Warn("UpsertBotSession failed", zap.Error(upErr))
+	}
+	return conv.ID, true
 }
 
-// setConversation switches the current conversation.
+// setConversation switches the current conversation persistently.
+// Preserves any existing mode override.
 func (h *RobotHandler) setConversation(platform, userID, convID string) {
-	h.mu.Lock()
-	h.sessions[h.sessionKey(platform, userID)] = convID
-	h.mu.Unlock()
+	sess, _ := h.db.GetBotSession(platform, userID)
+	mode := ""
+	if sess != nil {
+		mode = sess.CurrentMode
+	}
+	if err := h.db.UpsertBotSession(platform, userID, convID, mode); err != nil {
+		h.logger.Warn("setConversation upsert failed", zap.Error(err))
+	}
 }
 
 // getRole returns the current role (defaults to "default").
@@ -116,20 +126,33 @@ func (h *RobotHandler) setRole(platform, userID, roleName string) {
 	h.mu.Unlock()
 }
 
-// clearConversation clears the current conversation (creates a new one).
-func (h *RobotHandler) clearConversation(platform, userID string) (newConvID string) {
-	title := "conversation " + time.Now().Format("01-02 15:04")
-	conv, err := h.db.CreateConversation(title)
-	if err != nil {
-		h.logger.Warn("conversation", zap.Error(err))
-		return ""
+// clearConversation clears the current conversation. Next message
+// triggers getOrCreateConversation to make a new one.
+func (h *RobotHandler) clearConversation(platform, userID string) {
+	if err := h.db.ClearBotSession(platform, userID); err != nil {
+		h.logger.Warn("ClearBotSession failed", zap.Error(err))
 	}
-	h.setConversation(platform, userID, conv.ID)
-	return conv.ID
 }
 
-// HandleMessage processes a message and returns a reply (used by Telegram bot and test endpoint).
-func (h *RobotHandler) HandleMessage(platform, userID, text string) (reply string) {
+// HandleMessage is the synchronous wrapper for non-streaming clients
+// (test endpoint, future non-Telegram bots).
+func (h *RobotHandler) HandleMessage(platform, userID, text string) string {
+	return h.handleInternal(platform, userID, text, nil)
+}
+
+// HandleMessageStream is the StreamingMessageHandler implementation.
+// telegram.go invokes this when the streaming-handler interface is
+// satisfied; the synchronous HandleMessage falls through to this
+// with a no-op (nil) progressFn.
+func (h *RobotHandler) HandleMessageStream(platform, userID, text string, progressFn func(step string)) string {
+	return h.handleInternal(platform, userID, text, progressFn)
+}
+
+// handleInternal is the shared body used by both the streaming and
+// non-streaming entry points. It dispatches commands, resolves session,
+// and drives ProcessMessageForRobot. progressFn (nil-safe) is forwarded
+// for the streaming path.
+func (h *RobotHandler) handleInternal(platform, userID, text string, progressFn func(step string)) string {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return "please enter content or send \"help\" to view commands."
@@ -164,7 +187,7 @@ func (h *RobotHandler) HandleMessage(platform, userID, text string) (reply strin
 		h.cancelMu.Unlock()
 	}()
 	role := h.getRole(platform, userID)
-	resp, newConvID, err := h.agentHandler.ProcessMessageForRobot(ctx, convID, text, role, "", nil)
+	resp, newConvID, err := h.agentHandler.ProcessMessageForRobot(ctx, convID, text, role, "", progressFn)
 	if err != nil {
 		h.logger.Warn("Agent execution failed", zap.String("platform", platform), zap.String("userID", userID), zap.Error(err))
 		if errors.Is(err, context.Canceled) {
@@ -228,15 +251,13 @@ func (h *RobotHandler) cmdSwitch(platform, userID, convID string) string {
 }
 
 func (h *RobotHandler) cmdNew(platform, userID string) string {
-	newID := h.clearConversation(platform, userID)
-	if newID == "" {
-		return "Failed to create conversation."
-	}
-	return "New conversation started."
+	h.clearConversation(platform, userID)
+	return "New conversation started. Send a message to begin."
 }
 
 func (h *RobotHandler) cmdClear(platform, userID string) string {
-	return h.cmdNew(platform, userID)
+	h.clearConversation(platform, userID)
+	return "Conversation cleared. Send a message to begin."
 }
 
 func (h *RobotHandler) cmdStop(platform, userID string) string {
@@ -255,9 +276,11 @@ func (h *RobotHandler) cmdStop(platform, userID string) string {
 }
 
 func (h *RobotHandler) cmdCurrent(platform, userID string) string {
-	h.mu.RLock()
-	convID := h.sessions[h.sessionKey(platform, userID)]
-	h.mu.RUnlock()
+	sess, _ := h.db.GetBotSession(platform, userID)
+	var convID string
+	if sess != nil {
+		convID = sess.ConversationID
+	}
 	if convID == "" {
 		return "No current conversation. Send a message to start one."
 	}
@@ -326,14 +349,15 @@ func (h *RobotHandler) cmdDelete(platform, userID, convID string) string {
 	if convID == "" {
 		return "Please provide a conversation ID: delete xxx-xxx-xxx"
 	}
-	sk := h.sessionKey(platform, userID)
-	h.mu.RLock()
-	currentConvID := h.sessions[sk]
-	h.mu.RUnlock()
+	sess, _ := h.db.GetBotSession(platform, userID)
+	var currentConvID string
+	if sess != nil {
+		currentConvID = sess.ConversationID
+	}
 	if convID == currentConvID {
-		h.mu.Lock()
-		delete(h.sessions, sk)
-		h.mu.Unlock()
+		if err := h.db.ClearBotSession(platform, userID); err != nil {
+			h.logger.Warn("ClearBotSession on delete failed", zap.Error(err))
+		}
 	}
 	if err := h.db.DeleteConversation(convID); err != nil {
 		return "Delete failed: " + err.Error()
