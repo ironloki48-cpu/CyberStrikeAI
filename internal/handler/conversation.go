@@ -68,9 +68,13 @@ func (h *ConversationHandler) ListConversations(c *gin.Context) {
 
 	var conversations []*database.Conversation
 	var err error
-	if platform == "" {
+	switch platform {
+	case "":
 		conversations, err = h.db.ListConversations(limit, offset, search)
-	} else {
+	case "__web__":
+		// Web-only: ListConversationsByPlatform with empty string maps to "platform IS NULL"
+		conversations, err = h.db.ListConversationsByPlatform(limit, offset, search, "")
+	default:
 		conversations, err = h.db.ListConversationsByPlatform(limit, offset, search, platform)
 	}
 	if err != nil {

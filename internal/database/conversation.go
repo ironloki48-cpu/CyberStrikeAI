@@ -17,6 +17,7 @@ type Conversation struct {
 	Pinned    bool      `json:"pinned"`
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
+	Platform  string    `json:"platform,omitempty"`
 	Messages  []Message `json:"messages,omitempty"`
 }
 
@@ -196,11 +197,12 @@ func (db *DB) GetConversation(id string) (*Conversation, error) {
 	var conv Conversation
 	var createdAt, updatedAt string
 	var pinned int
+	var platformNS sql.NullString
 
 	err := db.QueryRow(
-		"SELECT id, title, pinned, created_at, updated_at FROM conversations WHERE id = ?",
+		"SELECT id, title, pinned, created_at, updated_at, platform FROM conversations WHERE id = ?",
 		id,
-	).Scan(&conv.ID, &conv.Title, &pinned, &createdAt, &updatedAt)
+	).Scan(&conv.ID, &conv.Title, &pinned, &createdAt, &updatedAt, &platformNS)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("conversation")
@@ -227,6 +229,9 @@ func (db *DB) GetConversation(id string) (*Conversation, error) {
 	}
 
 	conv.Pinned = pinned != 0
+	if platformNS.Valid {
+		conv.Platform = platformNS.String
+	}
 
 	// loadmessage
 	messages, err := db.GetMessages(id)
@@ -277,11 +282,12 @@ func (db *DB) GetConversationLite(id string) (*Conversation, error) {
 	var conv Conversation
 	var createdAt, updatedAt string
 	var pinned int
+	var platformNS sql.NullString
 
 	err := db.QueryRow(
-		"SELECT id, title, pinned, created_at, updated_at FROM conversations WHERE id = ?",
+		"SELECT id, title, pinned, created_at, updated_at, platform FROM conversations WHERE id = ?",
 		id,
-	).Scan(&conv.ID, &conv.Title, &pinned, &createdAt, &updatedAt)
+	).Scan(&conv.ID, &conv.Title, &pinned, &createdAt, &updatedAt, &platformNS)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("conversation")
@@ -308,6 +314,9 @@ func (db *DB) GetConversationLite(id string) (*Conversation, error) {
 	}
 
 	conv.Pinned = pinned != 0
+	if platformNS.Valid {
+		conv.Platform = platformNS.String
+	}
 
 	// loadmessage(load process_details)
 	messages, err := db.GetMessages(id)
@@ -328,17 +337,17 @@ func (db *DB) ListConversations(limit, offset int, search string) ([]*Conversati
 		searchPattern := "%" + search + "%"
 		// use DISTINCT to avoid duplicates,conversationmessagematch
 		rows, err = db.Query(
-			`SELECT DISTINCT c.id, c.title, COALESCE(c.pinned, 0), c.created_at, c.updated_at 
+			`SELECT DISTINCT c.id, c.title, COALESCE(c.pinned, 0), c.created_at, c.updated_at, c.platform
 			 FROM conversations c
 			 LEFT JOIN messages m ON c.id = m.conversation_id
 			 WHERE c.title LIKE ? OR m.content LIKE ?
-			 ORDER BY c.updated_at DESC 
+			 ORDER BY c.updated_at DESC
 			 LIMIT ? OFFSET ?`,
 			searchPattern, searchPattern, limit, offset,
 		)
 	} else {
 		rows, err = db.Query(
-			"SELECT id, title, COALESCE(pinned, 0), created_at, updated_at FROM conversations ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+			"SELECT id, title, COALESCE(pinned, 0), created_at, updated_at, platform FROM conversations ORDER BY updated_at DESC LIMIT ? OFFSET ?",
 			limit, offset,
 		)
 	}
@@ -353,8 +362,9 @@ func (db *DB) ListConversations(limit, offset int, search string) ([]*Conversati
 		var conv Conversation
 		var createdAt, updatedAt string
 		var pinned int
+		var platformNS sql.NullString
 
-		if err := rows.Scan(&conv.ID, &conv.Title, &pinned, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&conv.ID, &conv.Title, &pinned, &createdAt, &updatedAt, &platformNS); err != nil {
 			return nil, fmt.Errorf("scanconversation: %w", err)
 		}
 
@@ -377,6 +387,9 @@ func (db *DB) ListConversations(limit, offset int, search string) ([]*Conversati
 		}
 
 		conv.Pinned = pinned != 0
+		if platformNS.Valid {
+			conv.Platform = platformNS.String
+		}
 
 		conversations = append(conversations, &conv)
 	}
@@ -399,7 +412,7 @@ func (db *DB) ListConversationsByPlatform(limit, offset int, search, platform st
 		if platform == "" {
 			// web-only: platform IS NULL
 			rows, err = db.Query(
-				`SELECT DISTINCT c.id, c.title, COALESCE(c.pinned, 0), c.created_at, c.updated_at
+				`SELECT DISTINCT c.id, c.title, COALESCE(c.pinned, 0), c.created_at, c.updated_at, c.platform
 				 FROM conversations c
 				 LEFT JOIN messages m ON c.id = m.conversation_id
 				 WHERE (c.title LIKE ? OR m.content LIKE ?) AND c.platform IS NULL
@@ -410,7 +423,7 @@ func (db *DB) ListConversationsByPlatform(limit, offset int, search, platform st
 		} else {
 			// specific platform
 			rows, err = db.Query(
-				`SELECT DISTINCT c.id, c.title, COALESCE(c.pinned, 0), c.created_at, c.updated_at
+				`SELECT DISTINCT c.id, c.title, COALESCE(c.pinned, 0), c.created_at, c.updated_at, c.platform
 				 FROM conversations c
 				 LEFT JOIN messages m ON c.id = m.conversation_id
 				 WHERE (c.title LIKE ? OR m.content LIKE ?) AND c.platform = ?
@@ -423,13 +436,13 @@ func (db *DB) ListConversationsByPlatform(limit, offset int, search, platform st
 		if platform == "" {
 			// web-only: platform IS NULL
 			rows, err = db.Query(
-				"SELECT id, title, COALESCE(pinned, 0), created_at, updated_at FROM conversations WHERE platform IS NULL ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+				"SELECT id, title, COALESCE(pinned, 0), created_at, updated_at, platform FROM conversations WHERE platform IS NULL ORDER BY updated_at DESC LIMIT ? OFFSET ?",
 				limit, offset,
 			)
 		} else {
 			// specific platform
 			rows, err = db.Query(
-				"SELECT id, title, COALESCE(pinned, 0), created_at, updated_at FROM conversations WHERE platform = ? ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+				"SELECT id, title, COALESCE(pinned, 0), created_at, updated_at, platform FROM conversations WHERE platform = ? ORDER BY updated_at DESC LIMIT ? OFFSET ?",
 				platform, limit, offset,
 			)
 		}
@@ -445,8 +458,9 @@ func (db *DB) ListConversationsByPlatform(limit, offset int, search, platform st
 		var conv Conversation
 		var createdAt, updatedAt string
 		var pinned int
+		var platformNS sql.NullString
 
-		if err := rows.Scan(&conv.ID, &conv.Title, &pinned, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&conv.ID, &conv.Title, &pinned, &createdAt, &updatedAt, &platformNS); err != nil {
 			return nil, fmt.Errorf("scanconversation: %w", err)
 		}
 
@@ -469,6 +483,9 @@ func (db *DB) ListConversationsByPlatform(limit, offset int, search, platform st
 		}
 
 		conv.Pinned = pinned != 0
+		if platformNS.Valid {
+			conv.Platform = platformNS.String
+		}
 
 		conversations = append(conversations, &conv)
 	}
