@@ -682,6 +682,22 @@ func (h *AgentHandler) ProcessMessageForRobot(
 	}
 	progressCallback := h.createProgressCallback(conversationID, assistantMessageID, nil)
 
+	// Bot-side progress tee: forward filtered major events to the
+	// caller-supplied progressFn (nil = silent, e.g. legacy callers
+	// that didn't opt in).
+	originalCallback := progressCallback
+	progressCallback = func(eventType, message string, data interface{}) {
+		if originalCallback != nil {
+			originalCallback(eventType, message, data)
+		}
+		if progressFn != nil {
+			dataMap, _ := data.(map[string]interface{})
+			if step := MajorEventStep(eventType, message, dataMap); step != "" {
+				progressFn(step)
+			}
+		}
+	}
+
 	if h.config != nil && h.config.EffectiveProvider() == "claude-cli" && h.claudeAdapter != nil {
 		if progressFn != nil {
 			progressFn("Running through Claude CLI…")
