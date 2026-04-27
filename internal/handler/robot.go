@@ -182,20 +182,14 @@ func (h *RobotHandler) handleInternal(platform, userID, text string, progressFn 
 		forceMode = sess.CurrentMode
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
 	sk := h.sessionKey(platform, userID)
-	h.cancelMu.Lock()
-	h.runningCancels[sk] = cancel
-	h.cancelMu.Unlock()
-	defer func() {
-		cancel()
-		h.cancelMu.Lock()
-		delete(h.runningCancels, sk)
-		h.cancelMu.Unlock()
-	}()
-	// Per-conversation lock: prevent concurrent agent runs on the same
-	// chat. Adapter wraps cancel() as CancelCauseFunc; the cause is
-	// dropped because the bot reply doesn't surface it. Mirrors
-	// multi_agent.go:121-141 / web-UI semantics.
+
+	// Acquire per-conversation lock BEFORE touching runningCancels: a
+	// goroutine that loses the StartTask race must not clobber the
+	// winner's stop-handle. cancelWithCause adapts cancel() to
+	// CancelCauseFunc; cause is dropped because the bot reply doesn't
+	// surface it. Mirrors multi_agent.go:121-141 / web-UI semantics.
 	cancelWithCause := func(cause error) { cancel() }
 	if _, err := h.agentHandler.tasks.StartTask(convID, text, cancelWithCause); err != nil {
 		if errors.Is(err, ErrTaskAlreadyRunning) {
@@ -203,8 +197,17 @@ func (h *RobotHandler) handleInternal(platform, userID, text string, progressFn 
 		}
 		return "Failed to start task: " + err.Error()
 	}
+	// Lock held — safe to publish the stop-handle.
+	h.cancelMu.Lock()
+	h.runningCancels[sk] = cancel
+	h.cancelMu.Unlock()
 	taskStatus := "completed"
-	defer func() { h.agentHandler.tasks.FinishTask(convID, taskStatus) }()
+	defer func() {
+		h.cancelMu.Lock()
+		delete(h.runningCancels, sk)
+		h.cancelMu.Unlock()
+		h.agentHandler.tasks.FinishTask(convID, taskStatus)
+	}()
 	role := h.getRole(platform, userID)
 	resp, newConvID, err := h.agentHandler.ProcessMessageForRobot(ctx, convID, text, role, forceMode, progressFn)
 	if err != nil {

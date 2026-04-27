@@ -540,9 +540,20 @@ func (db *DB) migrateConversationsTable() error {
 	}
 
 	// platform field for bot origin tracking
-	if _, err := db.Exec("ALTER TABLE conversations ADD COLUMN platform TEXT"); err != nil {
-		if !strings.Contains(err.Error(), "duplicate column") {
-			db.logger.Warn("add platform field failed", zap.Error(err))
+	err = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('conversations') WHERE name='platform'").Scan(&count)
+	if err == nil && count == 0 {
+		if _, addErr := db.Exec("ALTER TABLE conversations ADD COLUMN platform TEXT"); addErr != nil {
+			errMsg := addErr.Error()
+			if !strings.Contains(errMsg, "duplicate column") && !strings.Contains(errMsg, "already exists") {
+				db.logger.Warn("add platform field failed", zap.Error(addErr))
+			}
+		}
+	} else if err != nil {
+		if _, err := db.Exec("ALTER TABLE conversations ADD COLUMN platform TEXT"); err != nil {
+			errMsg := err.Error()
+			if !strings.Contains(errMsg, "duplicate column") && !strings.Contains(errMsg, "already exists") {
+				db.logger.Warn("add platform field failed", zap.Error(err))
+			}
 		}
 	}
 
